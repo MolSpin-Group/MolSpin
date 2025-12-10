@@ -492,22 +492,6 @@ namespace RunSection
 						if (!this->ProjectAndPrintOutputLine(i, space, rho_avg[n], Printedtime, this->timestep, n, CIDSP, this->Data(), this->Log()))
 							this->Log() << "Could not project the state vector and print the result into a file" << std::endl;
 					}
-
-					// double InitialTimestep = this->timestep;
-					// double Currenttime = 0;
-					// double time;
-					// unsigned int n = 0;
-					// while (Currenttime <= this->totaltime)
-					// {
-					// 	if (!n == 0)
-					// 	{
-					// 		{
-					// 			Currenttime += this->timestep;
-					// 			time = RungeKutta45Armadillo(A, rhovec, rhovec, this->timestep, ComputeRhoDot, {1e-7, 1e-6}, InitialTimestep * 1e-3, InitialTimestep * 1e4);
-					// 		}
-					// 	}
-
-					// 	// n++; //delete if not RK
 				}
 
 				this->Log() << "Done with calculation." << std::endl;
@@ -657,13 +641,8 @@ namespace RunSection
 		}
 
 		arma::cx_mat _eigen_vec;
-
-		// this->Log() << "Starting diagonalization..." << std::endl;
 		arma::eig_sym(_eigen_val, _eigen_vec, (H));
-		// this->Log() << "Diagonalization done! Eigenvalues: " << _eigen_val.n_elem << ", eigenvectors: " << _eigen_vec.n_cols << std::endl;
-
 		_eigen_vec_sp = arma::conv_to<arma::sp_cx_mat>::from(_eigen_vec);
-
 		_space.UseSuperoperatorSpace(true);
 
 		return true;
@@ -675,16 +654,9 @@ namespace RunSection
 
 		arma::cx_mat H;
 
-		if (!_space.ThermalHamiltonian(_thermalhamiltonian_list, H))
-		{
-			// this->Log() << "Failed to obtain Static Hamiltonian in Hilbert Space." << std::endl;
-		}
-
 		arma::cx_mat _eigen_vec;
 
-		// this->Log() << "Starting diagonalization..." << std::endl;
 		arma::eig_sym(_eigen_val, _eigen_vec, (H));
-		// this->Log() << "Diagonalization done! Eigenvalues: " << _eigen_val.n_elem << ", eigenvectors: " << _eigen_vec.n_cols << std::endl;
 
 		_eigen_vec_sp = arma::conv_to<arma::sp_cx_mat>::from(_eigen_vec);
 
@@ -1014,8 +986,6 @@ namespace RunSection
 			return false;
 		}
 
-		// rho0 = (_eigen_vec * rho0 * _eigen_vec.t());
-
 		// Get nuclei of interest for CIDNP spectrum
 		arma::cx_mat Iprojx;
 		arma::cx_mat Iprojy;
@@ -1179,9 +1149,4 @@ namespace RunSection
 
 		return true;
 	}
-
-	
-
-	
-	// -----------------------------------------------------
 }
