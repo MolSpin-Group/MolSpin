@@ -51,8 +51,11 @@ namespace RunSection
 		this->settings->SetCurrentStep(_stepNumber);
 
 		// Run all tasks
+		Profiler::StartProfiling();
 		for (auto i = this->tasks.cbegin(); i != this->tasks.cend(); i++)
 			(*i)->Run();
+		Profiler::StopProfiling();
+		std::cout << "Peak memory: " << Profiler::GetPeak() << std::endl;
 
 		return true;
 	}
