@@ -109,7 +109,7 @@ namespace SpinAPI
 				bool InTuple = false;
 				int element = 0;
 				std::string CurrentString;
-				std::tuple<double,int,double> CurrentTuple = {-1.0, -1, -1.0};
+				std::tuple<std::vector<double>,int,double> CurrentTuple = {{-1.0}, -1, -1.0};
 				auto c = HFfieldStr.begin();
 				while(c != HFfieldStr.end())
 				{
@@ -129,12 +129,12 @@ namespace SpinAPI
 							std::cout << "[INFO]: Not enough elements in hyperfine field definition for the semi classical interaction." << this->Name();
 							auto[a,n,s] = CurrentTuple;
 							std::cout << " Ignoring the field defined as: " << a << " , " << n << " , " << s << ". -1 is just used as a placeholder value " << std::endl;
-							CurrentTuple = {-1.0,-1,-1.0};
+							CurrentTuple = {{-1.0},-1,-1.0};
 						}
 						if(!InTuple && element == 3)
 						{
 							HFfield.push_back(CurrentTuple);
-							CurrentTuple = {-1.0,-1,-1.0};
+							CurrentTuple = {{-1.0},-1,-1.0};
 						}
 						element = 0;
 						c++;
@@ -156,7 +156,7 @@ namespace SpinAPI
 						//evaluate string
 						if(element == 0)
 						{
-							double ampl = std::stod(CurrentString);
+							double ampl = std::stod(CurrentString); //Need to change this code to allow for it to be a tensor
 							std::get<0>(CurrentTuple) = ampl;
 						}
 						else if(element == 1)
@@ -1447,7 +1447,7 @@ namespace SpinAPI
 			int N = n;
 			for(int i = 0; i < N; i++)
 			{
-				double bondlength = a * std::sqrt(sn * (sn+1));
+				double bondlength = a[0] * std::sqrt(sn * (sn+1));
 				BondLengths.push_back(bondlength);
 				tau_sum.push_back(std::pow(bondlength,2));
 			}
@@ -1474,6 +1474,15 @@ namespace SpinAPI
 			return weight;
 		};
 		return f;
+    }
+    
+	void FreelyJointedPolymerAnisotropicBL(std::vector<double> &, std::vector<SCHyperfineField> &, double &, int)
+    {
+    }
+    
+	SCDistributionF FreelyJointedPolymerAnisotropic(double, double)
+    {
+        return SCDistributionF();
     }
     // -----------------------------------------------------
 }

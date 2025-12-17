@@ -23,12 +23,13 @@
 
 namespace SpinAPI
 {
-	typedef std::tuple<double,int,double> SCHyperfineField;
+	typedef std::tuple<std::vector<double>,int,double> SCHyperfineField;
 	typedef std::function<double (std::array<double,3>)> SCDistributionF;
 
 	enum class SCDistribution
 	{
 		FJC = 0, //Freely jointed chain
+		FJCAiso = 1, //Anisotropic version of FJC
 		DEFUALT //is FJC
 	};
 	class Interaction
@@ -205,6 +206,8 @@ namespace SpinAPI
 	//semi classical distributions
     void FreelyJointedPolymerBL(std::vector<double>&, std::vector<SCHyperfineField>&, double&, int); //length of the nuclear spin vector
 	SCDistributionF FreelyJointedPolymerD(double,double); //Distribution of the nuclear spin vector
+	void FreelyJointedPolymerAnisotropicBL(std::vector<double>&, std::vector<SCHyperfineField>&, double&, int);
+	SCDistributionF FreelyJointedPolymerAnisotropic(double, double);
 }
 
 #endif
