@@ -20,7 +20,6 @@
 #include "RunSectionfwd.h"
 #include "ActionTarget.h"
 #include "SpinAPIfwd.h"
-#include "HeapProfiler.h"
 
 namespace RunSection
 {

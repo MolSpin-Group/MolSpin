@@ -50,12 +50,9 @@ namespace RunSection
 		// Update the settings object with the current calculation step
 		this->settings->SetCurrentStep(_stepNumber);
 
-		// Run all tasks
-		Profiler::StartProfiling();
+		// Run all tasks		
 		for (auto i = this->tasks.cbegin(); i != this->tasks.cend(); i++)
 			(*i)->Run();
-		Profiler::StopProfiling();
-		std::cout << "Peak memory: " << Profiler::GetPeak() << std::endl;
 
 		return true;
 	}

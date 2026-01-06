@@ -40,7 +40,7 @@ DEP_MSDPARSER = $(PATH_MSDPARSER)/MSDParser.h
 # --------------------------------------------------------------------------
 # RunSection module
 PATH_RUNSECTION = ./RunSection
-OBJS_RUNSECTION = $(PATH_RUNSECTION)/RunSection.o $(PATH_RUNSECTION)/BasicTask.o $(PATH_RUNSECTION)/Action.o $(PATH_RUNSECTION)/Settings.o $(PATH_RUNSECTION)/OutputHandler.o $(PATH_RUNSECTION)/Utility.o $(PATH_RUNSECTION)/HeapProfiler.o
+OBJS_RUNSECTION = $(PATH_RUNSECTION)/RunSection.o $(PATH_RUNSECTION)/BasicTask.o $(PATH_RUNSECTION)/Action.o $(PATH_RUNSECTION)/Settings.o $(PATH_RUNSECTION)/OutputHandler.o $(PATH_RUNSECTION)/Utility.o
 DEP_RUNSECTION = $(PATH_RUNSECTION)/RunSection.h
 # ---
 # RunSection custom tasks
@@ -69,8 +69,8 @@ PATH_LINALG_VENDOR = ./Vendor/
 # General Compilation Options
 OBJECTS = main.o $(OBJS_SPINAPI) $(OBJS_MSDPARSER) $(OBJS_RUNSECTION) $(OBJS_RUNSECTION_TASKS) $(OBJS_RUNSECTION_ACTIONS)
 CC = g++ -std=c++17		# Compiler to use
-LFLAGS = -Wall -g -DARMA_DONT_PRINT_FAST_MATH_WARNING -O3	# Linker Flags
-CFLAGS = -Wall -c -march=native -funroll-loops -fconcepts -g -fopenmp -DARMA_DONT_PRINT_FAST_MATH_WARNING -O3 # Compile flags to .o
+LFLAGS = -Wall -g -DARMA_DONT_PRINT_FAST_MATH_WARNING #-O3	# Linker Flags
+CFLAGS = -Wall -c -march=native -funroll-loops -fconcepts -g -fopenmp -DARMA_DONT_PRINT_FAST_MATH_WARNING #-O3 # Compile flags to .o
 
 #DEBUGLFLAGS = -Wall -g -DARMA_DONT_PRINT_FAST_MATH_WARNING
 #DEBUGCFLAGS = -Wall -c -march=native -funroll-loops -fconcepts -g -fopenmp -DARMA_DONT_PRINT_FAST_MATH_WARNING -Werror -Wextra
