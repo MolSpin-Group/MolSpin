@@ -236,7 +236,7 @@ namespace SpinAPI
 				}
 				else
 				{
-					if(distribution == "fjc" || distribution == "freelyjointedchain")
+					if(distribution == "fjc" || distribution == "freelyjointedchain") //only works with isotropic 
 					{
 						this->dist = SCDistribution::FJC;
 					}
@@ -249,11 +249,15 @@ namespace SpinAPI
 				if(this->dist == SCDistribution::FJC || this->dist == SCDistribution::DEFUALT)
 				{
 					FreelyJointedPolymerBL(this->BondLengths,this->hffield, this->tau, this->orientations);
-					
-					double prefactor = this->tau * 0.25 * M_1_PI; //tua^2 / 4pi
-					prefactor = std::pow(prefactor,3.0/2.0);
-					double exp1 = -0.25  * this->tau;
+					auto tau_product = this->tau[0] * this->tau[1] * this->tau[2];
+					auto tau_sum = std::reduce(this->tau.begin(), this->tau.end());
+					double prefactor = std::pow((0.5 * M_1_PI), 3.0/2.0) * std::pow(27.0/(tau_product), 0.5); //(1/2pi)^(3/2) * (27/tx^2ty^2tz^2)^(1/2)
+					double exp1 = -9.0 / (2.0 * tau_sum);
 					this->f = FreelyJointedPolymerD(prefactor,exp1);
+					//double prefactor = this->tau * 0.25 * M_1_PI; //tua^2 / 4pi
+					//prefactor = std::pow(prefactor,3.0/2.0);
+					//double exp1 = -0.25  * this->tau;
+					//this->f = FreelyJointedPolymerD(prefactor,exp1);
 				}
 
 			}
@@ -858,7 +862,7 @@ namespace SpinAPI
 					auto cVAl = &value;
 					for (auto c2 : currentValue)
 					{
-						if(c == '-')
+						if(c2 == '-')
 						{
 							cVAl->positive = false;
 						}
@@ -1808,31 +1812,41 @@ namespace SpinAPI
 	{
 		return std::isfinite(_d);
 	}
-    
-	void FreelyJointedPolymerBL(std::vector<double>& BondLengths, std::vector<SCHyperfineField>& Fields, double& tau, int ori)
+
+	void FreelyJointedPolymerBL(std::vector<double>& BondLengths, std::vector<SCHyperfineField>& Fields, std::vector<double>& tau, int ori)
     {
-		std::vector<double> tau_sum;
+		std::vector<std::vector<double>> tau_sum;
+		//xx,xy,xz,yy,yz,zz
+		for(auto i = 0; i < 6; i++)
+		{
+			tau_sum.push_back({});
+		}
 		for(auto f = Fields.begin(); f != Fields.end(); f++)
 		{
  			auto [a,n,sn] = (*f);
-			//int N = n * ori;
-			int N = n;
-			for(int i = 0; i < N; i++)
+			std::vector<double> values = {a[0][0], a[0][1], a[0][2], a[1][1], a[1][2], a[2][2]};
+			for(int i = 0; i < n; i++)
 			{
-				double bondlength = a[0][0] * std::sqrt(sn * (sn+1));
-				BondLengths.push_back(bondlength);
-				tau_sum.push_back(std::pow(bondlength,2));
+				for(int i = 0; i < 6; i++)
+				{
+					double bondlength = values[i] * std::sqrt(sn * (sn + 1));
+					BondLengths.push_back(bondlength);
+					tau_sum[i].push_back(std::pow(bondlength,2));
+				}
+				//double bondlength = a[0][0] * std::sqrt(sn * (sn+1));
+				//BondLengths.push_back(bondlength);
+				//tau_sum.push_back(std::pow(bondlength,2));
 			}
 		}
-		tau = std::reduce(tau_sum.begin(), tau_sum.end());
-		if(tau == 0)
+		std::vector<double> taus;
+		for(auto i = 0; i < 6; i++)
 		{
-			tau = 0;
+			taus.push_back(std::reduce(tau_sum[i].begin(), tau_sum[i].end()));
 		}
-		else
-		{
-			tau = 6.0 / tau;
-		}
+		double tau_x = taus[0] + std::sqrt(2)/2.0 *(taus[1] + taus[2]);
+		double tau_y = taus[3] + std::sqrt(2)/2.0 *(taus[1] + taus[4]);
+		double tau_z = taus[5] + std::sqrt(2)/2.0 *(taus[2] + taus[4]);
+		tau = {tau_x, tau_y, tau_z};
     }
 
 	SCDistributionF FreelyJointedPolymerD(double prefactor ,double exp1)

@@ -98,7 +98,7 @@ namespace SpinAPI
 		std::vector<double> OriWeights;
 		std::vector<double> BondLengths;
 		std::vector<double> Spacing;
-		double tau;
+		std::vector<double> tau;
 		SCDistribution dist;
 
 		// Special data members for random number generation
@@ -210,10 +210,8 @@ namespace SpinAPI
 	bool CheckActionScalarInteractionPrefactor(const double &);
 
 	//semi classical distributions
-    void FreelyJointedPolymerBL(std::vector<double>&, std::vector<SCHyperfineField>&, double&, int); //length of the nuclear spin vector
+    void FreelyJointedPolymerBL(std::vector<double>&, std::vector<SCHyperfineField>&, std::vector<double>&, int); //length of the nuclear spin vector
 	SCDistributionF FreelyJointedPolymerD(double,double); //Distribution of the nuclear spin vector
-	void FreelyJointedPolymerAnisotropicBL(std::vector<double>&, std::vector<SCHyperfineField>&, double&, int);
-	SCDistributionF FreelyJointedPolymerAnisotropic(double, double);
 }
 
 #endif
