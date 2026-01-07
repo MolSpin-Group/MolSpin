@@ -56,17 +56,18 @@ SpinSystem RPSystem
 	{
 		type = semiclassicalfield;
 		group1 = RPElectron1;
-		HyperfineField = "(0.0004,1,0.5),(0.0002,2,0.5),(1e-05,3,0.5)";
+		//HyperfineField = "(0.0004,1,0.5),(0.0002,2,0.5),(1e-05,3,0.5)";
+		HyperfineField = "(isotropic(0.5e-3.5),1,0.5),(anisotropic(0.5e-3 0.2e-2 0.05),2,0.5),(matrix(0.4 0.3 0.2; 0.1 1.2 0.3; 0.2 0.3e-2 0.4;),3,0.5)";
 		orientations = 100;
 	}
 	
-	Interaction radical2SemiClassical
-	{
-		type = semiclassicalfield;
-		group1 = RPElectron2;
-		HyperfineField = "(0.0004,1,0.5),(0.0002,2,0.5),(1e-05,3,0.5)";
-		orientations = 100;
-	}
+	//Interaction radical2SemiClassical
+	//{
+	//	type = semiclassicalfield;
+	//	group1 = RPElectron2;
+	//	HyperfineField = "(0.0004,1,0.5),(0.0002,2,0.5),(1e-05,3,0.5)";
+	//	orientations = 100;
+	//}
 
  
 	// ---------------------------------------------------------

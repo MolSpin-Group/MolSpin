@@ -233,7 +233,8 @@ namespace SpinAPI
 
 			//  Grab amplitude and orientation parameters
 			const SCHyperfineField field = _interaction->Hfiamplitude()[0]; 
-			const auto[B0,n,sqn] = field;
+			const auto[B,n,sqn] = field;
+			double B0 = B[0][0];
 
 			// Build Sx, Sy, Sz for *each* electron in Group1
 			arma::cx_mat Sx, Sy, Sz;

@@ -23,7 +23,9 @@
 
 namespace SpinAPI
 {
-	typedef std::tuple<std::vector<double>,int,double> SCHyperfineField;
+	typedef std::array<std::array<double,3>,3> SCMatrix3x3;
+	typedef std::tuple<SCMatrix3x3, int, double> SCHyperfineField;
+	//typedef std::tuple<double, int, double> SCHyperfineField;
 	typedef std::function<double (std::array<double,3>)> SCDistributionF;
 
 	enum class SCDistribution
@@ -32,6 +34,9 @@ namespace SpinAPI
 		FJCAiso = 1, //Anisotropic version of FJC
 		DEFUALT //is FJC
 	};
+
+	std::ostream &operator<<(std::ostream&, const SCMatrix3x3&);
+
 	class Interaction
 	{
 	private:
@@ -158,6 +163,7 @@ namespace SpinAPI
 		bool HasFieldTimeDependence() const;
 		bool HasTensorTimeDependence() const;
 		bool HasTimeDependence() const;
+		bool ParseTensorFromString(const std::string &, SCMatrix3x3&);
 
 		// Get time-dependency parameters
 		double GetTDFrequency() const { return this->tdFrequency; };
