@@ -1,0 +1,8 @@
+--- Running task "main" ---
+Running method StaticSS.
+
+Starting with SpinSystem "rpsystem".
+Ready to perform calculation.
+Done with calculation.
+
+Done with SpinSystem "rpsystem"

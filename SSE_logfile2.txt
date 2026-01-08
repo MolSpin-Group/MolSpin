@@ -1,5 +1,5 @@
 --- Running task "main" ---
-Running method StaticHS_Stochastic_TimeEvo.
+Running method StaticHS_Stochastic_Yields.
 
 Starting with SpinSystem "rpsystem".
 Singlet initial state.
@@ -9,10 +9,11 @@ Autoseed is off.
 Seed number is 6.69041e+07.
 Number of Monte Carlo samples is 3.
 No sampling method was defined. Using SU(Z) spin states for Monte Carlo sampling.
-Total time is chosen as 6000 ns.
-Total time is chosen as 1056.52 rad mT^-1.
+Total time is chosen as 2000 ns.
+Total time is chosen as 352.172 rad mT^-1.
 Time step is chosen as 1 ns.
 Time step is chosen as 0.176086 rad mT^-1.
-Number of time propagation steps: 6000.
+Number of time propagation steps: 2000.
+Quantum yield corrections are turned off.
 Autoexpm is chosen as the propagation method.
 Double precision is chosen for the autoexpm method.

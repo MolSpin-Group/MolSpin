@@ -4,5 +4,3 @@ Running method StaticSSTimeEvolution.
 Ready to perform calculation.
 Using exponential propogator
 Calculating the propagator...
-
-Done with calculations!

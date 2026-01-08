@@ -51,7 +51,7 @@ namespace RunSection
         return true;
     }
 
-    MCSpherePoint* CalculateMCSpherePoints(int n, double rmax)
+    MCSpherePoint* CalculateMCSpherePoints(int n, double rmax_x, double rmax_y, double rmax_z)
     {
         MCSpherePoint* TempPointArray = (MCSpherePoint*)malloc(n * sizeof(MCSpherePoint));
         if(TempPointArray == NULL)
@@ -61,15 +61,21 @@ namespace RunSection
         }
         std::random_device RandDev;
         std::mt19937 Generator(RandDev());
-        std::uniform_real_distribution<double> distPhi(0,2.0*M_PI); //multiply by 2pi;
-        std::uniform_real_distribution<double> distTheta(0,M_PI);;
-        std::uniform_real_distribution<double> distR(0,rmax); //multiply by rmax
+        std::uniform_real_distribution<double> distPhi(0,2.0*M_PI);
+        std::uniform_real_distribution<double> distTheta(0,M_PI);
+        std::uniform_real_distribution<double> distScale(0,1);
+        
         for(int i = 0; i < n; i++)
         {
             double phi = distPhi(Generator);
             double theta = distTheta(Generator);
-            double r = distR(Generator);
-            TempPointArray[i] = {theta,phi,r};
+            double scalefactor = std::pow(distScale(Generator), 1.0/3.0);
+            
+            double r_x = scalefactor * rmax_x;
+            double r_y = scalefactor * rmax_y;
+            double r_z = scalefactor * rmax_z;
+            TempPointArray[i] = {theta, phi, {r_x, r_y, r_z}};
+            //TempPointArray[i] = {theta,phi,r};
         }
 
         std::vector<MCSpherePoint> UniquePoints;
@@ -88,17 +94,20 @@ namespace RunSection
         return TempPointArray;
     }
 
+    MCSpherePoint* CalculateMCSpherePoints(int n, double rmax)
+    {
+        return CalculateMCSpherePoints(n, rmax, rmax, rmax);
+    }
+
     bool RetrieveMCPoint(std::array<double, 3> &arr, MCSpherePoint *ptr, int num)
     {
         MCSpherePoint p = ptr[num];
         
-        double theta = p.theta;
-        double phi = p.phi;
-        double r = p.r;
+        auto[theta, phi, r]= p;
 
-        double x = r * std::sin(theta) * std::cos(phi);
-        double y = r * std::sin(theta) * std::sin(phi);
-        double z = r * std::cos(theta);
+        double x = r[0] * std::sin(theta) * std::cos(phi);
+        double y = r[1] * std::sin(theta) * std::sin(phi);
+        double z = r[2] * std::cos(theta);
 
         arr = {x,y,z};
         return true;

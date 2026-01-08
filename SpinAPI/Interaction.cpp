@@ -177,6 +177,11 @@ namespace SpinAPI
 						c++;
 						continue;
 					}
+					if(!InTuple && (*c) == ' ')
+					{
+						c++;
+						continue;
+					}
 					if(InTuple)
 					{
 						//depth check i.e if depth is 2 we are in tensor
@@ -730,7 +735,6 @@ namespace SpinAPI
 		enum class ParseState
 		{
 			START,
-			TENSOR_TYPE,
 			VALUE,
 			END
 		};
@@ -1813,9 +1817,10 @@ namespace SpinAPI
 		return std::isfinite(_d);
 	}
 
-	void FreelyJointedPolymerBL(std::vector<double>& BondLengths, std::vector<SCHyperfineField>& Fields, std::vector<double>& tau, int ori)
+	void FreelyJointedPolymerBL(std::vector<BL>& BondLengths, std::vector<SCHyperfineField>& Fields, std::vector<double>& tau, int ori)
     {
 		std::vector<std::vector<double>> tau_sum;
+		std::vector<double> BL;
 		//xx,xy,xz,yy,yz,zz
 		for(auto i = 0; i < 6; i++)
 		{
@@ -1830,7 +1835,7 @@ namespace SpinAPI
 				for(int i = 0; i < 6; i++)
 				{
 					double bondlength = values[i] * std::sqrt(sn * (sn + 1));
-					BondLengths.push_back(bondlength);
+					BL.push_back(bondlength);
 					tau_sum[i].push_back(std::pow(bondlength,2));
 				}
 				//double bondlength = a[0][0] * std::sqrt(sn * (sn+1));
@@ -1838,6 +1843,25 @@ namespace SpinAPI
 				//tau_sum.push_back(std::pow(bondlength,2));
 			}
 		}
+
+		//collate bond lengths
+		double sqrt2 = std::sqrt(2)/2.0;
+		for (int i = 0; i < BL.size(); i += 6)
+		{
+			double xx = BL[i];
+			double yy = BL[i+3];
+			double zz = BL[i+5];
+			double xy = BL[i+1];
+			double xz = BL[i+2];
+			double yz = BL[i+4];
+			
+			double x = xx + sqrt2 * (xy+xz);
+			double y = yy + sqrt2 * (xy+yz);
+			double z = zz + sqrt2 * (xz+yz);
+
+			BondLengths.push_back({x,y,z});
+		}
+
 		std::vector<double> taus;
 		for(auto i = 0; i < 6; i++)
 		{
@@ -1861,14 +1885,6 @@ namespace SpinAPI
 		};
 		return f;
     }
-    
-	void FreelyJointedPolymerAnisotropicBL(std::vector<double> &, std::vector<SCHyperfineField> &, double &, int)
-    {
-    }
-    
-	SCDistributionF FreelyJointedPolymerAnisotropic(double, double)
-    {
-        return SCDistributionF();
-    }
+
     // -----------------------------------------------------
 }

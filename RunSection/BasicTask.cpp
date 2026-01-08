@@ -294,7 +294,7 @@ namespace RunSection
 				if((*e)->Type() == SpinAPI::InteractionType::SemiClassicalField)
 				{
 					AllWeights[0].push_back((*e)->GetOriWeights());
-					std::vector<double> BL = (*e)->VL();
+					std::vector<double> BL = {(*e)->VL()[0].x};
 					double BMax = std::reduce(BL.begin(), BL.end());
 					BLandSamples.first.push_back(BMax);
 					BLandSamples.second.push_back((*e)->Orientations());
@@ -618,7 +618,8 @@ namespace RunSection
 		{
 			NumOfTrapezia.push_back(props.numSamples[dimensions-i-1]);
 		}
-		trapezia = Eval2(trapezia, NumOfTrapezia);
+		if(NumOfTrapezia.size() != 0)
+			trapezia = Eval2(trapezia, NumOfTrapezia);
 		
 
 		double totalIntegral = 0.0;

@@ -529,9 +529,19 @@ namespace SpinAPI
 			//  Grab amplitude and orientation parameters
 			int n = _interaction->Orientations();
 			std::vector<SCHyperfineField> hf = _interaction->Hfiamplitude();
-			std::vector<double> B = _interaction->VL();
-			double BMax = std::reduce(B.begin(),B.end());
-
+			std::vector<BL> B = _interaction->VL();
+			auto SumBL = [](std::vector<BL>& B) {
+				double xsum, ysum, zsum;
+				for(unsigned int i = 0; i < B.size(); i++)
+				{
+					xsum += B[i].x;
+					ysum += B[i].y;
+					zsum += B[i].z;
+				}
+				return std::make_tuple(xsum,ysum,zsum);
+			};
+			auto [BMax_x, BMax_y, BMax_z] = SumBL(B);
+		
 			// Build Sx, Sy, Sz for *each* electron in Group1
 			arma::sp_cx_mat Sx;
 			arma::sp_cx_mat Sy;
@@ -557,7 +567,7 @@ namespace SpinAPI
 					this->CreateOperator((*i)->Tz(), (*i), Sz);
 				}
 				
-				RunSection::MCSpherePoint* points = RunSection::CalculateMCSpherePoints(n,BMax);
+				RunSection::MCSpherePoint* points = RunSection::CalculateMCSpherePoints(n,BMax_x, BMax_y, BMax_z);
 				int currentcol = 0;
 				typedef std::pair<std::pair<std::array<double,3>,double>,double> WeightsType;
 				std::vector<WeightsType> weights;

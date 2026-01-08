@@ -18,14 +18,14 @@ SpinSystem RPSystem
 		tensor = isotropic(2.0023);
 		spin = 1/2;
 	}
-	Spin FN1
+	Spin FN5
 	{
-		tensor = matrix("0.0005 0.0 0.0;0.0 0.0005 0.0;0.0 0.0 0.0005");
+		tensor = isotropic("1.0");
 		spin = 1/2;
 	}
-	Spin WN1
+	Spin FN10
 	{
-		tensor = matrix("0.0005 0.0 0.0;0.0 0.0005 0.0;0.0 0.0 0.0005");
+		tensor = isotropic("1.0");
 		spin = 1/2;
 	}
 
@@ -39,37 +39,51 @@ SpinSystem RPSystem
 		spins = RPElectron1,RPElectron2;
 	}
 
-	Interaction radical1hyperfine
+	Interaction FADHYP1
 	{
 		type = hyperfine;
 		group1 = RPElectron1;
-		group2 = FN1;
+		group2 = FN5;
+		tensor = matrix("-0.099 -0.003 0.000; -0.003 -0.087 0.000; 0.000 0.000 1.757");
+		prefactor = 1.0e-3;
 	}
- 	Interaction radical2hyperfine
+ 	Interaction FADHYP2
 	{
 		type = hyperfine;
-		group1 = RPElectron2;
-		group2 = WN1;
+		group1 = RPElectron1;
+		group2 = FN10;
+		tensor = matrix("-0.015 -0.002 0.000; -0.002 -0.024 0.000; 0.000 0.000 0.605");
+		prefactor = 1.0e-3;
 	}
 
 	Interaction radical1SemiClassical
 	{
 		type = semiclassicalfield;
 		group1 = RPElectron1;
-		HyperfineField = "(isotropic(0.0004),1,0.5),(isotropic(0.0002),2,0.5),(isotropic(1e-05),3,0.5)";
-		orientations = 100;
+		HyperfineField = "(isotropic(-0.201),1,0.5),
+						  (isotropic(0.407),1,0.5),
+						  (isotropic(0.440),1,0.5),
+						  (isotropic(-0.142),1,0.5),
+						  (isotropic(0.067),1,0.5)";
+		prefactor = 1.0e-3;
+		orientations = 300;
 	}
 	
 	Interaction radical2SemiClassical
 	{
 		type = semiclassicalfield;
 		group1 = RPElectron2;
-		HyperfineField = "(isotropic(0.0004),1,0.5),(isotropic(0.0002),2,0.5),(isotropic(1e-05),3,0.5)";
-		orientations = 100;
+		HyperfineField = "(isotropic(-0.053),1,0.5),
+						  (isotropic(-1.001),1,0.5),
+						  (isotropic(-0.571),1,0.5),
+						  (isotropic(-0.443),1,0.5),
+						  (isotropic(-0.043),1,0.5),
+						  (isotropic(-0.275),1,0.5),
+					      (isotropic(1.572),1,0.5)";
+		prefactor = 1.0e-3;
+		orientations = 300;
 	}
-	
 
- 
 	// ---------------------------------------------------------
 
 	// ---------------------------------------------------------
@@ -189,8 +203,8 @@ Run
 	Task main
 	{
 		type = StaticSS-timeevolution;
-		logfile = "SW_log4.txt";
-		datafile = "SW_result4.dat";
+		logfile = "SW_log3.txt";
+		datafile = "SW_result3.dat";
 		transitionyields = false;
 		totaltime = 1000;
 		timestep = 1;

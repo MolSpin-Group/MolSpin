@@ -264,7 +264,7 @@ namespace RunSection
 					if((*e)->Type() == SpinAPI::InteractionType::SemiClassicalField)
 					{
 						AllWeights[ic][0].push_back((*e)->GetOriWeights());
-						std::vector<double> BL = (*e)->VL();
+						std::vector<double> BL = {(*e)->VL()[0].x};
 						double BMax = std::reduce(BL.begin(), BL.end());
 						BLandSamples[ic].first.push_back(BMax);
 						BLandSamples[ic].second.push_back((*e)->Orientations());

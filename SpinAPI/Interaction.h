@@ -27,6 +27,13 @@ namespace SpinAPI
 	typedef std::tuple<SCMatrix3x3, int, double> SCHyperfineField;
 	//typedef std::tuple<double, int, double> SCHyperfineField;
 	typedef std::function<double (std::array<double,3>)> SCDistributionF;
+	
+	struct BL
+	{
+		double x;
+		double y;
+		double z;
+	};
 
 	enum class SCDistribution
 	{
@@ -96,7 +103,7 @@ namespace SpinAPI
 		std::vector<SCHyperfineField> hffield;
 		unsigned int orientations;
 		std::vector<double> OriWeights;
-		std::vector<double> BondLengths;
+		std::vector<BL> BondLengths;
 		std::vector<double> Spacing;
 		std::vector<double> tau;
 		SCDistribution dist;
@@ -159,11 +166,11 @@ namespace SpinAPI
 		const int Orientations() const;
 		std::vector<double>& GetOriWeights() { return this->OriWeights; };
 		std::vector<double>& GetSpacing() { return this->Spacing; };
-		const std::vector<double> VL() const { return this->BondLengths; }
+		const std::vector<BL> VL() const { return this->BondLengths; }
 		bool HasFieldTimeDependence() const;
 		bool HasTensorTimeDependence() const;
 		bool HasTimeDependence() const;
-		bool ParseTensorFromString(const std::string &, SCMatrix3x3&);
+		bool ParseTensorFromString(const std::string &, SCMatrix3x3&); //ParseTensorFromStringHyperfineField
 
 		// Get time-dependency parameters
 		double GetTDFrequency() const { return this->tdFrequency; };
@@ -186,7 +193,7 @@ namespace SpinAPI
 		void GetActionTargets(std::vector<RunSection::NamedActionScalar> &, std::vector<RunSection::NamedActionVector> &, const std::string &);
 
 		//get distribution functiom
-		SCDistributionF f;
+		SCDistributionF f;//distribution function ptr
 	};
 
 	// Define alias for interaction-pointers
@@ -210,7 +217,7 @@ namespace SpinAPI
 	bool CheckActionScalarInteractionPrefactor(const double &);
 
 	//semi classical distributions
-    void FreelyJointedPolymerBL(std::vector<double>&, std::vector<SCHyperfineField>&, std::vector<double>&, int); //length of the nuclear spin vector
+    void FreelyJointedPolymerBL(std::vector<BL>&, std::vector<SCHyperfineField>&, std::vector<double>&, int); //length of the nuclear spin vector
 	SCDistributionF FreelyJointedPolymerD(double,double); //Distribution of the nuclear spin vector
 }
 
