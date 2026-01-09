@@ -66,7 +66,7 @@ SpinSystem RPSystem
 						  (matrix(-0.142 0.0 0.0; 0.0 -0.142 0.0; 0.0 0.0 -0.142),1,0.5),
 						  (matrix(0.067 -0.025 0.0; -0.025 0.108 0.0; 0.0 0.0 -0.005),1,0.5)";
 		prefactor = 1.0e-3;
-		orientations = 200;
+		orientations = 250;
 	}
 	
 	Interaction radical2SemiClassical
@@ -81,7 +81,7 @@ SpinSystem RPSystem
 						  (matrix(-0.275 -0.157 -0.175; -0.157 -0.273 0.092; -0.175 0.092 -0.285),1,0.5),
 					      (matrix(1.572 0.016 0.047; 0.016 1.516 0.063; 0.047 0.063 1.726),1,0.5)";
 		prefactor = 1.0e-3;
-		orientations = 200;
+		orientations = 250;
 	}
 
 	// ---------------------------------------------------------
@@ -133,7 +133,7 @@ SpinSystem RPSystem
 	{
 		type = sink;
 		source = Singlet;	// spin-independent reaction
-		rate = 0.001;
+		rate = 0.00;
 
 	}
 		Transition Product2
@@ -161,7 +161,7 @@ SpinSystem RPSystem
 	{
 		type = sink;
 		source = Identity;	// spin-independent reaction
-		rate = 0.001;
+		rate = 0.00;
 
 	}
 
@@ -202,11 +202,11 @@ Run
 {
 	Task main
 	{
-		type = StaticSS;
+		type = StaticSS-timeevolution;
 		logfile = "SW_log2.txt";
 		datafile = "SW_result2.dat";
-		transitionyields = true;
-		//totaltime = 6000;
-		//timestep = 1;
+		transitionyields = false;
+		totaltime = 1000;
+		timestep = 1;
 	}
 }

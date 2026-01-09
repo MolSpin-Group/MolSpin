@@ -1,8 +1,3 @@
+No propagator defined, using the default propogator (RK45)
 --- Running task "main" ---
-Running method StaticSS.
-
-Starting with SpinSystem "rpsystem".
-Ready to perform calculation.
-Done with calculation.
-
-Done with SpinSystem "rpsystem"
+Running method StaticSSTimeEvolution.

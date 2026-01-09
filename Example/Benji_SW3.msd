@@ -60,11 +60,11 @@ SpinSystem RPSystem
 	{
 		type = semiclassicalfield;
 		group1 = RPElectron1;
-		HyperfineField = "(isotropic(-0.201),1,0.5),
+		HyperfineField = "(isotropic(-0.3873),1,0.5),
 						  (isotropic(0.407),1,0.5),
 						  (isotropic(0.440),1,0.5),
 						  (isotropic(-0.142),1,0.5),
-						  (isotropic(0.067),1,0.5)";
+						  (isotropic(0.0566),1,0.5)";
 		prefactor = 1.0e-3;
 		orientations = 300;
 	}
@@ -73,13 +73,13 @@ SpinSystem RPSystem
 	{
 		type = semiclassicalfield;
 		group1 = RPElectron2;
-		HyperfineField = "(isotropic(-0.053),1,0.5),
-						  (isotropic(-1.001),1,0.5),
-						  (isotropic(-0.571),1,0.5),
-						  (isotropic(-0.443),1,0.5),
-						  (isotropic(-0.043),1,0.5),
-						  (isotropic(-0.275),1,0.5),
-					      (isotropic(1.572),1,0.5)";
+		HyperfineField = "(isotropic(0.3213),1,0.5),
+						  (isotropic(-0.598),1,0.5),
+						  (isotropic(-0.487),1,0.5),
+						  (isotropic(-0.3636),1,0.5),
+						  (isotropic(-0.208),1,0.5),
+						  (isotropic(-0.2776),1,0.5),
+					      (isotropic(1.604),1,0.5)";
 		prefactor = 1.0e-3;
 		orientations = 300;
 	}
