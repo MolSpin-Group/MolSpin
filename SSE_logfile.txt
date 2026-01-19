@@ -8,3 +8,13 @@ Size of Spin Subspace 64
 Autoseed is off.
 Seed number is 6.69041e+07.
 Number of Monte Carlo samples is 3.
+No sampling method was defined. Using SU(Z) spin states for Monte Carlo sampling.
+Total time is chosen as 20 ns.
+Total time is chosen as 3.52172 rad mT^-1.
+Time step is chosen as 1 ns.
+Time step is chosen as 0.176086 rad mT^-1.
+Number of time propagation steps: 20.
+Autoexpm is chosen as the propagation method.
+Double precision is chosen for the autoexpm method.
+
+Done with SpinSystem "rpsystem"

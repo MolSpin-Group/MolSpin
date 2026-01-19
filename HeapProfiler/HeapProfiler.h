@@ -1,5 +1,5 @@
 /////////////////////////////////////////////////////////////////////////
-// HeapProfiler (RunSection module)
+// HeapProfiler
 // ------------------
 // Tracks the heap allocation for given task
 //
