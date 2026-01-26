@@ -426,6 +426,15 @@ namespace RunSection
 			RollingYield.push_back(0.0);
 		}
 
+		RK45_PropParam params;
+		params.atol = 1e-8;
+		params.rtol = 1e-10;
+		params.min = MinTimeStep;
+		params.max = MaxTimeStep;
+		params.safety = 0.8;
+		params.f1 = 0.1;
+		params.f2 = 5.0;
+
 		this->Log() << "Starting time evolution with timestep: " << this->timestep << ", total time: " << this->totaltime << ", minimum timestep: " << MinTimeStep << ", maximum timestep: " << MaxTimeStep << std::endl;
 		while(Currenttime <= this->totaltime)
 		{
@@ -448,7 +457,9 @@ namespace RunSection
 				//auto rho0Eigen = ConvertAramdilloToEigen(rho0);
 				//this->timestep = RungeKutta4AdaptiveTimeStep(LEigen, rho0Eigen, rho0Eigen, this->timestep, TaskMultiRadicalPairSSTimeEvo::ComputeRhoDot, {1e-4,1e-3}, InitialTimestep * 1e-2);
 				//rho0 = ConvertEigenToArmadillo(rho0Eigen).col(0);
-				this->timestep = RungeKutta45Armadillo(L,rho0,rho0,this->timestep,ComputeRhoDot,{1e-7,1e-6},MinTimeStep, MaxTimeStep);
+
+				
+				this->timestep = RungeKutta45Armadillo(L, rho0, rho0, this->timestep, ComputeRhoDot, 0.0, params);
 			}
 
 

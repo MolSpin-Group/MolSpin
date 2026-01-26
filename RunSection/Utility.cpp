@@ -242,11 +242,11 @@ MCSpherePoint* CalculateMCSpherePoints(int n, double rmax_x, double rmax_y, doub
     typedef arma::sp_cx_mat MatrixArma;
     typedef arma::cx_vec VecType;
 
-    double RungeKutta45Armadillo(arma::sp_cx_mat &L, arma::cx_vec &rho0, arma::cx_vec &drhodt, double dumpstep, RungeKuttaFuncArma func, std::pair<double, double> tolerance, double MinTimeStep, double MaxTimeStep, double time)
+    double RungeKutta45Armadillo(arma::sp_cx_mat &L, arma::cx_vec &rho0, arma::cx_vec &drhodt, double dumpstep, RungeKuttaFuncArma func, double time, RK45_PropParam params)
     {
         VecType k0(rho0.n_rows);
 
-        std::vector<std::pair<float, std::vector<float>>> ButcherTable = {{0.0, {}},
+        static std::vector<std::pair<float, std::vector<float>>> ButcherTable = {{0.0, {}},
                                                                           {0.25, {0.25}},
                                                                           {3.0 / 8.0, {3.0 / 32.0, 9.0 / 32.0}},
                                                                           {12.0 / 13.0, {1932.0 / 2197.0, -7200.0 / 2197.0, 7296.0 / 2197.0}},
@@ -304,50 +304,91 @@ MCSpherePoint* CalculateMCSpherePoints(int n, double rmax_x, double rmax_y, doub
 
         auto [RK4, RK5] = RungeKutta45(L, rho0, dumpstep, func);
 
+        double relative_error = 0.0;
+        auto[atol, rtol, min_step, max_step, safety, f1, f2] = params;
         double change = 0;
         {
             VecType diff = RK5 - RK4;
             double sum = 0;
+            double relative_error_sum = 0.0;
 
 #pragma omp parallel for reduction(+ : sum)
             for (int i = 0; i < int(diff.n_rows); i++)
             {
                 sum += std::pow(std::abs(diff[i]), 2);
+                relative_error_sum += rtol * std::pow(std::abs(RK5[i]), 2); 
             }
 
             change = std::sqrt(sum);
+            relative_error = std::sqrt(relative_error_sum);
         }
 
-        auto Adjusth = [](double tol, double ch)
+        auto Adjusth = [&](double tol, double ch, double safety, double f1, double f2)
         {
-            double h4 = (tol / (2 * ch));
-            return std::sqrt(std::sqrt(h4));
+            double error_ratio = ch/tol;
+            return dumpstep * std::min(f2, std::max(f1, safety * std::pow(error_ratio, -1.0/5.0)));
         };
 
         double NewStepSize = 0.0;
-        if (change < tolerance.first && dumpstep < MaxTimeStep)
+
+        double max_change = atol + relative_error;
+        NewStepSize = Adjusth(max_change, change, safety, f1, f2);
+        if(NewStepSize > max_step)
         {
-            NewStepSize = dumpstep * Adjusth(tolerance.first, change);
-            if (NewStepSize > MaxTimeStep)
-            {
-                NewStepSize = MaxTimeStep;
-            }
+            NewStepSize = max_step;
         }
-        else if (change > tolerance.second && dumpstep > MinTimeStep)
+        else if(NewStepSize < min_step)
         {
-            NewStepSize = dumpstep * Adjusth(tolerance.second, change);
-            if (NewStepSize < MinTimeStep)
-            {
-                NewStepSize = MinTimeStep;
-            }
-        }
-        else
-        {
-            NewStepSize = dumpstep;
+            NewStepSize = min_step;
         }
 
         drhodt = RK4;
         return NewStepSize;
+    }
+
+    arma::cx_vec RadauIIA35Armadillo(arma::sp_cx_mat &L, arma::cx_vec &rho0, double dumpstep, RungeKuttaFuncArma func, JacobianFuncArma Jfunc,bool& reject_step, double time, RK45_PropParam PropParams)
+    {
+        static std::array<double,3> c = {(4.0 - std::sqrt(6.0)) / 10.0, (4.0 + std::sqrt(6.0)) / 10.0, 1.0};
+        static std::array<double,3> b = {(16.0 - std::sqrt(6.0)) / 36.0, (16.0 + std::sqrt(6.0)) / 36.0, 1.0 / 9.0};
+        static std::array<std::array<double,3>,3> A = {{{(88.0 - 7.0 * std::sqrt(6.0)) / 360.0, (296.0 - 169.0 * std::sqrt(6.0)) / 1800.0, (-2.0 + 3.0 * std::sqrt(6.0)) / 225.0},
+                                                        {(296.0 + 169.0 * std::sqrt(6.0)) / 1800.0, (88.0 + 7.0 * std::sqrt(6.0)) / 360.0, (-2.0 - 3.0 * std::sqrt(6.0)) / 225.0},
+                                                        {(16.0 - std::sqrt(6.0)) / 36.0, (16.0 + std::sqrt(6.0)) / 36.0, 1.0 / 9.0}}};
+        const int s = 3; //number of stages
+        const int N = rho0.n_rows;
+        arma::cx_vec blank = arma::cx_vec(N, arma::fill::zeros);
+
+        auto Step = [&](double& t, double h, arma::cx_vec& y, RungeKuttaFuncArma func, JacobianFuncArma Jfunc, int max_iterations = 8)
+        {
+            std::vector<arma::cx_vec> K(s, arma::cx_vec(N, arma::fill::zeros));
+            std::vector<arma::cx_vec> R(s, arma::cx_vec(N, arma::fill::zeros));
+            std::vector<arma::cx_vec> Y(s, arma::cx_vec(N, arma::fill::zeros));
+
+            auto iteration = [&]()
+            {
+                for(int i = 0; i < s; i++)
+                {
+                    for(int j = 0; j < N; j++)
+                    {
+                        double sum = y[j];
+                        for(int l = 0; l < s; l++)
+                        {
+                            sum += h * A[i][j] * K[l][j];
+                        }
+                        Y[i][j] = sum;
+                    }
+                }
+
+                double max_res = 0.0;
+                for(int i = 0; i < s; i++)
+                {
+                    arma::cx_vec fy(n);
+                    fy = func(t + c[i]*h, L, blank, rho0);
+                }
+            }
+
+
+        }
+
     }
 
     unsigned int GetNumThreads()
@@ -498,16 +539,16 @@ MCSpherePoint* CalculateMCSpherePoints(int n, double rmax_x, double rmax_y, doub
         
     }
 
-    bool BlockSolver(arma::sp_cx_mat &A, arma::cx_vec &b, int block_size, arma::cx_vec &x)
+    bool BlockSolver(arma::sp_cx_mat &A, arma::cx_vec &b, std::vector<int> block_sizes, arma::cx_vec &x)
     {
         bool inverted = false;
-        if(IsBlockTridiagonal(A,block_size))
-        {
-            x = ThomasBlockSolver(A, b, block_size);
-            return true;
-        }
+        //if(IsBlockTridiagonal(A,block_sizes[0]))
+        //{
+        //    x = ThomasBlockSolver(A, b, block_sizes[0]);
+        //    return true;
+        //}
 
-        arma::cx_mat A_inv = BlockMatrixInverse(A, block_size, inverted);
+        arma::cx_mat A_inv = BlockMatrixInverse(A, block_sizes, inverted);
         if(!inverted)
         {
             x = arma::cx_vec(arma::size(b), arma::fill::zeros);
@@ -518,14 +559,30 @@ MCSpherePoint* CalculateMCSpherePoints(int n, double rmax_x, double rmax_y, doub
     }
 
     //DONT USE THESE FUNCTIONS THEY ARE SLOW
-    arma::cx_mat BlockMatrixInverse(arma::sp_cx_mat &A, int block_size, bool &Invertible)
+    arma::cx_mat BlockMatrixInverse(arma::sp_cx_mat &A, std::vector<int> block_sizes, bool &Invertible)
     {
         //Matrix Partitions
         arma::sp_cx_mat A11, A12, A21, A22;
-        A11 = A.submat(0, 0, block_size -1, block_size -1);
-        A12 = A.submat(0, block_size, block_size -1, A.n_cols -1);
-        A21 = A.submat(block_size, 0, A.n_rows-1, block_size -1);
-        A22 = A.submat(block_size, block_size, A.n_rows -1, A.n_cols -1);
+        //A11 is square
+        //A12 is rectangular - wide
+        //A21 is rectangular - tall
+        //A22 is square
+        auto sum = [](std::vector<int> v, int start, int perodicity) {
+            int s = 0;
+            for(int i = start; i < (int)v.size(); i += perodicity)
+            {
+                s= s + v[i];            
+            }
+            return s;
+        };
+        std::pair<int, int> A11_size = {block_sizes[0], block_sizes[0]};
+        std::pair<int, int> A12_size = {block_sizes[0], sum(block_sizes,1,1)};
+        std::pair<int, int> A21_size = {sum(block_sizes,1,1), block_sizes[0]};
+        std::pair<int, int> A22_size = {sum(block_sizes,1,1), sum(block_sizes,1,1)};
+        A11 = A.submat(0, 0, A11_size.first -1, A11_size.second -1);
+        A12 = A.submat(0, A11_size.second, A12_size.first -1, A.n_cols -1);
+        A21 = A.submat(A11_size.first, 0, A.n_rows -1, A21_size.second -1);
+        A22 = A.submat(A11_size.first, A11_size.second, A.n_rows -1, A.n_cols -1);
 
         //Check if A11 and A22 are invertible
         arma::cx_mat A11_inv, A22_inv; //The inverse of a sparse matrix is usually dense, so we use a dense matrix here
@@ -537,15 +594,16 @@ MCSpherePoint* CalculateMCSpherePoints(int n, double rmax_x, double rmax_y, doub
             arma::cx_mat id(A11.n_rows,A11.n_cols,arma::fill::eye);
             A11_invertible = arma::solve(A11_inv,arma::cx_mat(A11),id);
             //A22_invertible = arma::inv(A22_inv, arma::cx_mat(A22));
-            if (A22.n_rows > (unsigned int)block_size)
+            if (block_sizes.size() > 2)
             {
                 bool Invertible2;
-                A22_inv = BlockMatrixInverse(A22, block_size, Invertible2);
+                auto block_sizes_sub = std::vector<int>(block_sizes.begin() +1, block_sizes.end());
+                A22_inv = BlockMatrixInverse(A22, block_sizes_sub, Invertible2);
                 A22_invertible = Invertible2;
             }
             else
             {
-                arma::cx_mat id(A11.n_rows,A11.n_cols,arma::fill::eye);
+                arma::cx_mat id(A22.n_rows,A22.n_cols,arma::fill::eye);
                 A22_invertible = arma::solve(A22_inv,arma::cx_mat(A22),id);
             }
             //std::cout << A22 << std::endl;
@@ -588,9 +646,9 @@ MCSpherePoint* CalculateMCSpherePoints(int n, double rmax_x, double rmax_y, doub
     arma::cx_mat SchurComplementA(arma::cx_mat &A11_inv, arma::sp_cx_mat &A12, arma::sp_cx_mat &A21, arma::sp_cx_mat &A22, bool &Invertible)
     {
         arma::cx_mat S = A22 - A21 * A11_inv * A12;
-        arma::cx_mat S_inv;
-        arma::cx_mat id(A12.n_rows,A12.n_cols,arma::fill::eye);
-        bool S_invertible  = arma::solve(S_inv,S,id);
+        arma::cx_mat S_inv = arma::cx_mat(S.n_rows, S.n_cols);
+        arma::cx_mat id(S.n_rows,S.n_cols,arma::fill::eye);
+        bool S_invertible = arma::solve(S_inv,S,id);
         if(!S_invertible)
         {
             Invertible = false;
@@ -602,11 +660,11 @@ MCSpherePoint* CalculateMCSpherePoints(int n, double rmax_x, double rmax_y, doub
         arma::cx_mat P21 = -1 * S_inv * A21 * A11_inv;
         arma::cx_mat P22 = S_inv;
 
-        arma::cx_mat Inv = arma::cx_mat(A11_inv.n_rows * 2, A11_inv.n_cols * 2);
-        Inv.submat(0, 0, A11_inv.n_rows -1, A11_inv.n_cols -1) = P11;
-        Inv.submat(0, A11_inv.n_cols, A11_inv.n_rows -1, Inv.n_cols -1) = P12;
-        Inv.submat(A11_inv.n_rows, 0, Inv.n_rows -1, A11_inv.n_cols -1) = P21;
-        Inv.submat(A11_inv.n_rows, A11_inv.n_cols, Inv.n_rows -1, Inv.n_cols -1) = P22;
+        arma::cx_mat Inv = arma::cx_mat(P11.n_rows + P21.n_rows, P11.n_cols + P12.n_cols);
+        Inv.submat(0, 0, P11.n_rows -1, P11.n_cols -1) = P11;
+        Inv.submat(0, P11.n_cols, P12.n_rows -1, Inv.n_cols -1) = P12;
+        Inv.submat(P11.n_rows, 0, Inv.n_rows -1, P21.n_cols -1) = P21;
+        Inv.submat(P11.n_rows, P11.n_cols, Inv.n_rows -1, Inv.n_cols -1) = P22;
 
         Invertible = true;
         return Inv;
@@ -615,8 +673,8 @@ MCSpherePoint* CalculateMCSpherePoints(int n, double rmax_x, double rmax_y, doub
     arma::cx_mat SchurComplementB(arma::sp_cx_mat &A11, arma::sp_cx_mat &A12, arma::sp_cx_mat &A21, arma::cx_mat &A22_inv, bool &invertible)
     {
         arma::cx_mat S = A11 - A12 * A22_inv * A21;
-        arma::cx_mat id(A11.n_rows,A11.n_cols,arma::fill::eye);
-        arma::cx_mat S_inv;
+        arma::cx_mat S_inv = arma::cx_mat(S.n_rows, S.n_cols);
+        arma::cx_mat id(S.n_rows,S.n_cols,arma::fill::eye);
         bool S_invertible  = arma::solve(S_inv,S,id);
         if(!S_invertible)
         {
@@ -629,11 +687,11 @@ MCSpherePoint* CalculateMCSpherePoints(int n, double rmax_x, double rmax_y, doub
         arma::cx_mat P21 = -1 * A22_inv * A21 * S_inv;
         arma::cx_mat P22 = A22_inv + A22_inv * A21 * S_inv * A12 * A22_inv;
 
-        arma::cx_mat Inv = arma::cx_mat(A11.n_rows * 2, A11.n_cols * 2);
-        Inv.submat(0, 0, A11.n_rows -1, A11.n_cols -1) = P11;
-        Inv.submat(0, A11.n_cols, A11.n_rows -1, Inv.n_cols -1) = P12;
-        Inv.submat(A11.n_rows, 0, Inv.n_rows -1, A11.n_cols -1) = P21;
-        Inv.submat(A11.n_rows, A11.n_cols, Inv.n_rows -1, Inv.n_cols -1) = P22;
+        arma::cx_mat Inv = arma::cx_mat(P11.n_rows + P21.n_rows, P11.n_cols + P12.n_cols);
+        Inv.submat(0, 0, P11.n_rows -1, P11.n_cols -1) = P11;
+        Inv.submat(0, P11.n_cols, P12.n_rows -1, Inv.n_cols -1) = P12;
+        Inv.submat(P11.n_rows, 0, Inv.n_rows -1, P21.n_cols -1) = P21;
+        Inv.submat(P11.n_rows, P11.n_cols, Inv.n_rows -1, Inv.n_cols -1) = P22;
 
         invertible = true;
         return Inv;
@@ -644,9 +702,10 @@ MCSpherePoint* CalculateMCSpherePoints(int n, double rmax_x, double rmax_y, doub
         arma::cx_mat S1 = A11 - A12 * A22_inv * A21;
         arma::cx_mat S2 = A22 - A21 * A11_inv * A12;
         arma::cx_mat S1_inv, S2_inv;
-        arma::cx_mat id(A11.n_rows,A11.n_cols,arma::fill::eye);
-        bool S1_invertible  = arma::solve(S1_inv,S1,id);
-        bool S2_invertible  = arma::solve(S2_inv,S2,id);
+        arma::cx_mat id1(S1.n_rows,S1.n_cols,arma::fill::eye);
+        arma::cx_mat id2(S2.n_rows,S2.n_cols,arma::fill::eye);
+        bool S1_invertible  = arma::solve(S1_inv,S1,id1);
+        bool S2_invertible  = arma::solve(S2_inv,S2,id2);
         if(!S1_invertible || !S2_invertible)
         {
             invertible = false;
@@ -658,11 +717,11 @@ MCSpherePoint* CalculateMCSpherePoints(int n, double rmax_x, double rmax_y, doub
         arma::cx_mat P21 = -1 * S2_inv * A21 * A11_inv;
         arma::cx_mat P22 = S2_inv;
 
-        arma::cx_mat Inv = arma::cx_mat(A11.n_rows * 2, A11.n_cols * 2);
-        Inv.submat(0, 0, A11.n_rows -1, A11.n_cols -1) = P11;
-        Inv.submat(0, A11.n_cols, A11.n_rows -1, Inv.n_cols -1) = P12;
-        Inv.submat(A11.n_rows, 0, Inv.n_rows -1, A11.n_cols -1) = P21;
-        Inv.submat(A11.n_rows, A11.n_cols, Inv.n_rows -1, Inv.n_cols -1) = P22;
+        arma::cx_mat Inv = arma::cx_mat(P11.n_rows + P21.n_rows, P11.n_cols + P12.n_cols);
+        Inv.submat(0, 0, P11.n_rows -1, P11.n_cols -1) = P11;
+        Inv.submat(0, P11.n_cols, P12.n_rows -1, Inv.n_cols -1) = P12;
+        Inv.submat(P11.n_rows, 0, Inv.n_rows -1, P21.n_cols -1) = P21;
+        Inv.submat(P11.n_rows, P11.n_cols, Inv.n_rows -1, Inv.n_cols -1) = P22;
         
         invertible = true;
         return Inv;
