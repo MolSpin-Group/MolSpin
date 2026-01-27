@@ -196,6 +196,7 @@ namespace RunSection
 		//	// Move on to next spin space
 		//	nextDimension += i->second->SpaceDimensions();
 		//}
+		SeperateSpinSystems(rho0,spaces,this->ProductYieldsOnly);
 		this->Data() << std::endl;
 
 		arma::cx_vec result = arma::cx_vec(rho0.n_rows);
@@ -255,7 +256,7 @@ namespace RunSection
 			MaxTolerance = 1e-10;
 		}
 		
-		RK45_PropParam params;
+		PropParam params;
 		params.atol = MinTolerance;
 		params.rtol = MaxTolerance;
 		params.min = MinTimeStep;
@@ -284,14 +285,16 @@ namespace RunSection
 		this->Log() << "Starting time evolution with timestep: " << this->timestep << ", total time: " << this->totaltime << ", minimum timestep: " << MinTimeStep << ", maximum timestep: " << MaxTimeStep << std::endl;
 		while (CurrentTime <= this->totaltime)
 		{
-			this->Data() << this->RunSettings()->CurrentStep() << " ";
-			CurrentTime += this->timestep;
-			this->Data() << CurrentTime << " ";
-			this->WriteStandardOutput(this->Data());
-
 			// Propagate
 
-			this->timestep = RungeKutta45Armadillo(L, rho0, rho0, this->timestep, ComputeRhoDot,0.0,params);
+			//this->timestep = RungeKutta45Armadillo(L, rho0, rho0, this->timestep, ComputeRhoDot,0.0,params);
+			auto[t,a] = AdaptiveDirectKrylovArmadillo(L, rho0, rho0, this->timestep, CurrentTime, params);
+
+			this->Data() << this->RunSettings()->CurrentStep() << " ";
+			CurrentTime += (a == true) ? this->timestep : t;
+			this->timestep = t;
+			this->Data() << CurrentTime << " ";
+			this->WriteStandardOutput(this->Data());
 
 			NoFail = SeperateSpinSystems(rho0, spaces, this->ProductYieldsOnly);
 			if (!NoFail)
@@ -300,6 +303,7 @@ namespace RunSection
 			this->Data() << std::endl;
 		}
 		this->Log() << "Done with calculation." << std::endl;
+		this->timestep = InitialTimeStep;
 
 		return true;
 	}

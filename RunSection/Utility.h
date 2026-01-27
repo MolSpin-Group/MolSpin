@@ -76,7 +76,7 @@ namespace RunSection
     typedef arma::cx_vec (*RungeKuttaFuncArma)(double t, arma::sp_cx_mat &, arma::cx_vec &, arma::cx_vec);
     typedef arma::sp_cx_mat (*JacobianFuncArma)(double t, arma::sp_cx_mat &, arma::cx_vec &);
     
-    struct RK45_PropParam
+    struct PropParam
     {
         double atol = 1e-8;
         double rtol = 1e-10;
@@ -85,6 +85,15 @@ namespace RunSection
         double safety = 0.8;
         double f1 = 0.1;
         double f2 = 5.0;
+
+        int max_krylov_iterations = 30;
+        int reject_limit = 2;
+    };
+
+    struct TimePropReturnInfo
+    {
+        double timestep;
+        bool step_accepted;
     };
     
     /// Runge-Kutta-Fehlberg method (4th and 5th order) with adaptive time step control
@@ -98,10 +107,9 @@ namespace RunSection
     ///     @param MaxTimeStep: Maximum allowed time step (double) - Optional, default = 1e6
     ///     @param time: Current time (double) - Optional, default = 0
     ///     @return New time step (double)
-    double RungeKutta45Armadillo(arma::sp_cx_mat &, arma::cx_vec &, arma::cx_vec &, double, RungeKuttaFuncArma, double time = 0, RK45_PropParam PropParams = RK45_PropParam());
+    double RungeKutta45Armadillo(arma::sp_cx_mat &, arma::cx_vec &, arma::cx_vec &, double, RungeKuttaFuncArma, double time = 0, PropParam PropParams = PropParam());
 
-
-
+    TimePropReturnInfo AdaptiveDirectKrylovArmadillo(arma::sp_cx_mat &L, arma::cx_vec &rho0, arma::cx_vec &drhodt, double dumpstep, double time = 0, PropParam PropParams = PropParam());
 // endregion TimeEvo 
     unsigned int GetNumThreads();
 

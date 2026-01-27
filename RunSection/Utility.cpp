@@ -14,6 +14,14 @@
 namespace RunSection
 {
 
+    struct ArnoldiResult 
+    {
+        arma::field<arma::cx_vec> V;
+        arma::sp_cx_mat Hessian;
+        double Beta;
+        std::complex<double> h_res;
+    };
+
     FibSpherePoint *CalculateFibPoints(int n)
     {
         FibSpherePoint* TempPointArray = (FibSpherePoint*)malloc(n * sizeof(FibSpherePoint));
@@ -242,7 +250,7 @@ MCSpherePoint* CalculateMCSpherePoints(int n, double rmax_x, double rmax_y, doub
     typedef arma::sp_cx_mat MatrixArma;
     typedef arma::cx_vec VecType;
 
-    double RungeKutta45Armadillo(arma::sp_cx_mat &L, arma::cx_vec &rho0, arma::cx_vec &drhodt, double dumpstep, RungeKuttaFuncArma func, double time, RK45_PropParam params)
+    double RungeKutta45Armadillo(arma::sp_cx_mat &L, arma::cx_vec &rho0, arma::cx_vec &drhodt, double dumpstep, RungeKuttaFuncArma func, double time, PropParam params)
     {
         VecType k0(rho0.n_rows);
 
@@ -302,50 +310,183 @@ MCSpherePoint* CalculateMCSpherePoints(int n, double rmax_x, double rmax_y, doub
             return std::make_tuple(ReturnVecRK4, ReturnVecRK5);
         };
 
-        auto [RK4, RK5] = RungeKutta45(L, rho0, dumpstep, func);
-
-        double relative_error = 0.0;
-        auto[atol, rtol, min_step, max_step, safety, f1, f2] = params;
-        double change = 0;
+        bool keep_step = false;
+        while(!keep_step)
         {
-            VecType diff = RK5 - RK4;
-            double sum = 0;
-            double relative_error_sum = 0.0;
+            auto [RK4, RK5] = RungeKutta45(L, rho0, dumpstep, func);
+
+            double relative_error = 0.0;
+            auto[atol, rtol, min_step, max_step, safety, f1, f2,t1,t2] = params;
+            double change = 0;
+            {
+                VecType diff = RK5 - RK4;
+                double sum = 0;
+                double relative_error_sum = 0.0;
 
 #pragma omp parallel for reduction(+ : sum)
-            for (int i = 0; i < int(diff.n_rows); i++)
-            {
-                sum += std::pow(std::abs(diff[i]), 2);
-                relative_error_sum += rtol * std::pow(std::abs(RK5[i]), 2); 
+                for (int i = 0; i < int(diff.n_rows); i++)
+                {
+                    sum += std::pow(std::abs(diff[i]), 2);
+                    relative_error_sum += rtol * std::pow(std::abs(RK5[i]), 2); 
+                }
+
+                change = std::sqrt(sum);
+                relative_error = std::sqrt(relative_error_sum);
             }
 
-            change = std::sqrt(sum);
-            relative_error = std::sqrt(relative_error_sum);
+            auto Adjusth = [&](double error_ratio, double tol, double ch, double safety, double f1, double f2)
+            {
+                return dumpstep * std::min(f2, std::max(f1, safety * std::pow(error_ratio, -1.0/5.0)));
+            };
+
+            double NewStepSize = 0.0;
+
+            double max_change = atol + relative_error;
+            double error_ratio = change / max_change;
+            NewStepSize = Adjusth(error_ratio, max_change, change, safety, f1, f2);
+
+            if (error_ratio <= params.reject_limit)
+            {
+                drhodt = RK4;
+                keep_step = true;
+                dumpstep = NewStepSize;
+            }
+            if(NewStepSize < params.min && error_ratio > params.reject_limit)
+            {
+                params.min = NewStepSize;
+            }
+            if(NewStepSize > params.max)
+            {
+                NewStepSize = params.max;
+            }
+            dumpstep = NewStepSize;
+
         }
-
-        auto Adjusth = [&](double tol, double ch, double safety, double f1, double f2)
-        {
-            double error_ratio = ch/tol;
-            return dumpstep * std::min(f2, std::max(f1, safety * std::pow(error_ratio, -1.0/5.0)));
-        };
-
-        double NewStepSize = 0.0;
-
-        double max_change = atol + relative_error;
-        NewStepSize = Adjusth(max_change, change, safety, f1, f2);
-        if(NewStepSize > max_step)
-        {
-            NewStepSize = max_step;
-        }
-        else if(NewStepSize < min_step)
-        {
-            NewStepSize = min_step;
-        }
-
-        drhodt = RK4;
-        return NewStepSize;
+        return dumpstep;
     }
 
+    TimePropReturnInfo AdaptiveDirectKrylovArmadillo(arma::sp_cx_mat &L, arma::cx_vec &rho0, arma::cx_vec &drhodt, double dumpstep, double time, PropParam PropParams)
+    {
+
+        auto ArnoldiIteration = [=](const arma::sp_cx_mat&L, const arma::cx_vec& rho, int m_max) {
+            const int N = rho.n_rows;
+            
+            ArnoldiResult result;
+            result.V.set_size(m_max);
+            result.Hessian = arma::sp_cx_mat(m_max,m_max);
+            
+            result.Beta = arma::norm(rho,2);
+            arma::cx_vec rhoi = rho / result.Beta;
+            result.V(0) = rhoi;
+
+            arma::cx_vec AV(N);
+            std::complex<double> h_next = 0.0;
+            int m = m_max;
+            for(int j = 0; j < m_max; j++)
+            {
+                AV = L * result.V(j);
+                for(int i = 0; i <= j; i++)
+                {
+                    std::complex<double> h_ij = arma::cdot(result.V(i), AV);
+                    result.Hessian(i,j) = h_ij;
+                    arma::cx_vec temp = h_ij * result.V(i);
+                    AV -= temp;
+                }
+
+                h_next = arma::norm(AV,2);
+
+                if(j == m_max - 1) {
+                    result.h_res = h_next;
+                    break;
+                }
+
+                if(std::abs(h_next) < 1e-14)
+                {
+                    result.h_res = std::complex<double>(0.0, 0.0);
+                    m = j + 1;
+                    result.Hessian = result.Hessian.submat(0,0,m-1,m-1);
+                    result.V.set_size(m);
+                    break;
+                }
+
+                result.V(j+1) = AV / h_next;
+                result.Hessian(j+1,j) = h_next;
+            }
+
+            return result;
+        };
+
+        struct StepReturnStruct
+        {
+            arma::cx_vec rho_new;
+            double err;
+        };
+
+        auto step = [&](const arma::sp_cx_mat& L, const arma::cx_vec& rho, double h, int m_krylov)  {
+            ArnoldiResult ar = ArnoldiIteration(L, rho, m_krylov);
+            int m = ar.Hessian.n_rows;
+            arma::sp_cx_mat Hm = h * ar.Hessian;
+            
+            arma::cx_mat Exponent = arma::expmat(arma::conv_to<arma::cx_mat>::from(Hm));
+            arma::cx_vec e1(m,arma::fill::zeros);
+            e1(0) = std::complex<double>(1.0, 0.0);
+            arma::cx_vec w = Exponent * e1;
+
+            arma::cx_vec rho_new(rho.n_rows, arma::fill::zeros);
+            for(int j = 0; j < m; j++)
+            {
+                arma::cx_vec temp = ar.Beta * w(j) * ar.V(j);
+                rho_new += temp;
+            }
+
+            std::complex<double> error_val = Exponent(m-1,0);
+            double err = std::abs(ar.Beta * ar.h_res * error_val);
+
+            StepReturnStruct return_struct;
+            return_struct.rho_new = rho_new;
+            return_struct.err = err;
+
+            return return_struct;
+        };
+
+        bool keep_step = false;
+        bool first_attempt = true;
+        while(!keep_step)
+        {
+            auto KrylovStep = step(L,rho0,dumpstep,PropParams.max_krylov_iterations);
+
+            double ynorm = arma::norm(KrylovStep.rho_new,2);
+            double tol = PropParams.atol + PropParams.rtol * ynorm;
+            double R = KrylovStep.err / tol;
+
+            auto Adjusth = [&](double R, double safety, double f1, double f2, double h) {
+                return h * std::min(f2, std::max(f1, safety * std::pow(R, -1.0/5.0)));
+            };
+
+            dumpstep = Adjusth(R, PropParams.safety, PropParams.f1, PropParams.f2, dumpstep);
+            if(R <= PropParams.reject_limit)
+            {
+                drhodt = KrylovStep.rho_new;
+                keep_step = true;
+            }
+
+            if(dumpstep < PropParams.min && R > PropParams.reject_limit)
+            {
+                PropParams.min = dumpstep;
+            }
+            if(dumpstep > PropParams.max)
+            {
+                dumpstep = PropParams.max;
+            }
+            if(R >= PropParams.reject_limit)
+            {
+                first_attempt = false;
+            }
+        }
+
+        return {dumpstep, first_attempt};
+
+    }
 
     unsigned int GetNumThreads()
     {

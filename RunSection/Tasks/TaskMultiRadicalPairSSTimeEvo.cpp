@@ -426,7 +426,7 @@ namespace RunSection
 			RollingYield.push_back(0.0);
 		}
 
-		RK45_PropParam params;
+		PropParam params;
 		params.atol = 1e-8;
 		params.rtol = 1e-10;
 		params.min = MinTimeStep;
