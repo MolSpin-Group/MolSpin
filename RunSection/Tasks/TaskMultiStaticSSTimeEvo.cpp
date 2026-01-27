@@ -265,21 +265,21 @@ namespace RunSection
 		params.f1 = 0.1;
 		params.f2 = 5.0;
 
-		auto eigs = arma::eig_gen(arma::conv_to<arma::cx_mat>::from(L));
-		double max_eig = 0.0;
-		double min_eig = 1e+20;
-		for (auto e = eigs.cbegin(); e != eigs.cend(); e++)
-		{
-			if (std::abs((*e).imag()) > max_eig)
-				max_eig = std::abs((*e).imag());
-			if (std::abs((*e).imag()) < min_eig && std::abs((*e).imag()) > 1e-10)
-				min_eig = std::abs((*e).imag());
-		}
-		this->Log() << "Maximum eigenvalue imaginary part of Liouvillian: " << max_eig << std::endl;
-		this->Log() << "Minimum eigenvalue imaginary part of Liouvillian: " << min_eig << std::endl;
-
-		double stiffness = max_eig / min_eig;
-		this->Log() << "Liouvillian stiffness: " << stiffness << std::endl;
+		//auto eigs = arma::eig_gen(arma::conv_to<arma::cx_mat>::from(L));
+		//double max_eig = 0.0;
+		//double min_eig = 1e+20;
+		//for (auto e = eigs.cbegin(); e != eigs.cend(); e++)
+		//{
+		//	if (std::abs((*e).imag()) > max_eig)
+		//		max_eig = std::abs((*e).imag());
+		//	if (std::abs((*e).imag()) < min_eig && std::abs((*e).imag()) > 1e-10)
+		//		min_eig = std::abs((*e).imag());
+		//}
+		//this->Log() << "Maximum eigenvalue imaginary part of Liouvillian: " << max_eig << std::endl;
+		//this->Log() << "Minimum eigenvalue imaginary part of Liouvillian: " << min_eig << std::endl;
+//
+		//double stiffness = max_eig / min_eig;
+		//this->Log() << "Liouvillian stiffness: " << stiffness << std::endl;
 		
 
 		this->Log() << "Starting time evolution with timestep: " << this->timestep << ", total time: " << this->totaltime << ", minimum timestep: " << MinTimeStep << ", maximum timestep: " << MaxTimeStep << std::endl;
