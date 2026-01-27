@@ -346,50 +346,6 @@ MCSpherePoint* CalculateMCSpherePoints(int n, double rmax_x, double rmax_y, doub
         return NewStepSize;
     }
 
-    arma::cx_vec RadauIIA35Armadillo(arma::sp_cx_mat &L, arma::cx_vec &rho0, double dumpstep, RungeKuttaFuncArma func, JacobianFuncArma Jfunc,bool& reject_step, double time, RK45_PropParam PropParams)
-    {
-        static std::array<double,3> c = {(4.0 - std::sqrt(6.0)) / 10.0, (4.0 + std::sqrt(6.0)) / 10.0, 1.0};
-        static std::array<double,3> b = {(16.0 - std::sqrt(6.0)) / 36.0, (16.0 + std::sqrt(6.0)) / 36.0, 1.0 / 9.0};
-        static std::array<std::array<double,3>,3> A = {{{(88.0 - 7.0 * std::sqrt(6.0)) / 360.0, (296.0 - 169.0 * std::sqrt(6.0)) / 1800.0, (-2.0 + 3.0 * std::sqrt(6.0)) / 225.0},
-                                                        {(296.0 + 169.0 * std::sqrt(6.0)) / 1800.0, (88.0 + 7.0 * std::sqrt(6.0)) / 360.0, (-2.0 - 3.0 * std::sqrt(6.0)) / 225.0},
-                                                        {(16.0 - std::sqrt(6.0)) / 36.0, (16.0 + std::sqrt(6.0)) / 36.0, 1.0 / 9.0}}};
-        const int s = 3; //number of stages
-        const int N = rho0.n_rows;
-        arma::cx_vec blank = arma::cx_vec(N, arma::fill::zeros);
-
-        auto Step = [&](double& t, double h, arma::cx_vec& y, RungeKuttaFuncArma func, JacobianFuncArma Jfunc, int max_iterations = 8)
-        {
-            std::vector<arma::cx_vec> K(s, arma::cx_vec(N, arma::fill::zeros));
-            std::vector<arma::cx_vec> R(s, arma::cx_vec(N, arma::fill::zeros));
-            std::vector<arma::cx_vec> Y(s, arma::cx_vec(N, arma::fill::zeros));
-
-            auto iteration = [&]()
-            {
-                for(int i = 0; i < s; i++)
-                {
-                    for(int j = 0; j < N; j++)
-                    {
-                        double sum = y[j];
-                        for(int l = 0; l < s; l++)
-                        {
-                            sum += h * A[i][j] * K[l][j];
-                        }
-                        Y[i][j] = sum;
-                    }
-                }
-
-                double max_res = 0.0;
-                for(int i = 0; i < s; i++)
-                {
-                    arma::cx_vec fy(n);
-                    fy = func(t + c[i]*h, L, blank, rho0);
-                }
-            }
-
-
-        }
-
-    }
 
     unsigned int GetNumThreads()
     {

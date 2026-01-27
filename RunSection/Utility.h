@@ -100,8 +100,7 @@ namespace RunSection
     ///     @return New time step (double)
     double RungeKutta45Armadillo(arma::sp_cx_mat &, arma::cx_vec &, arma::cx_vec &, double, RungeKuttaFuncArma, double time = 0, RK45_PropParam PropParams = RK45_PropParam());
 
-    ///Radau IIA method for time evolution - better for stiff systems
-    arma::cx_vec RadauIIA35Armadillo(arma::sp_cx_mat &L, arma::cx_vec &rho0, double dumpstep, RungeKuttaFuncArma func, JacobianFuncArma Jfunc, bool& reject_step, double time = 0, RK45_PropParam PropParams = RK45_PropParam());
+
 
 // endregion TimeEvo 
     unsigned int GetNumThreads();
