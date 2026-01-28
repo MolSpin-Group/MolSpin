@@ -248,8 +248,28 @@ namespace RunSection
 			this->prop = Propagator::RK45;
 			return;
 		}
+		if(str == 'krylov')
+		{
+			this->prop = Propagator::Krylov;
+			return;
+		}
 		this->prop = Propagator::Default;
     }
+
+	void BasicTask::DetermineBestPropagator(arma::sp_cx_mat & L)
+	{
+		double stiffness = GetStiffness(L);
+		if(stiffness > 10.0)
+		{
+			this->prop = Propagator::Krylov;
+			this->Log() << "The Liouvillian is stiff (stiffness = " << stiffness << "). Using the Krylov propagator." << std::endl;
+		}
+		else
+		{
+			this->prop = Propagator::RK45;
+			this->Log() << "The Liouvillian is non-stiff (stiffness = " << stiffness << "). Using the Runge-Kutta-Fehlberg (RK45) propagator." << std::endl;
+		}
+	}
 
 	void BasicTask::GetSamples(std::vector<arma::sp_cx_mat>& H, arma::sp_cx_mat& A, std::vector<SCData>& ori, std::vector<std::vector<double>>& SampleWeights, std::vector<std::vector<std::vector<double>>>& AllWeights)
     {

@@ -90,6 +90,8 @@ namespace RunSection
         int reject_limit = 2;
     };
 
+    double EstimateStiffnessArmadillo(arma::sp_cx_mat &L);
+
     struct TimePropReturnInfo
     {
         double timestep;

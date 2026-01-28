@@ -37,7 +37,8 @@ namespace RunSection
 		Default = 0, //whatever the timeevo class chooses
 		exp = 1,
 		RK4 = 2,
-		RK45 = 3
+		RK45 = 3,
+		Krylov = 4
 	};
 
 	enum class TaskName //currently used to verify what tasks support SW
@@ -85,6 +86,7 @@ namespace RunSection
 		virtual bool Validate() = 0; // Method to validate the task, i.e. to check that it has the required parameters etc.
 		
 		virtual void SelectPropagator(std::string str); //Method to choose the Propagator for timeevo tasks
+		virtual void DetermineBestPropagator(arma::sp_cx_mat& L); //Method to choose the best propagator based on the stiffness of the Liouvillian
 
 		// Allow access to settings, properties, spin systems, etc. for derived classes
 		std::shared_ptr<const Settings> RunSettings() const;

@@ -202,6 +202,11 @@ namespace RunSection
 		arma::cx_vec result = arma::cx_vec(rho0.n_rows);
 		double CurrentTime = 0.0;
 		bool NoFail = false;
+		
+		if(this->prop == Propagator::Default)
+		{
+			DetermineBestPropagator(L);
+		}
 
 		// Very much a quick solution atm
 		if (this->prop == Propagator::exp)

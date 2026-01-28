@@ -250,6 +250,62 @@ MCSpherePoint* CalculateMCSpherePoints(int n, double rmax_x, double rmax_y, doub
     typedef arma::sp_cx_mat MatrixArma;
     typedef arma::cx_vec VecType;
 
+    double EstimateStiffnessArmadillo(arma::sp_cx_mat &L)
+    {
+        static double tol = 1e-3;
+        static int max_iterations = 1000;
+
+        //get symmetric part of L
+        arma::sp_cx_mat Ls = 0.5 * (L + arma::trans(L));
+        Ls = -1 * Ls;
+        //create random wavefunction 
+        arma::cx_vec psi(L.n_rows);
+        size_t n = L.n_rows;
+        #pragma omp parallel
+        {
+            std::random_device rd;
+            std::mt19937 gen(rd());
+            std::normal_distribution<double> dist(0.0, 1.0);
+            #pragma omp for
+            for(size_t i = 0; i < n; i++)
+            {
+                double re = dist(gen);
+                double img = dist(gen);
+                psi(i) = std::complex<double>(re,img);
+            }
+        }
+
+        double norm = arma::norm(psi,2);
+        //std::cout << psi << std::endl;
+        psi = psi / norm;
+        arma::cx_vec psi2 = psi;
+
+        std::vector<std::complex<double>> max_eigenvalue = {0.0,0.0};
+        std::vector<std::complex<double>>old_eigenvalue = {0.0,0.0};
+        arma::cx_vec phi(L.n_rows);
+        arma::cx_vec phi2(L.n_rows);
+
+        for(int i = 0; i < max_iterations; i++)
+        {
+            phi = Ls * psi;
+            phi2 = L * psi2;
+            max_eigenvalue[0] = arma::norm(phi,2);
+            max_eigenvalue[1] = arma::norm(phi2,2);
+            psi = phi / max_eigenvalue[0];
+            psi2 = phi2 / max_eigenvalue[1];
+
+            if(std::abs(max_eigenvalue[0] - old_eigenvalue[0]) <= tol && std::abs(max_eigenvalue[1] - old_eigenvalue[1]) <= tol)
+            {
+                break;
+            }
+
+            old_eigenvalue = max_eigenvalue;
+        }
+
+        double stiffness = std::abs(max_eigenvalue[1]) / std::abs(max_eigenvalue[0]);
+        return stiffness;
+    }
+
     double RungeKutta45Armadillo(arma::sp_cx_mat &L, arma::cx_vec &rho0, arma::cx_vec &drhodt, double dumpstep, RungeKuttaFuncArma func, double time, PropParam params)
     {
         VecType k0(rho0.n_rows);
