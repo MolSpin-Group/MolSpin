@@ -306,7 +306,7 @@ MCSpherePoint* CalculateMCSpherePoints(int n, double rmax_x, double rmax_y, doub
         return stiffness;
     }
 
-    double RungeKutta45Armadillo(arma::sp_cx_mat &L, arma::cx_vec &rho0, arma::cx_vec &drhodt, double dumpstep, RungeKuttaFuncArma func, double time, PropParam params)
+    TimePropReturnInfo RungeKutta45Armadillo(arma::sp_cx_mat &L, arma::cx_vec &rho0, arma::cx_vec &drhodt, double dumpstep, RungeKuttaFuncArma func, double time, PropParam params)
     {
         VecType k0(rho0.n_rows);
 
@@ -367,12 +367,13 @@ MCSpherePoint* CalculateMCSpherePoints(int n, double rmax_x, double rmax_y, doub
         };
 
         bool keep_step = false;
+        bool first_step = true;
         while(!keep_step)
         {
             auto [RK4, RK5] = RungeKutta45(L, rho0, dumpstep, func);
 
             double relative_error = 0.0;
-            auto[atol, rtol, min_step, max_step, safety, f1, f2,t1,t2] = params;
+            auto[atol, rtol, min_step, max_step, safety, f1, f2,t1,t2,ct] = params;
             double change = 0;
             {
                 VecType diff = RK5 - RK4;
@@ -415,13 +416,17 @@ MCSpherePoint* CalculateMCSpherePoints(int n, double rmax_x, double rmax_y, doub
             {
                 NewStepSize = params.max;
             }
+            if(error_ratio >= params.reject_limit)
+            {
+                first_step = false;
+            }
             dumpstep = NewStepSize;
 
         }
-        return dumpstep;
+        return {dumpstep, first_step};
     }
 
-    TimePropReturnInfo AdaptiveDirectKrylovArmadillo(arma::sp_cx_mat &L, arma::cx_vec &rho0, arma::cx_vec &drhodt, double dumpstep, double time, PropParam PropParams)
+    TimePropReturnInfo AdaptiveDirectKrylovArmadillo(arma::sp_cx_mat &L, arma::cx_vec &rho0, arma::cx_vec &drhodt, double dumpstep, double time, PropParam PropParams, HamiltonainTimeDepFuncArma GetTDH)
     {
 
         auto ArnoldiIteration = [=](const arma::sp_cx_mat&L, const arma::cx_vec& rho, int m_max) {
@@ -478,8 +483,25 @@ MCSpherePoint* CalculateMCSpherePoints(int n, double rmax_x, double rmax_y, doub
             double err;
         };
 
+        auto MagnusExpansion2ndOrder = [&](const arma::sp_cx_mat& L, double h) {
+            arma::sp_cx_mat At = GetTDH(PropParams.CurrentTime, L);
+            arma::sp_cx_mat Atpto2 = GetTDH(PropParams.CurrentTime + h/2.0, L);
+
+            arma::sp_cx_mat Omega = (h/2.0) * (Atpto2 * At - At * Atpto2);
+            return Omega;
+        };
+
         auto step = [&](const arma::sp_cx_mat& L, const arma::cx_vec& rho, double h, int m_krylov)  {
-            ArnoldiResult ar = ArnoldiIteration(L, rho, m_krylov);
+
+            ArnoldiResult ar;
+            if(GetTDH != nullptr)
+            {
+                ar = ArnoldiIteration(MagnusExpansion2ndOrder(L,h), rho, m_krylov);
+            }
+            else
+            {
+                ar = ArnoldiIteration(L, rho, m_krylov);
+            }
             int m = ar.Hessian.n_rows;
             arma::sp_cx_mat Hm = h * ar.Hessian;
             

@@ -203,6 +203,7 @@ namespace RunSection
 		double CurrentTime = 0.0;
 		bool NoFail = false;
 		
+		CheckPropagator(L, this->timestep);
 		if(this->prop == Propagator::Default)
 		{
 			DetermineBestPropagator(L);
@@ -292,8 +293,21 @@ namespace RunSection
 		{
 			// Propagate
 
+			TimePropReturnInfo r;
+
 			//this->timestep = RungeKutta45Armadillo(L, rho0, rho0, this->timestep, ComputeRhoDot,0.0,params);
-			auto[t,a] = AdaptiveDirectKrylovArmadillo(L, rho0, rho0, this->timestep, CurrentTime, params);
+
+			if(this->prop == Propagator::RK45)
+			{
+				r = RungeKutta45Armadillo(L, rho0, rho0, this->timestep, ComputeRhoDot, CurrentTime, params);
+			}
+			else
+			{
+				r = AdaptiveDirectKrylovArmadillo(L, rho0, rho0, this->timestep, CurrentTime, params, nullptr);
+			}
+
+			double t = r.timestep;
+			bool a = r.step_accepted;
 
 			this->Data() << this->RunSettings()->CurrentStep() << " ";
 			CurrentTime += (a == true) ? this->timestep : t;
@@ -473,14 +487,17 @@ namespace RunSection
 		if (!this->Properties()->Get("Propagator", propagator_str) && !this->Properties()->Get("propagator", propagator_str))
 		{
 			this->Log() << "No propagator defined, using the default propogator (RK45)" << std::endl;
+			this->propogator_cached = false;
+			this->prop = Propagator::Default;
 		}
 		else
 		{
 			this->SelectPropagator(propagator_str);
+			//this->propogator_cached = true;
 		}
 
-		if (this->prop == Propagator::Default)
-			this->prop = Propagator::RK45;
+		//if (this->prop == Propagator::Default)
+		//	this->prop = Propagator::RK45;
 
 		// Get the reacton operator type
 		std::string str;

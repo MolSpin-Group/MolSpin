@@ -243,12 +243,12 @@ namespace RunSection
 			this->prop = Propagator::exp;
 			return;
 		}
-		if(str == "RK45")
+		if(str == "rk45")
 		{
 			this->prop = Propagator::RK45;
 			return;
 		}
-		if(str == 'krylov')
+		if(str == "krylov")
 		{
 			this->prop = Propagator::Krylov;
 			return;
@@ -258,7 +258,9 @@ namespace RunSection
 
 	void BasicTask::DetermineBestPropagator(arma::sp_cx_mat & L)
 	{
-		double stiffness = GetStiffness(L);
+		if(propogator_cached)
+			return;
+		double stiffness = EstimateStiffnessArmadillo(L);
 		if(stiffness > 10.0)
 		{
 			this->prop = Propagator::Krylov;
@@ -269,9 +271,28 @@ namespace RunSection
 			this->prop = Propagator::RK45;
 			this->Log() << "The Liouvillian is non-stiff (stiffness = " << stiffness << "). Using the Runge-Kutta-Fehlberg (RK45) propagator." << std::endl;
 		}
+		propogator_cached = true;
 	}
 
-	void BasicTask::GetSamples(std::vector<arma::sp_cx_mat>& H, arma::sp_cx_mat& A, std::vector<SCData>& ori, std::vector<std::vector<double>>& SampleWeights, std::vector<std::vector<std::vector<double>>>& AllWeights)
+    void BasicTask::CheckPropagator(arma::sp_cx_mat& L, double initial_t)
+    {
+		if(propogator_cached)
+			return;
+		double stiffness = EstimateStiffnessArmadillo(L);
+		double theta = initial_t * stiffness;
+
+		if(this->prop == Propagator::RK45 && theta > 2.85)
+		{
+			this->Log(MessageType_Warning) << "The chosen propagator (RK45) may not be suitable for the given system and timestep (theta = " << theta << " > 2.85)." << std::endl;
+		}
+		else if((this->prop == Propagator::Krylov || this->prop == Propagator::exp) && theta <= 2.85)
+		{
+			this->Log(MessageType_Normal) << "The chosen propagator (exp or Krylov) may be inefficient for the given system and timestep (theta = " << theta << " <= 2.85). Consider using RK45 instead." << std::endl;
+		}
+		return;
+    }
+
+    void BasicTask::GetSamples(std::vector<arma::sp_cx_mat>& H, arma::sp_cx_mat& A, std::vector<SCData>& ori, std::vector<std::vector<double>>& SampleWeights, std::vector<std::vector<std::vector<double>>>& AllWeights)
     {
 		std::vector<SampleCombination> Combinations; 
 		std::vector<std::vector<int>> samples;
