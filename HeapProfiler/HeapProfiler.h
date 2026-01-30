@@ -21,6 +21,7 @@
 #include <stdio.h>
 #include <filesystem>
 #include <mutex>
+#include <vector>
 
 namespace RunSection
 {
@@ -37,8 +38,19 @@ namespace RunSection
         int free_calls = 0;
         size_t allocation = 0;
         size_t freed = 0;
-
+        std::vector<int> level_calls = {};
         
+        void LevelCall(int level)
+        {
+            if(level >= this->level_calls.size())
+            {
+                for(int i = 0; i < (level + 1) - this->level_calls.size(); i++)
+                {
+                    this->level_calls.push_back(0);
+                }
+            }
+            this->level_calls[level] += 1;
+        }
     };
 
     enum class Mode

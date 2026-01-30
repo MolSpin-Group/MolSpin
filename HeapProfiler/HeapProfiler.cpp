@@ -32,6 +32,7 @@ static bool FirstCall = true;
 static bool BottomFrame = true; //last molspin specific frame to be called i.e the important one
 
 static backtrace_state *bt_state = nullptr;
+static int level = 0;
 
 static void mtrace_init(void)
 {
@@ -216,7 +217,7 @@ namespace RunSection
             s_ProfilerStats.m_FunctionLock.unlock();
             return;
         }
-        BottomFrame = false;
+        //BottomFrame = false;
         Mode current_mode = s_ProfilerStats.m_mode;
         size_t allocation = s_ProfilerStats.m_LastAllocation;
         bool present = false;
@@ -238,6 +239,7 @@ namespace RunSection
                 s_ProfilerStats.m_FunctionProfile[function].freed += allocation;
             }
             //BottomFrame = true;
+            s_ProfilerStats.m_FunctionProfile[function].LevelCall(level);
             s_ProfilerStats.m_FunctionLock.unlock();
             return;
         }
@@ -254,6 +256,7 @@ namespace RunSection
             functionstats.freed += allocation;
         }
         s_ProfilerStats.m_FunctionProfile[function] = functionstats;
+        s_ProfilerStats.m_FunctionProfile[function].LevelCall(level);
         s_ProfilerStats.m_FunctionLock.unlock();
         return;
     }
@@ -274,7 +277,12 @@ namespace RunSection
         {
             auto f = it->second;
             fprintf(stderr, "\"%s\": %d %d %d %d\n", f.name.c_str(), f.allocation_calls, f.allocation, f.free_calls, f.freed);
-            fprintf(s_ProfilerStats.m_StatsFile,"%s,%d,%d,%d,%d,\n",f.name.c_str(), f.allocation_calls, f.allocation, f.free_calls, f.freed);
+            fprintf(s_ProfilerStats.m_StatsFile,"%s,%d,%d,%d,%d, ,",f.name.c_str(), f.allocation_calls, f.allocation, f.free_calls, f.freed);
+            for(int i = 0; i < f.level_calls.size(); i++)
+            {
+                fprintf(s_ProfilerStats.m_StatsFile, "%s,",f.level_calls[i]);
+            }
+            fprintf(s_ProfilerStats.m_StatsFile, "\n");
         }
         CloseFiles();
     }
@@ -526,16 +534,17 @@ void PrintStackTrace()
     }
     void* buffer[32] = {};
     int nptrs = backtrace(buffer, 32);
-    s_ProfilerStats.m_StackLock.unlock();
     char hdr[128];
     int len = snprintf(hdr, sizeof(hdr), "Memory allocation stack trace (most recent call last), total frames: %d\n", nptrs);
     //write(STDERR_FILENO, hdr, len);
     RunSection::Profiler::WriteStack(hdr);
     BottomFrame = true;
+    level = 0;
     for(int i = 0; i < nptrs; i++)
     {
         backtrace_pcinfo(bt_state, (uintptr_t)buffer[i], bt_full_callback, bt_error_callback, nullptr);
     }
+    s_ProfilerStats.m_StackLock.unlock();
 }
 
 char* demangle(const char* s)
@@ -577,6 +586,7 @@ int bt_full_callback(void *data, uintptr_t pc, const char *filename, int lineno,
         //free(func);
         RunSection::Profiler::WriteStack(buffer);
         RunSection::Profiler::UpdateFunctionProfile(function_name);
+        level = level + 1;
     }
     return 0;
 }
