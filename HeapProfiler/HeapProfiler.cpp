@@ -280,11 +280,16 @@ namespace RunSection
             fprintf(s_ProfilerStats.m_StatsFile,"%s,%d,%d,%d,%d, ,",f.name.c_str(), f.allocation_calls, f.allocation, f.free_calls, f.freed);
             for(int i = 0; i < f.level_calls.size(); i++)
             {
-                fprintf(s_ProfilerStats.m_StatsFile, "%s,",f.level_calls[i]);
+                fprintf(s_ProfilerStats.m_StatsFile, "%d,",f.level_calls[i]);
             }
             fprintf(s_ProfilerStats.m_StatsFile, "\n");
         }
         CloseFiles();
+    }
+
+    void Function::LevelCall(int level)
+    {
+        this->level_calls.push_back(level);
     }
 }
 

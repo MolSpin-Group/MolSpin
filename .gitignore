@@ -41,3 +41,4 @@ MolSpin copy.code-workspace
 makefile
 
 .nfs*
+libheap2.so
