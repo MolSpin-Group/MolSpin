@@ -269,8 +269,10 @@ namespace SpinAPI
 		bool Hamiltonian(arma::sp_cx_mat &, int TaskNum = 0) const;									// Total Hamiltonian operator (sparse matrix)
 		bool SemiClassicalHamiltonian(arma::sp_cx_mat &, std::vector<interaction_ptr>&) const; 					// SemiClassical approximation of the Hamiltonian (sparse matrix), refer to BasicTask.cpp for tasknum conversion
 		bool SemiClassicalHamiltonian(arma::cx_mat &, std::vector<interaction_ptr>&) const; 					// SemiClassical approximation of the Hamiltonian (dense matrix), refer to BasicTask.cpp for tasknum conversion 	 					
-		bool StaticHamiltonian(arma::cx_mat &) const;								// Time-independent part of the Hamiltonian operator (dense matrix)
-		bool StaticHamiltonian(arma::sp_cx_mat &) const;							// Time-independent part of the Hamiltonian operator (sparse matrix)
+		bool SemiClassicalHamiltonianHandling(arma::sp_cx_mat&, const arma::sp_cx_mat&, std::vector<interaction_ptr>&) const;    			// Handling function for SemiClassical interactions (sparse)
+		bool SemiClassicalHamiltonianHandling(arma::cx_mat&, const arma::cx_mat&, std::vector<interaction_ptr>&) const;    			// Handling function for SemiClassical interactions (dense)
+		bool StaticHamiltonian(arma::cx_mat &, int TaskNum = 0) const;								// Time-independent part of the Hamiltonian operator (dense matrix)
+		bool StaticHamiltonian(arma::sp_cx_mat &, int TaskNum = 0) const;							// Time-independent part of the Hamiltonian operator (sparse matrix)
 		bool DynamicHamiltonian(arma::cx_mat &) const;								// Time-dependent part of the Hamiltonian operator (dense matrix)
 		bool DynamicHamiltonian(arma::sp_cx_mat &) const;							// Time-dependent part of the Hamiltonian operator (sparse matrix)
 		bool ThermalHamiltonian(std::vector<std::string> thermalhamiltonian_list, arma::cx_mat &_out) const;							// Time-independent part of the Hamiltonian for thermal state (dense matrix)

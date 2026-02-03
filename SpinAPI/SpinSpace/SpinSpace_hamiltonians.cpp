@@ -1260,26 +1260,32 @@ namespace SpinAPI
 			result += tmp;
 		}
 
-		if (semiclassical && SCSupportedTasks(TaskNum))
+		if(semiclassical && SCSupportedTasks(TaskNum))
 		{
-			arma::cx_mat SCout;
-			if (!SemiClassicalHamiltonian(SCout, SemiClassicalInteractions))
-				return false;
-			int width, height = 0;
-			width = SCout.n_cols;
-			height = SCout.n_rows;
-			int Block1h, Block1w = 0;
-			Block1h = result.n_rows;
-			Block1w = result.n_cols;
-			_out = arma::cx_mat(Block1h + height, (width > Block1w) ? width : Block1w);
-			_out.submat(0, 0, Block1h - 1, Block1w - 1) = result;
-			if (result.is_hermitian() == false)
-			{
-				std::cin.get();
-			}
-			_out.submat(Block1h, 0, Block1h + height - 1, width - 1) = SCout;
+			SemiClassicalHamiltonianHandling(_out, result, SemiClassicalInteractions);
 			return true;
 		}
+
+		//if (semiclassical && SCSupportedTasks(TaskNum))
+		//{
+		//	arma::cx_mat SCout;
+		//	if (!SemiClassicalHamiltonian(SCout, SemiClassicalInteractions))
+		//		return false;
+		//	int width, height = 0;
+		//	width = SCout.n_cols;
+		//	height = SCout.n_rows;
+		//	int Block1h, Block1w = 0;
+		//	Block1h = result.n_rows;
+		//	Block1w = result.n_cols;
+		//	_out = arma::cx_mat(Block1h + height, (width > Block1w) ? width : Block1w);
+		//	_out.submat(0, 0, Block1h - 1, Block1w - 1) = result;
+		//	if (result.is_hermitian() == false)
+		//	{
+		//		std::cin.get();
+		//	}
+		//	_out.submat(Block1h, 0, Block1h + height - 1, width - 1) = SCout;
+		//	return true;
+		//}
 
 		_out = result;
 		return true;
@@ -1330,33 +1336,76 @@ namespace SpinAPI
 			result += tmp;
 		}
 
-		arma::sp_cx_mat SCout;
-		if (semiclassical && SCSupportedTasks(TaskNum))
+		if(semiclassical && SCSupportedTasks(TaskNum))
 		{
-			if (!SemiClassicalHamiltonian(SCout, SemiClassicalInteractions))
-				return false;
-
-			int width, height = 0;
-			width = SCout.n_cols;
-			height = SCout.n_rows;
-			int Block1h, Block1w = 0;
-			Block1h = result.n_rows;
-			Block1w = result.n_cols;
-			_out = arma::sp_cx_mat(Block1h + height, (width > Block1w) ? width : Block1w);
-			_out.submat(0, 0, Block1h - 1, Block1w - 1) = result;
-			if (result.is_hermitian() == false)
-			{
-				std::cin.get();
-			}
-			if (SCout.n_nonzero != 0)
-				_out.submat(Block1h, 0, Block1h + height - 1, width - 1) = SCout;
+			SemiClassicalHamiltonianHandling(_out, result, SemiClassicalInteractions);
 			return true;
 		}
+		//arma::sp_cx_mat SCout;
+		//if (semiclassical && SCSupportedTasks(TaskNum))
+		//{
+		//	if (!SemiClassicalHamiltonian(SCout, SemiClassicalInteractions))
+		//		return false;
+//
+		//	int width, height = 0;
+		//	width = SCout.n_cols;
+		//	height = SCout.n_rows;
+		//	int Block1h, Block1w = 0;
+		//	Block1h = result.n_rows;
+		//	Block1w = result.n_cols;
+		//	_out = arma::sp_cx_mat(Block1h + height, (width > Block1w) ? width : Block1w);
+		//	_out.submat(0, 0, Block1h - 1, Block1w - 1) = result;
+		//	if (result.is_hermitian() == false)
+		//	{
+		//		std::cin.get();
+		//	}
+		//	if (SCout.n_nonzero != 0)
+		//		_out.submat(Block1h, 0, Block1h + height - 1, width - 1) = SCout;
+		//	return true;
+		//}
 		_out = result;
 		return true;
 	}
 
-	bool SpinSpace::SemiClassicalHamiltonian(arma::cx_mat &_out, std::vector<interaction_ptr> &interactions) const
+	bool SpinSpace::SemiClassicalHamiltonianHandling(arma::sp_cx_mat& _out, const arma::sp_cx_mat& result, std::vector<interaction_ptr>& SemiClassicalInteractions) const
+    {
+        arma::sp_cx_mat SCout;
+		if (!SemiClassicalHamiltonian(SCout, SemiClassicalInteractions))
+				return false;
+
+		int width, height = 0;
+		width = SCout.n_cols;
+		height = SCout.n_rows;
+		int Block1h, Block1w = 0;
+		Block1h = result.n_rows;
+		Block1w = result.n_cols;
+		_out = arma::sp_cx_mat(Block1h + height, (width > Block1w) ? width : Block1w);
+		_out.submat(0, 0, Block1h - 1, Block1w - 1) = result;
+		if (SCout.n_nonzero != 0)
+			_out.submat(Block1h, 0, Block1h + height - 1, width - 1) = SCout;
+		return true;
+    }
+
+    bool SpinSpace::SemiClassicalHamiltonianHandling(arma::cx_mat& _out, const arma::cx_mat& result, std::vector<interaction_ptr>& SemiClassicalInteractions) const
+    {
+		arma::cx_mat SCout;
+		if (!SemiClassicalHamiltonian(SCout, SemiClassicalInteractions))
+				return false;
+
+		int width, height = 0;
+		width = SCout.n_cols;
+		height = SCout.n_rows;
+		int Block1h, Block1w = 0;
+		Block1h = result.n_rows;
+		Block1w = result.n_cols;
+		_out = arma::cx_mat(Block1h + height, (width > Block1w) ? width : Block1w);
+		_out.submat(0, 0, Block1h - 1, Block1w - 1) = result;
+		if (SCout.n_nonzero != 0)
+			_out.submat(Block1h, 0, Block1h + height - 1, width - 1) = SCout;
+		return true;
+    }
+
+    bool SpinSpace::SemiClassicalHamiltonian(arma::cx_mat &_out, std::vector<interaction_ptr> &interactions) const
 	{
 		arma::sp_cx_mat _outSP = arma::conv_to<arma::sp_cx_mat>::from(_out);
 		bool result = SemiClassicalHamiltonian(_outSP, interactions);
@@ -1364,7 +1413,7 @@ namespace SpinAPI
 		return result;
 	}
 
-	bool SpinSpace::SemiClassicalHamiltonian(arma::sp_cx_mat &_out, std::vector<interaction_ptr> &interactions) const
+    bool SpinSpace::SemiClassicalHamiltonian(arma::sp_cx_mat &_out, std::vector<interaction_ptr> &interactions) const
 	{
 		arma::sp_cx_mat tmp;
 		arma::sp_cx_mat result;
@@ -1420,7 +1469,7 @@ namespace SpinAPI
 	}
 
 	// Sets the dense matrix to the part of the Hamiltonian that is independent of time or trajectory step
-	bool SpinSpace::StaticHamiltonian(arma::cx_mat &_out) const
+	bool SpinSpace::StaticHamiltonian(arma::cx_mat &_out, int TaskNum) const
 	{
 		// If we don't have any interactions, the Hamiltonian is zero
 		arma::cx_mat result = arma::zeros<arma::cx_mat>(this->SpaceDimensions(), this->SpaceDimensions());
@@ -1431,7 +1480,7 @@ namespace SpinAPI
 		}
 
 		arma::cx_mat tmp;
-		// bool semiclassical = false;
+		bool semiclassical = false;
 		std::vector<interaction_ptr> SemiClassicalInteractions = {};
 		for (auto i = this->interactions.cbegin(); i != this->interactions.cend(); i++)
 		{
@@ -1443,7 +1492,7 @@ namespace SpinAPI
 			if ((*i)->Type() == InteractionType::SemiClassicalField)
 			{
 				SemiClassicalInteractions.push_back((*i));
-				// semiclassical = true;
+				semiclassical = true;
 				continue;
 			}
 			// Attempt to get the matrix representing the Interaction object in the spin space
@@ -1452,12 +1501,18 @@ namespace SpinAPI
 			result += tmp;
 		}
 
+		if(semiclassical && SCSupportedTasks(TaskNum))
+		{
+			SemiClassicalHamiltonianHandling(_out, result, SemiClassicalInteractions);
+			return true;
+		}
+
 		_out = result;
 		return true;
 	}
 
 	// Sets the sparse matrix to the part of the Hamiltonian that is independent of time or trajectory step
-	bool SpinSpace::StaticHamiltonian(arma::sp_cx_mat &_out) const
+	bool SpinSpace::StaticHamiltonian(arma::sp_cx_mat &_out, int TaskNum) const
 	{
 		// If we don't have any interactions, the Hamiltonian is zero
 		arma::sp_cx_mat result = arma::sp_cx_mat(this->SpaceDimensions(), this->SpaceDimensions());
@@ -1468,7 +1523,7 @@ namespace SpinAPI
 		}
 
 		arma::sp_cx_mat tmp;
-		// bool semiclassical = false;
+		bool semiclassical = false;
 		std::vector<interaction_ptr> SemiClassicalInteractions = {};
 		for (auto i = this->interactions.cbegin(); i != this->interactions.cend(); i++)
 		{
@@ -1480,13 +1535,19 @@ namespace SpinAPI
 			if ((*i)->Type() == InteractionType::SemiClassicalField)
 			{
 				SemiClassicalInteractions.push_back((*i));
-				// semiclassical = true;
+				semiclassical = true;
 				continue;
 			}
 			if (!this->InteractionOperator((*i), tmp))
 				return false;
 
 			result += tmp;
+		}
+
+		if(semiclassical && SCSupportedTasks(TaskNum))
+		{
+			SemiClassicalHamiltonianHandling(_out, result, SemiClassicalInteractions);
+			return true;
 		}
 
 		_out = result;

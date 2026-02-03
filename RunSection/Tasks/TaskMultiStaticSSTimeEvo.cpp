@@ -53,7 +53,7 @@ namespace RunSection
 			// We are using superoperator space, and need the total dimensions
 			space->UseSuperoperatorSpace(true);
 			space->SetReactionOperatorType(this->reactionOperators);
-			space->SetTime(0.0);
+			space->SetTime(0.0); //adding support for Time dependent interactions 
 			dimensions += space->SpaceDimensions();
 
 			// Make sure to save the newly created spin space
@@ -107,6 +107,7 @@ namespace RunSection
 
 			// Next, get the Hamiltonian
 			arma::sp_cx_mat H;
+			arma::sp_cx_mat dH;
 			if (!i->second->Hamiltonian(H))
 			{
 				this->Log() << "ERROR: Failed to obtain the superspace Hamiltonian for spin system \"" << i->first->Name() << "\"!" << std::endl;
