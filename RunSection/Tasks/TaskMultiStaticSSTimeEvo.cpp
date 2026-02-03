@@ -53,6 +53,7 @@ namespace RunSection
 			// We are using superoperator space, and need the total dimensions
 			space->UseSuperoperatorSpace(true);
 			space->SetReactionOperatorType(this->reactionOperators);
+			space->SetTime(0.0);
 			dimensions += space->SpaceDimensions();
 
 			// Make sure to save the newly created spin space
@@ -196,7 +197,7 @@ namespace RunSection
 		//	// Move on to next spin space
 		//	nextDimension += i->second->SpaceDimensions();
 		//}
-		SeperateSpinSystems(rho0,spaces,this->ProductYieldsOnly);
+		SeperateSpinSystems(rho0,spaces,this->ProductYieldsOnly, this->timestep);
 		this->Data() << std::endl;
 
 		arma::cx_vec result = arma::cx_vec(rho0.n_rows);
@@ -229,7 +230,7 @@ namespace RunSection
 					arma::cx_vec tmp = P * rho0;
 					rho0 = tmp;
 				}
-				NoFail = SeperateSpinSystems(rho0,spaces,this->ProductYieldsOnly);
+				NoFail = SeperateSpinSystems(rho0,spaces,this->ProductYieldsOnly, this->timestep);
 				if (!NoFail)
 					return false;
 				this->Data() << std::endl;
@@ -315,7 +316,7 @@ namespace RunSection
 			this->Data() << CurrentTime << " ";
 			this->WriteStandardOutput(this->Data());
 
-			NoFail = SeperateSpinSystems(rho0, spaces, this->ProductYieldsOnly);
+			NoFail = SeperateSpinSystems(rho0, spaces, this->ProductYieldsOnly, (a == true) ? this->timestep : t);
 			if (!NoFail)
 				return false;
 			// Terminate the line in the data file after iteration through all spin systems
@@ -346,7 +347,7 @@ namespace RunSection
 		}
 	}
 
-    bool TaskMultiStaticSSTimeEvo::SeperateSpinSystems(const arma::cx_vec &rho0, const std::vector<std::pair<SpinAPI::system_ptr, std::shared_ptr<SpinAPI::SpinSpace>>> &spaces, bool transitionyields)
+    bool TaskMultiStaticSSTimeEvo::SeperateSpinSystems(const arma::cx_vec &rho0, const std::vector<std::pair<SpinAPI::system_ptr, std::shared_ptr<SpinAPI::SpinSpace>>> &spaces, bool transitionyields, double t)
     {
 		// Retrieve the resulting density matrix for each spin system and output the results
 		int nextDimension = 0;
@@ -379,7 +380,7 @@ namespace RunSection
 						this->Log() << "Failed to obtain projection matrix onto state \"" << (*j)->Name() << "\" of SpinSystem \"" << (*i).first->Name() << "\"." << std::endl;
 						continue;
 					}
-					double Yield = (*j)->Rate() * std::abs(arma::trace(P * rho_result));
+					double Yield = std::exp(-1 * (*j)->Rate() * t) * std::abs(arma::trace(P * rho_result));
 					SumYield += Yield;
 					// Return the yield for this transition
 					this->Data() << Yield << " ";
