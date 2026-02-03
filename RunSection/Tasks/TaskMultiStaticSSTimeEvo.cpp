@@ -62,6 +62,7 @@ namespace RunSection
 
 		// Now, create a matrix to hold the Liouvillian superoperator and the initial state
 		arma::sp_cx_mat L(dimensions, dimensions);
+		arma::sp_cx_mat dL(dimensions, dimensions);
 		arma::cx_vec rho0(dimensions);
 		unsigned int nextDimension = 0; // Keeps track of the dimension where the next spin space starts
 
@@ -108,25 +109,40 @@ namespace RunSection
 			// Next, get the Hamiltonian
 			arma::sp_cx_mat H;
 			arma::sp_cx_mat dH;
-			if (!i->second->Hamiltonian(H))
+			if (!i->second->StaticHamiltonian(H))
+			{
+				this->Log() << "ERROR: Failed to obtain the superspace Hamiltonian for spin system \"" << i->first->Name() << "\"!" << std::endl;
+				return false;
+			}
+			if(!i->second->HasTimedependentInteractions() && !i->second->DynamicHamiltonian(dH));
 			{
 				this->Log() << "ERROR: Failed to obtain the superspace Hamiltonian for spin system \"" << i->first->Name() << "\"!" << std::endl;
 				return false;
 			}
 			SCData DataStruct = GetHamiltonian(H,i->second->SpaceDimensions());
 			L.submat(nextDimension, nextDimension, nextDimension + i->second->SpaceDimensions() - 1, nextDimension + i->second->SpaceDimensions() - 1) = arma::cx_double(0.0, -1.0) * DataStruct.H;
+			if(i->second->HasTimedependentInteractions())
+			{
+				SCData DataStructTD = GetHamiltonian(dH, i->second->SpaceDimensions());
+				dL.submat(nextDimension, nextDimension, nextDimension + i->second->SpaceDimensions() - 1, nextDimension + i->second->SpaceDimensions() - 1) = arma::cx_double(0.0, -1.0) * DataStructTD.H;
+			}
 
 			// Then get the reaction operators
 			arma::sp_cx_mat K;
-			if (!i->second->TotalReactionOperator(K))
+			arma::sp_cx_mat dK;
+			if (!i->second->TotalReactionOperator(K) ||(!i->second->HasTimedependentTransitions() && !i->second->TotalReactionOperator(dK)))
 			{
 				this->Log() << "ERROR: Failed to obtain matrix representation of the reaction operators for spin system \"" << i->first->Name() << "\"!" << std::endl;
 				return false;
 			}
-
 			L.submat(nextDimension, nextDimension, nextDimension + i->second->SpaceDimensions() - 1, nextDimension + i->second->SpaceDimensions() - 1) -= K;
+			if(i->second->HasTimedependentTransitions())
+			{
+				dL.submat(nextDimension, nextDimension, nextDimension + i->second->SpaceDimensions() - 1, nextDimension + i->second->SpaceDimensions() - 1) -= dK;
+			}
 
 			// Get the relaxation terms, assuming that they can just be added to the Liouvillian superoperator
+			//add dR????
 			arma::sp_cx_mat R;
 			for (auto t = i->first->operators_cbegin(); t != i->first->operators_cend(); t++)
 			{
@@ -152,6 +168,7 @@ namespace RunSection
 						{
 							// Prepare a creation operator
 							arma::sp_cx_mat C;
+							//add dC????
 							if (!SpinAPI::CreationOperator((*t), *(j->second), *(i->second), C, true))
 							{
 								this->Log() << "ERROR: Failed to obtain matrix representation of the creation operator for transition \"" << (*t)->Name() << "\"!" << std::endl;
@@ -419,7 +436,38 @@ namespace RunSection
 		return ReturnVec;
 	}
 
-	// Writes the header of the data file (but can also be passed to other streams)
+    void TaskMultiStaticSSTimeEvo::UpdateTimeDependences(const std::vector<std::pair<std::shared_ptr<SpinAPI::SpinSystem>, std::shared_ptr<SpinAPI::SpinSpace>>> &_spaces, arma::sp_cx_mat &dL, double ctime)
+    {
+		unsigned int nextDimension = 0;
+		for(auto i = _spaces.begin(); i !+ _spaces.end(); i++)
+		{
+			i->second->SetTime(ctime);
+			if(i->second->HasTimedependentInteractions())
+			{
+				arma::sp_cx_mat dH;
+				if(!i->second->DynamicHamiltonian(dH));
+				{
+					this->Log() << "ERROR: Failed to obtain the superspace Hamiltonian for spin system \"" << i->first->Name() << "\"!" << std::endl;
+					return false;
+				}
+				SCData DataStructTD = GetHamiltonian(dH, i->second->SpaceDimensions());
+				dL.submat(nextDimension, nextDimension, nextDimension + i->second->SpaceDimensions() - 1, nextDimension + i->second->SpaceDimensions() - 1) = arma::cx_double(0.0, -1.0) * DataStructTD.H;
+			}
+			if(i->second->HasTimedependentInteractions())
+			{
+				arma::sp_cx_mat dK;
+				if (!i->second->TotalReactionOperator(dK))
+				{
+					this->Log() << "ERROR: Failed to obtain matrix representation of the reaction operators for spin system \"" << i->first->Name() << "\"!" << std::endl;
+					return false;
+				}
+				dL.submat(nextDimension, nextDimension, nextDimension + i->second->SpaceDimensions() - 1, nextDimension + i->second->SpaceDimensions() - 1) -= dK;
+			}
+			nextDimension += i->second->SpaceDimensions();
+		}
+    }
+
+    // Writes the header of the data file (but can also be passed to other streams)
 	void TaskMultiStaticSSTimeEvo::WriteHeader(std::ostream &_stream)
 	{
 		_stream << "Step ";

@@ -36,6 +36,8 @@ namespace RunSection
 
 		static arma::cx_vec ComputeRhoDot(double t, arma::sp_cx_mat& L, arma::cx_vec& K, arma::cx_vec RhoNaught);
 
+		void UpdateTimeDependences(const std::vector<std::pair<std::shared_ptr<SpinAPI::SpinSystem>, std::shared_ptr<SpinAPI::SpinSpace>>>& _spaces, arma::sp_cx_mat& dL, double ctime);
+
 	protected:
 		bool RunLocal() override;
 		bool Validate() override;
