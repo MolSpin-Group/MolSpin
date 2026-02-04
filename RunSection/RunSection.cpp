@@ -243,6 +243,7 @@ namespace RunSection
 		else if (_type == MSDParser::ObjectType::Settings)
 		{
 			this->settings->Update(_obj);
+			SpinAPI::StandardOutput::SetDefaultPrecision(this->settings->DataPrecision());
 		}
 
 		return false;

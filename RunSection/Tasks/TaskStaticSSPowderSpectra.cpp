@@ -258,7 +258,7 @@ namespace RunSection
 					space.UseSuperoperatorSpace(false);
 					// Get the Hamiltonian
 					arma::sp_cx_mat H0;
-					if (!space.BaseHamiltonianRotatedLegacy(HamiltonianH0list, Rot_mat, H0))
+					if (!space.BaseHamiltonianRotated(HamiltonianH0list, Rot_mat, H0))
 					{
 						this->Log() << "Failed to obtain Hamiltonian in superspace." << std::endl;
 						continue;
@@ -379,7 +379,7 @@ namespace RunSection
 						space.UseSuperoperatorSpace(false);
 						// Get the Hamiltonian
 						arma::sp_cx_mat H0;
-						if (!space.BaseHamiltonianRotatedLegacy(HamiltonianH0list, Rot_mat, H0))
+						if (!space.BaseHamiltonianRotated(HamiltonianH0list, Rot_mat, H0))
 						{
 							this->Log() << "Failed to obtain Hamiltonian in superspace." << std::endl;
 							continue;

@@ -40,6 +40,10 @@ namespace RunSection
 		int powderGammaPoints;
 		bool powderFullSphere;
 		bool fullTensorRotation;
+		bool useSweepCache;
+		bool sweepCacheExact;
+		bool sweepCacheResfields;
+		int sweepCacheResfieldPoints;
 		std::vector<std::string> detectSpinNames;
 		std::string electron1Name;
 		std::string electron2Name;

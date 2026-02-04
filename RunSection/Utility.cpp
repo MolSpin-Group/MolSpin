@@ -10,6 +10,9 @@
 #include "Utility.h"
 #include <random>
 #include <thread>
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 
 namespace RunSection
 {
@@ -352,8 +355,15 @@ MCSpherePoint* CalculateMCSpherePoints(int n, double rmax_x, double rmax_y, doub
 
     unsigned int GetNumThreads()
     {
+#ifdef _OPENMP
+        int omp_threads = omp_get_max_threads();
+        if (omp_threads > 0)
+        {
+            return static_cast<unsigned int>(omp_threads);
+        }
+#endif
         auto processor_count = std::thread::hardware_concurrency();
-        return processor_count;
+        return (processor_count == 0) ? 1U : processor_count;
     }
 
     arma::cx_vec ThomasBlockSolver(arma::sp_cx_mat &A, arma::cx_vec &b, int block_size, std::vector<arma::sp_cx_mat>CachedBlocks)

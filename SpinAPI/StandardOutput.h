@@ -57,6 +57,10 @@ namespace SpinAPI
 		// Public output methods
 		bool WriteOutputHeader(std::ostream &) const; // Writes the header for the output column(s)
 		bool WriteOutput(std::ostream &) const;		  // Writes output data
+
+		// Global output precision for StandardOutput data
+		static void SetDefaultPrecision(unsigned int);
+		static unsigned int DefaultPrecision();
 	};
 
 	// Define alias for StandardOutput-pointers

@@ -652,7 +652,7 @@ namespace SpinAPI
 	}
 
 	// Returns the matrix representation of the Interaction object on the spins space (sparse matrix version). Singlespin and double spin interaction are rotated with interactionframe and additionally to the point on the sphere. ZFS and Semiclassical field are currently not modified in any way
-	bool SpinSpace::InteractionOperatorRotated(const interaction_ptr &_interaction, arma::mat &_rotationmatrix, arma::sp_cx_mat &_out) const
+	bool SpinSpace::InteractionOperatorRotatedZXZ(const interaction_ptr &_interaction, arma::mat &_rotationmatrix, arma::sp_cx_mat &_out) const
 	{
 		// Make sure the interaction is valid
 		if (_interaction == nullptr)
@@ -937,7 +937,7 @@ namespace SpinAPI
 		return true;
 	}
 
-	bool SpinSpace::InteractionOperatorRotatedLegacy(const interaction_ptr &_interaction, arma::mat &_rotationmatrix, arma::sp_cx_mat &_out) const
+	bool SpinSpace::InteractionOperatorRotated(const interaction_ptr &_interaction, arma::mat &_rotationmatrix, arma::sp_cx_mat &_out) const
 	{
 		// Make sure the interaction is valid
 		if (_interaction == nullptr)
@@ -1650,6 +1650,47 @@ namespace SpinAPI
 	}
 
 	// Sets the rotated sparce matrix to the part of the Hamiltonian that is used in the base Hamiltonina H0 (without additional mw field)
+	bool SpinSpace::BaseHamiltonianRotatedZXZ(std::vector<std::string> basehamiltonian_list, arma::mat rotmatrix, arma::sp_cx_mat &_out) const
+	{
+		// If we don't have any interactions, the Hamiltonian is zero
+		arma::sp_cx_mat result = arma::sp_cx_mat(this->SpaceDimensions(), this->SpaceDimensions());
+		if (this->interactions.size() < 1)
+		{
+			_out = result;
+			return true;
+		}
+
+		arma::sp_cx_mat tmp;
+		// bool semiclassical = false;
+		std::vector<interaction_ptr> SemiClassicalInteractions = {};
+		for (auto i = this->interactions.cbegin(); i != this->interactions.cend(); i++)
+		{
+			// Skip any dynamic interactions (time-dependent or with a trajectory)
+			if (!IsStatic(*(*i)))
+				continue;
+
+			// Check if the interaction name is in the basehamiltonian_list
+			if (std::find(basehamiltonian_list.begin(), basehamiltonian_list.end(), (*i)->Name()) != basehamiltonian_list.end())
+			{
+				if ((*i)->Type() == InteractionType::SemiClassicalField)
+				{
+					SemiClassicalInteractions.push_back((*i));
+					// semiclassical = true;
+					continue;
+				}
+				// Attempt to get the matrix representing the Interaction object in the spin space
+				if (!this->InteractionOperatorRotatedZXZ((*i), rotmatrix, tmp))
+					return false;
+
+				result += tmp;
+			}
+		}
+
+		_out = result;
+		return true;
+	}
+
+	// Sets the rotated sparse matrix to the part of the Hamiltonian that is used in the base Hamiltonian H0
 	bool SpinSpace::BaseHamiltonianRotated(std::vector<std::string> basehamiltonian_list, arma::mat rotmatrix, arma::sp_cx_mat &_out) const
 	{
 		// If we don't have any interactions, the Hamiltonian is zero
@@ -1680,47 +1721,6 @@ namespace SpinAPI
 				}
 				// Attempt to get the matrix representing the Interaction object in the spin space
 				if (!this->InteractionOperatorRotated((*i), rotmatrix, tmp))
-					return false;
-
-				result += tmp;
-			}
-		}
-
-		_out = result;
-		return true;
-	}
-
-	// Sets the rotated sparse matrix to the part of the Hamiltonian that is used in the base Hamiltonian H0
-	bool SpinSpace::BaseHamiltonianRotatedLegacy(std::vector<std::string> basehamiltonian_list, arma::mat rotmatrix, arma::sp_cx_mat &_out) const
-	{
-		// If we don't have any interactions, the Hamiltonian is zero
-		arma::sp_cx_mat result = arma::sp_cx_mat(this->SpaceDimensions(), this->SpaceDimensions());
-		if (this->interactions.size() < 1)
-		{
-			_out = result;
-			return true;
-		}
-
-		arma::sp_cx_mat tmp;
-		// bool semiclassical = false;
-		std::vector<interaction_ptr> SemiClassicalInteractions = {};
-		for (auto i = this->interactions.cbegin(); i != this->interactions.cend(); i++)
-		{
-			// Skip any dynamic interactions (time-dependent or with a trajectory)
-			if (!IsStatic(*(*i)))
-				continue;
-
-			// Check if the interaction name is in the basehamiltonian_list
-			if (std::find(basehamiltonian_list.begin(), basehamiltonian_list.end(), (*i)->Name()) != basehamiltonian_list.end())
-			{
-				if ((*i)->Type() == InteractionType::SemiClassicalField)
-				{
-					SemiClassicalInteractions.push_back((*i));
-					// semiclassical = true;
-					continue;
-				}
-				// Attempt to get the matrix representing the Interaction object in the spin space
-				if (!this->InteractionOperatorRotatedLegacy((*i), rotmatrix, tmp))
 					return false;
 
 				result += tmp;

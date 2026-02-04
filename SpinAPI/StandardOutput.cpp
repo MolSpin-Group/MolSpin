@@ -8,11 +8,21 @@
 // See LICENSE.txt for license information.
 /////////////////////////////////////////////////////////////////////////
 // #include <iostream>
+#include <iomanip>
+#include <limits>
 #include "ObjectParser.h"
 #include "StandardOutput.h"
 
 namespace SpinAPI
 {
+	namespace
+	{
+		unsigned int &DefaultOutputPrecision()
+		{
+			static unsigned int precision = 6;
+			return precision;
+		}
+	}
 	// -----------------------------------------------------
 	// StandardOutput Constructors and Destructor
 	// -----------------------------------------------------
@@ -116,6 +126,7 @@ namespace SpinAPI
 	{
 		// Use a stringstream to construct the output
 		std::stringstream output;
+		output << std::setprecision(DefaultPrecision());
 
 		// Write the header depending on the type
 		// Note: The blocks { } are used to prevent scoping problems with the labels (leads to compilation errors despite breaks)
@@ -166,6 +177,20 @@ namespace SpinAPI
 		}
 
 		return output.str();
+	}
+	// -----------------------------------------------------
+	// Precision control
+	// -----------------------------------------------------
+	void StandardOutput::SetDefaultPrecision(unsigned int _precision)
+	{
+		const unsigned int maxPrec = std::numeric_limits<double>::max_digits10;
+		if (_precision >= 1 && _precision <= maxPrec)
+			DefaultOutputPrecision() = _precision;
+	}
+
+	unsigned int StandardOutput::DefaultPrecision()
+	{
+		return DefaultOutputPrecision();
 	}
 	// -----------------------------------------------------
 	// StandardOutput public methods

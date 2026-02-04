@@ -16,6 +16,8 @@
 #include "FileReader.h"
 // #include "Action.h"
 #include <fstream>
+#include <cstdlib>
+#include <thread>
 #include <unistd.h>
 
 //////////////////////////////////////////////////////////////////////////////
@@ -26,6 +28,45 @@ extern "C" void openblas_set_num_threads(int);
 extern "C" void omp_set_num_threads(int);
 // #endif
 //////////////////////////////////////////////////////////////////////////////
+namespace
+{
+	bool ParseThreadCount(const char *text, int &value)
+	{
+		if (text == nullptr || text[0] == '\0')
+		{
+			return false;
+		}
+
+		char *end = nullptr;
+		long parsed = std::strtol(text, &end, 10);
+		if (end == text || *end != '\0')
+		{
+			return false;
+		}
+		if (parsed < 1 || parsed > MAX_THREADS)
+		{
+			return false;
+		}
+
+		value = static_cast<int>(parsed);
+		return true;
+	}
+
+	int DefaultThreadCount()
+	{
+		unsigned int count = std::thread::hardware_concurrency();
+		if (count == 0)
+		{
+			return 1;
+		}
+		if (count > static_cast<unsigned int>(MAX_THREADS))
+		{
+			return MAX_THREADS;
+		}
+		return static_cast<int>(count);
+	}
+}
+
 int main(int argc, char **argv)
 {
 	const std::string MolSpin_version = "v2.3";
@@ -147,6 +188,8 @@ int main(int argc, char **argv)
 	unsigned int firstStep = 1;
 	unsigned int stepLimit = 0;
 	std::string checkpoint = "";
+	int cliThreads = -1;
+	bool cliThreadsSet = false;
 
 	// -----------------------------------------------------
 	// START Parsing of commandline options
@@ -176,21 +219,16 @@ int main(int argc, char **argv)
 				// Set the number of threads
 				try
 				{
-					int threads = std::stoi(argv[i + 1]);
-
-					if (threads >= 1 && threads <= MAX_THREADS)
+					int threads = 0;
+					if (ParseThreadCount(argv[i + 1], threads))
 					{
-						std::cout << "# - Number of threads set to " << threads << "." << std::endl;
-						// #ifdef USE_OPENBLAS
-						openblas_set_num_threads(threads);
-						// #endif
-						// #ifdef USE_OPENMP
-						omp_set_num_threads(threads);
-						// #endif
+						cliThreads = threads;
+						cliThreadsSet = true;
+						std::cout << "# - Number of threads requested: " << threads << "." << std::endl;
 					}
 					else
 					{
-						std::cout << "# - Could not set number of threads to " << threads << "! Please specify a number from 1 to " << MAX_THREADS << "." << std::endl;
+						std::cout << "# - Could not set number of threads to " << argv[i + 1] << "! Please specify a number from 1 to " << MAX_THREADS << "." << std::endl;
 					}
 				}
 				catch (const std::exception &) // Catch any conversion errors
@@ -393,6 +431,59 @@ int main(int argc, char **argv)
 	// -----------------------------------------------------
 	// END of commandline parsing
 	// -----------------------------------------------------
+	{
+		auto readEnvThreads = [](const char *name, int &value) -> bool {
+			const char *envValue = std::getenv(name);
+			if (envValue == nullptr)
+			{
+				return false;
+			}
+			if (ParseThreadCount(envValue, value))
+			{
+				return true;
+			}
+			std::cout << "# - Warning: invalid " << name << "=\"" << envValue << "\" ignored." << std::endl;
+			return false;
+		};
+
+		const int defaultThreads = DefaultThreadCount();
+		int ompThreads = 0;
+		int blasThreads = 0;
+
+		if (!readEnvThreads("MOLSPIN_OMP_THREADS", ompThreads))
+		{
+			if (cliThreadsSet)
+			{
+				ompThreads = cliThreads;
+			}
+			else if (!readEnvThreads("OMP_NUM_THREADS", ompThreads))
+			{
+				ompThreads = defaultThreads;
+			}
+		}
+
+		if (!readEnvThreads("MOLSPIN_BLAS_THREADS", blasThreads))
+		{
+			if (!readEnvThreads("OPENBLAS_NUM_THREADS", blasThreads) && !readEnvThreads("MKL_NUM_THREADS", blasThreads))
+			{
+				blasThreads = (ompThreads > 1) ? 1 : ompThreads;
+			}
+		}
+
+		std::string ompThreadsStr = std::to_string(ompThreads);
+		std::string blasThreadsStr = std::to_string(blasThreads);
+		setenv("OMP_NUM_THREADS", ompThreadsStr.c_str(), 1);
+		setenv("OPENBLAS_NUM_THREADS", blasThreadsStr.c_str(), 1);
+
+		openblas_set_num_threads(blasThreads);
+		omp_set_num_threads(ompThreads);
+
+		std::cout << "# - Thread configuration: OMP=" << ompThreads << ", OpenBLAS=" << blasThreads << "." << std::endl;
+		if (ompThreads > 1 && blasThreads > 1)
+		{
+			std::cout << "# - Warning: OMP and OpenBLAS threads > 1 may oversubscribe CPU cores." << std::endl;
+		}
+	}
 
 	RunSection::RunSection rs;
 	rs.SetOverruleAppend(appendMode);

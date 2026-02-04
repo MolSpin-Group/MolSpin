@@ -27,8 +27,12 @@ namespace RunSection
 		std::shared_ptr<std::ofstream> data;						 // File stream
 		std::ostream *logstream;									 // Can be another type of stream
 		std::ostream *datastream;									 // Can be another type of stream
+		unsigned int logPrecision;
+		unsigned int dataPrecision;
 		std::shared_ptr<std::ostringstream> ignored_messages_stream; // A "garbage stream" for messages that should not be written to the other streams
 		MessageType notificationLevel;
+
+		void ApplyPrecision(std::ostream *, unsigned int) const;
 
 	public:
 		// Constructors / Destructors
@@ -44,6 +48,8 @@ namespace RunSection
 		bool SetDataFile(const std::string &_filename, bool _append = false); // Write to a file
 		bool SetLogStream(std::ostream &);									  // Use an existing stream (used by testing module)
 		bool SetDataStream(std::ostream &);									  // Use an existing stream (used by testing module)
+		bool SetLogPrecision(unsigned int);
+		bool SetDataPrecision(unsigned int);
 		bool SetNotificationLevel(const MessageType &);						  // Sets the notification level (i.e. which types of messages to show)
 
 		// Public const methods
