@@ -10,6 +10,7 @@
 #include "Utility.h"
 #include <random>
 #include <thread>
+#include <set>
 
 namespace RunSection
 {
@@ -426,7 +427,7 @@ MCSpherePoint* CalculateMCSpherePoints(int n, double rmax_x, double rmax_y, doub
         return {dumpstep, first_step};
     }
 
-    TimePropReturnInfo AdaptiveDirectKrylovArmadillo(arma::sp_cx_mat &L, arma::cx_vec &rho0, arma::cx_vec &drhodt, double dumpstep, double time, PropParam PropParams, HamiltonainTimeDepFuncArma GetTDH)
+    TimePropReturnInfo AdaptiveDirectKrylovArmadillo(arma::sp_cx_mat &L, arma::cx_vec &rho0, arma::cx_vec &drhodt, double dumpstep, double time, PropParam PropParams)
     {
 
         auto ArnoldiIteration = [=](const arma::sp_cx_mat&L, const arma::cx_vec& rho, int m_max) {
@@ -483,25 +484,10 @@ MCSpherePoint* CalculateMCSpherePoints(int n, double rmax_x, double rmax_y, doub
             double err;
         };
 
-        auto MagnusExpansion2ndOrder = [&](const arma::sp_cx_mat& L, double h) {
-            arma::sp_cx_mat At = GetTDH(PropParams.CurrentTime, L);
-            arma::sp_cx_mat Atpto2 = GetTDH(PropParams.CurrentTime + h/2.0, L);
-
-            arma::sp_cx_mat Omega = (h/2.0) * (Atpto2 * At - At * Atpto2);
-            return Omega;
-        };
-
         auto step = [&](const arma::sp_cx_mat& L, const arma::cx_vec& rho, double h, int m_krylov)  {
 
             ArnoldiResult ar;
-            if(GetTDH != nullptr)
-            {
-                ar = ArnoldiIteration(MagnusExpansion2ndOrder(L,h), rho, m_krylov);
-            }
-            else
-            {
-                ar = ArnoldiIteration(L, rho, m_krylov);
-            }
+            ar = ArnoldiIteration(L, rho, m_krylov);
             int m = ar.Hessian.n_rows;
             arma::sp_cx_mat Hm = h * ar.Hessian;
             
@@ -564,6 +550,84 @@ MCSpherePoint* CalculateMCSpherePoints(int n, double rmax_x, double rmax_y, doub
 
         return {dumpstep, first_attempt};
 
+    }
+
+    std::vector<arma::sp_cx_mat> FourierSeriesDecomposition(int dimension, double T, int n, int M, HamiltonianTimeDepFuncArma TDH)
+    {
+        std::vector<arma::sp_cx_mat> L_t;
+        L_t.reserve(n);
+        double dt = T / n;
+        //get samples of L from L(0) to L(T)
+        for(int i = 0; i < n; i++)
+        {
+            double t = k * dt;
+            arma::sp_cx_mat dL;
+            TDH(t,dL);
+            L_t.emplace_back(dL);
+        }
+
+        auto UnionSparsityPattern = [](const std::vector<arma::sp_cx_mat>& L_t) {
+            std::set<std::pair<arma::uword, arma::uword>> coords;
+            for(const auto& Lk : L_t)
+            {
+                for(auto it = Lk.begin(); it != Lk.end(); it++)
+                {
+                    coords.emplace(it.row(), it.col());
+                }
+            }
+            arma::umat uq(2,coords.size());
+            unsigned int index = 0;
+            for(auto&p : coords)
+            {
+                uq(0,index) = p.first;
+                uq(1,index) = p.second;
+                index++;
+            }
+
+            return uq;
+        };
+
+        arma::umat union_unique = UnionSparsityPattern(L_t);
+        size_t non_zero = union_unique.n_cols;
+
+        std::vector<arma::cx_vec> time_series(non_zero, arma::cx_vec(n));
+        for(size_t i = 0; i < non_zero; i++)
+        {
+            unsigned int r = union_unique(0,i);
+            unsigned int c = union_unique(1,i);
+
+            for(int k = 0; k < n; k++)
+            {
+                time_series[i](k) = L_t[k](r,c)
+            }
+        }
+
+        std::vector<arma::cx_vec> freq_series(non_zero, arma::cx_vec(n));
+        for(size_t i = 0; i < non_zero; i++)
+        {
+            freq_series[i] = arma::fft(time_series[i]);
+            freq_series[i] /= (double)n;
+        }
+
+        int nFloquet = 2 * M + 1;
+        std::vector<arma::sp_cx_mat> Lm;
+        Lm.reserve(nFloquet);
+        for(int m = -M; m <= M; m++)
+        {
+            arma::umat locs(2,non_zero);
+            arma::cx_vec val(non_zero);
+
+            int fft_index = (m >= 0) ? m : (n + m);
+
+            for(size_t i = 0; i < non_zero; i++)
+            {
+                locs(0,i) = union_unique(0,i);
+                locs(1,i) = union_unique(1,i);
+                val(i) = freq_series[i](fft_index);
+            }
+            Lm.emplace_back(arma::sp_cx_mat(locs,val,dimension,dimension));
+        }
+        return Lm;
     }
 
     unsigned int GetNumThreads()

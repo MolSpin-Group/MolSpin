@@ -90,6 +90,8 @@ namespace RunSection
         int reject_limit = 2;
 
         double CurrentTime = 0.0;
+
+        int M = 0; //fourier decomposition modes
     };
 
     double EstimateStiffnessArmadillo(arma::sp_cx_mat &L);
@@ -113,7 +115,23 @@ namespace RunSection
     ///     @return New time step (double)
     TimePropReturnInfo RungeKutta45Armadillo(arma::sp_cx_mat &, arma::cx_vec &, arma::cx_vec &, double, RungeKuttaFuncArma, double time = 0, PropParam PropParams = PropParam());
 
-    TimePropReturnInfo AdaptiveDirectKrylovArmadillo(arma::sp_cx_mat &L, arma::cx_vec &rho0, arma::cx_vec &drhodt, double dumpstep, double time = 0, PropParam PropParams = PropParam(), HamiltonainTimeDepFuncArma GetTDH = nullptr);
+    TimePropReturnInfo AdaptiveDirectKrylovArmadillo(arma::sp_cx_mat &L, arma::cx_vec &rho0, arma::cx_vec &drhodt, double dumpstep, double time = 0, PropParam PropParams = PropParam());
+
+    //Flouqet theory - periodic only
+
+    struct FloquetSpectrum
+    {
+        arma::cx_vec eigenvalues;
+        arma::cx_mat eigenvecs;
+    };
+
+    std::vector<arma::sp_cx_mat> FourierSeriesDecomposition(int, double, int, int, HamiltonianTimeDepFuncArma);
+    arma::sp_cx_mat BuildExtendedSpace(const std::vector<arma::sp_cx_mat>&, double, int);
+    FloquetSpectrum DiagonalizeLF(const arma::sp_cx_mat&, int);
+    arma::sp_cx_mat GetFloquetSpectrum(const arma::cx_vec&, int, int, double, double);
+    std::vector<std::complex<double>> ExpandInFBasis(const arma::cx_mat&, const arma::cx_vec&, int, int);
+    //arma::cx_vec GetRho_t();
+
 // endregion TimeEvo 
     unsigned int GetNumThreads();
 
