@@ -182,7 +182,20 @@ namespace RunSection
     arma::cx_mat AugmentedMatrix(arma::cx_mat Mat, arma::cx_vec b);
     std::pair<arma::cx_mat, arma::cx_vec> UndoAugmentedMatrix(arma::cx_mat AugMat);
 
-// endregion BlockMatrixInversionSolvers
+// endregion BlockMatrixInversionSolvers#
+
+//some mathmatical functions
+    struct FactorSieve
+    {
+        std::vector<int> PrimeNumbers;
+    };
+    std::pair<int,int> ContinuedFraction(double, int depth = 100);
+    FactorSieve BuildSieveSimple(int);
+    FactorSieve FactorSieveBuildSieveParallel(int);
+    std::vector<int> PrimeFactors(int, FactorSieve = {});
+    int HCF(std::vector<int>);
+    int HCF(int, int); //euclids method
+    int LCM(std::vector<int>);
 
 // region SparseMatrixSolvers
     //DONT USE THESE FUNCTIONS THEY ARE SLOW 

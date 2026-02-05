@@ -11,6 +11,8 @@
 #include <random>
 #include <thread>
 #include <set>
+#include <Interaction.h>
+#include <bits/stdc++.h>
 
 namespace RunSection
 {
@@ -795,6 +797,20 @@ MCSpherePoint* CalculateMCSpherePoints(int n, double rmax_x, double rmax_y, doub
     FloquetPropogator FloquetInitilizer(arma::sp_cx_mat & L, arma::cx_vec & rho0, HamiltonainTimeDepFuncArma, std::vector<SpinAPI::interaction_ptr>& tdi)
     {
         FloquetPropogator propogator_specs;
+
+        //need to get lowest common multiple of all the frequiencies - do that via prime factorisation 
+        //however the frequencies might be a fraction so need to use a continued fraction approximation to get the frequencies in the form a/b
+        //then find the lcm for all a and highest common factor for all b via prime factorisation
+
+        std::vector<std::pair<double,double>> frequencies;
+        for (auto i = tdi.begin(); i != tdi.end(); i++)
+        {
+            double freq = (*i)->GetTDFrequency();
+            frequencies.push_back(ContinuedFraction(freq));
+        }
+
+
+
         return propogator_specs;
     }
 
@@ -1189,6 +1205,96 @@ MCSpherePoint* CalculateMCSpherePoints(int n, double rmax_x, double rmax_y, doub
         arma::cx_mat Mat = AugMat.submat(0, 0, rows-1, cols-2);
         arma::cx_vec b = AugMat.submat(0, cols-1, rows-1, cols-1);
         return std::make_pair(Mat, b);
+    }
+
+    std::pair<int, int> ContinuedFraction(double x, int depth)
+    {
+        int a = (int)std::floor(x);
+        if(depth == 0)
+            return {a,1};
+        double r = x - a;
+        int n,d;
+        double r_abs = std::abs(r);
+        if(r_abs < 1e-10)
+        {
+            return {a,1};
+        }
+        else
+        {
+            double reciprocal = 1 / r;
+            auto[v1, v2] = ContinuedFraction(reciprocal, depth - 1); 
+            n = v1;
+            d = v2;
+        }
+        return {a*n + d, d};
+    }
+
+    FactorSieve BuildSieveSimple(int n)
+    {
+        int max_value = (int)std::floor(std::sqrt(n));
+        
+        std::vector<bool> mark(max_value + 1, false);
+        std::vector<int> primes;
+
+        for(size_t i = 2; i < max_value; i++)
+        {
+            if(!mark[i])
+            {
+                primes.push_back(i);
+                for(size_t j = i*i; j <= max_value; j += i)
+                {
+                    mark[j] = true;
+                }
+            }
+        }
+        FactorSieve blocksieve;
+        blocksieve.PrimeNumbers = primes;
+        return blocksieve;
+    }   
+
+    FactorSieve FactorSieveBuildSieveParallel(int n)
+    {
+        int limit = (int)std::floor(std::sqrt(n)) + 1;
+
+    }
+
+std::vector<int> PrimeFactors(int n, FactorSieve sieve)
+    {
+        //quick check to check our number is not prime
+
+        //Pollard rho
+
+    }
+
+    int HCF(std::vector<int>)
+    {
+        return 0;
+    }
+
+    int HCF(int a, int b)
+    {
+        if(a > b)
+        {
+            int r = a - (int)std::floor((double)a / (double)b) * b;
+            if(r == 0)
+                return a;
+            else
+                return HCF(b,r);
+        }
+        else if(a < b)
+        {
+            int r = b - (int)std::floor((double)b / (double)a) * a;
+            if(r == 0)
+                return b;
+            else
+                return HCF(a,r);
+        }
+        return a;
+    }
+
+    int LCM(std::vector<int>)
+    {
+        return 0;
     }
 
     bool IsBlockTridiagonal(arma::sp_cx_mat &A, int block_size)
