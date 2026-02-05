@@ -746,6 +746,58 @@ MCSpherePoint* CalculateMCSpherePoints(int n, double rmax_x, double rmax_y, doub
         return rho_t;
     }
 
+    std::pair<double,double> PropogatorWrapper(double t, arma::cx_vec &rho0, arma::cx_vec &rhoT, bool &timestepchange, FloquetPropogator& floquetparam, PropParam& param)
+    {
+        bool reject = true;
+        timestepchange = false;
+        double accepted_time_step = t;
+        double dumpstep = 0;
+        while(reject)
+        {
+
+            rhoT = Propogate(accepted_time_step,floquetparam.spec, floquetparam.coeffs, floquetparam.D, floquetparam.M, floquetparam.Omega, floquetparam.T);
+            auto normt = arma::norm(rhoT,2);
+            auto norm0 = arma::norm(rho0,2);
+            
+            double rtol = param.rtol * normt;
+            double tol = rtol + param.atol;
+            double diff = std::abs(normt - norm0);
+            double R = diff / tol;
+
+            auto Adjusth = [&](double R, double safety, double f1, double f2, double h) {
+                return h * std::min(f2, std::max(f1, safety * std::pow(R, -1.0/5.0)));
+            };
+
+            dumpstep = Adjusth(R, param.safety, param.f1, param.f2, accepted_time_step);
+            if(R <= param.reject_limit)
+            {
+                reject = false;
+            }
+
+            if(dumpstep < param.min && R > param.reject_limit)
+            {
+                param.min = dumpstep;
+            }
+            if(dumpstep > param.max)
+            {
+                dumpstep = param.max;
+            }
+            if(R >= param.reject_limit)
+            {
+                timestepchange = true;
+                accepted_time_step = dumpstep
+            }
+        }
+        
+        return {dumpstep, accepted_time_step};
+    }
+
+    FloquetPropogator FloquetInitilizer(arma::sp_cx_mat & L, arma::cx_vec & rho0, HamiltonainTimeDepFuncArma, std::vector<SpinAPI::interaction_ptr>& tdi)
+    {
+        FloquetPropogator propogator_specs;
+        return propogator_specs;
+    }
+
     unsigned int GetNumThreads()
     {
         auto processor_count = std::thread::hardware_concurrency();

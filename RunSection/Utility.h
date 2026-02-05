@@ -90,8 +90,6 @@ namespace RunSection
         int reject_limit = 2;
 
         double CurrentTime = 0.0;
-
-        int M = 0; //fourier decomposition modes
     };
 
     double EstimateStiffnessArmadillo(arma::sp_cx_mat &L);
@@ -141,8 +139,8 @@ namespace RunSection
     arma::cx_vec GetFloquetSpectrum(const arma::cx_vec&, int, int, double, double);
     std::vector<std::complex<double>> ExpandInFBasis(const arma::cx_mat&, const arma::cx_vec&, int, int);
     arma::cx_vec Propogate(double, const FloquetSpectrum&, const std::vector<std::complex<double>> coeffs, int, int, double, double);
-    double PropogatorWrapper(double t, arma::cx_vec& rho0, arma::cx_vec& rhoT, bool& timestepchange);
-    FloquetPropogator FloquetInitilizer();
+    std::pair<double,double> PropogatorWrapper(double t, arma::cx_vec& rho0, arma::cx_vec& rhoT, bool& timestepchange, FloquetPropogator& floquetparam, PropParam& param);
+    FloquetPropogator FloquetInitilizer(arma::sp_cx_mat& L, arma::cx_vec& rho0, HamiltonainTimeDepFuncArma, std::vector<SpinAPI::interaction_ptr>& tdi);
     
     //arma::cx_vec GetRho_t();
 
