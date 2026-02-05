@@ -560,7 +560,7 @@ MCSpherePoint* CalculateMCSpherePoints(int n, double rmax_x, double rmax_y, doub
         //get samples of L from L(0) to L(T)
         for(int i = 0; i < n; i++)
         {
-            double t = k * dt;
+            double t = i * dt;
             arma::sp_cx_mat dL;
             TDH(t,dL);
             L_t.emplace_back(dL);
@@ -598,7 +598,7 @@ MCSpherePoint* CalculateMCSpherePoints(int n, double rmax_x, double rmax_y, doub
 
             for(int k = 0; k < n; k++)
             {
-                time_series[i](k) = L_t[k](r,c)
+                time_series[i](k) = L_t[k](r,c);
             }
         }
 
@@ -630,10 +630,147 @@ MCSpherePoint* CalculateMCSpherePoints(int n, double rmax_x, double rmax_y, doub
         return Lm;
     }
 
+    arma::sp_cx_mat BuildExtendedSpace(const std::vector<arma::sp_cx_mat>& Lm, double omega, int M)
+    {
+        int dim = Lm[0].n_rows;
+        int nFloquet = 2 * M + 1;
+        int SambeDim = dim * nFloquet;
+
+        arma::umat locs(2,0);
+        arma::cx_vec vals;
+
+        auto append_blocks = [&](std::pair<int, int> offset, const arma::sp_cx_mat& block) {
+           auto[block_nonzero_locs, values] = GetSparsityPattern(block);
+           arma::umat new_locs(2,values.size());
+           new_locs.row(0) = block_nonzero_locs.row(0) + offset.first;
+           new_locs.row(1) = block_nonzero_locs.row(1) + offset.second;
+
+           locs = arma::join_rows(locs, new_locs);
+           arma::cx_vec val = arma::conv_to<arma::cx_vec>::from(values);
+           vals = arma::join_cols(vals,val);
+        };
+
+        for(int i = -M; i <= M; i++)
+        {
+            int row_offset = (i + M) * dim;
+            for(int n = -M; n <= M; n++)
+            {
+                int col_offset = (n + M) * dim;
+                int ell = i - n;
+
+                if(ell >= -M && ell <= M) 
+                {
+                    append_blocks({row_offset,col_offset}, Lm[ell+M]);
+                }
+
+                if(i==n)
+                {
+                    arma::umat eye_locs(2,dim);
+                    arma::cx_vec eye_vals(dim);
+
+                    for(int idx = 0; idx < dim; i++)
+                    {
+                        eye_locs(0,idx) = row_offset + idx;
+                        eye_locs(1,idx) = col_offset + idx;
+                        eye_vals(idx) = std::complex<double>(0.0, i * omega); 
+                    }
+
+                    locs = arma::join_rows(locs, eye_locs);
+                    vals = arma::join_cols(vals, eye_vals);
+                }
+            }
+        }
+
+        arma::sp_cx_mat LF(locs,vals, SambeDim, SambeDim);
+        return LF;
+    }
+
+    FloquetSpectrum DiagonalizeLF(const arma::sp_cx_mat& LF, int k )
+    {
+        FloquetSpectrum spec;
+        arma::eigs_gen(spec.eigenvalues, spec.eigenvecs, LF, k, "lr");
+        return spec;
+    }
+
+    arma::cx_vec GetFloquetSpectrum(const arma::cx_vec& eigvec, int dim, int M, double Omega, double t)
+    {
+        arma::cx_vec R_t(dim, arma::fill::zeros);
+        for(int m = -M; m <= M; m++)
+        {
+            int offset = (m+M)*dim;
+            arma::cx_vec vec_m = eigvec.subvec(offset, offset + dim -1);
+            std::complex<double> phase = std::exp(std::complex<double>(0.0, m * Omega * t));
+            R_t += phase * vec_m;
+        }
+
+        return R_t;
+    }
+
+    std::vector<std::complex<double>> ExpandInFBasis(const arma::cx_mat& eigvec, const arma::cx_vec& rho0, int D, int M)
+    {
+        int SambeDim = eigvec.n_rows;
+        int modes = eigvec.n_cols;
+
+        std::vector<std::complex<double>> coeffs(modes,std::complex<double>(0.0,0.0));
+        arma::cx_vec rho0_samba(SambeDim, arma::fill::zeros);
+        int offset_0 = M*D;
+        rho0_samba.subvec(offset_0, offset_0 + D - 1) = rho0;
+
+        for(int a = 0; a < modes; a++)
+        {
+            coeffs[a] = arma::cdot(eigvec.col(a), rho0_samba);
+        }
+
+        return coeffs;
+    }
+
+    arma::cx_vec Propogate(double t, const FloquetSpectrum& spec, const std::vector<std::complex<double>> coeffs, int D, int M, double Omega, double T)
+    {
+        double n_FullPeriod = (int)std::floor(t/T);
+        double tau = t - n_FullPeriod * T;
+
+        arma::cx_vec rho_t(D,arma::fill::zeros);
+        int modes = spec.eigenvecs.n_cols;
+
+        for(int a = 0; a < modes; a++)
+        {
+            std::complex<double> c_a = coeffs[a];
+            if(std::abs(c_a) < 1e-14) continue;
+            std::complex<double> mu = spec.eigenvalues(a);
+            std::complex<double> factor = c_a * std::exp((mu * (double)n_FullPeriod * T) + (mu * tau));
+            arma::cx_vec eigvec_a = spec.eigenvecs.col(a);
+            arma::cx_vec R_alpha_tau = GetFloquetSpectrum(eigvec_a, D, M, Omega, tau);
+            rho_t += factor * R_alpha_tau;
+        }
+
+        return rho_t;
+    }
+
     unsigned int GetNumThreads()
     {
         auto processor_count = std::thread::hardware_concurrency();
         return processor_count;
+    }
+
+    std::tuple<arma::umat, std::vector<std::complex<double>>> GetSparsityPattern(const arma::sp_cx_mat &L)
+    {
+        std::set<std::pair<arma::uword, arma::uword>> coords;
+        std::vector<std::complex<double>> values;
+        for(auto it = L.begin(); it != L.end(); it++)
+        {
+            coords.emplace(it.row(), it.col());
+            values.push_back((*it));
+        }
+
+        arma::umat uq(2,coords.size());
+        unsigned int index = 0;
+        for(auto&p : coords)
+        {
+            uq(0,index) = p.first;
+            uq(1,index) = p.second;
+            index++;
+        }
+        return std::make_tuple(uq,values);
     }
 
     arma::cx_vec ThomasBlockSolver(arma::sp_cx_mat &A, arma::cx_vec &b, int block_size, std::vector<arma::sp_cx_mat>CachedBlocks)

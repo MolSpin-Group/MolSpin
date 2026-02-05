@@ -125,15 +125,30 @@ namespace RunSection
         arma::cx_mat eigenvecs;
     };
 
-    std::vector<arma::sp_cx_mat> FourierSeriesDecomposition(int, double, int, int, HamiltonianTimeDepFuncArma);
+    struct FloquetPropogator
+    {
+        FloquetSpectrum spec;
+        std::vector<std::complex<double>> coeffs;
+        int D;
+        int M;
+        double Omega;
+        double T;
+    };
+
+    std::vector<arma::sp_cx_mat> FourierSeriesDecomposition(int, double, int, int, HamiltonainTimeDepFuncArma);
     arma::sp_cx_mat BuildExtendedSpace(const std::vector<arma::sp_cx_mat>&, double, int);
     FloquetSpectrum DiagonalizeLF(const arma::sp_cx_mat&, int);
-    arma::sp_cx_mat GetFloquetSpectrum(const arma::cx_vec&, int, int, double, double);
+    arma::cx_vec GetFloquetSpectrum(const arma::cx_vec&, int, int, double, double);
     std::vector<std::complex<double>> ExpandInFBasis(const arma::cx_mat&, const arma::cx_vec&, int, int);
+    arma::cx_vec Propogate(double, const FloquetSpectrum&, const std::vector<std::complex<double>> coeffs, int, int, double, double);
+    double PropogatorWrapper(double t, arma::cx_vec& rho0, arma::cx_vec& rhoT, bool& timestepchange);
+    FloquetPropogator FloquetInitilizer();
+    
     //arma::cx_vec GetRho_t();
 
 // endregion TimeEvo 
     unsigned int GetNumThreads();
+    std::tuple<arma::umat, std::vector<std::complex<double>>> GetSparsityPattern(const arma::sp_cx_mat& L);
 
 // region BlockMatrixInversionSolvers
     //With these solvers there is the potential for a large amount of matrix fill-in during the solution process.
