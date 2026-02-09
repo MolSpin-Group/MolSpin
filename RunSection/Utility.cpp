@@ -787,14 +787,14 @@ MCSpherePoint* CalculateMCSpherePoints(int n, double rmax_x, double rmax_y, doub
             if(R >= param.reject_limit)
             {
                 timestepchange = true;
-                accepted_time_step = dumpstep
+                accepted_time_step = dumpstep;
             }
         }
         
         return {dumpstep, accepted_time_step};
     }
 
-    FloquetPropogator FloquetInitilizer(arma::sp_cx_mat & L, arma::cx_vec & rho0, HamiltonainTimeDepFuncArma, std::vector<SpinAPI::interaction_ptr>& tdi)
+    FloquetPropogator FloquetInitilizer(arma::sp_cx_mat & L, arma::cx_vec & rho0, HamiltonainTimeDepFuncArma TDH, std::vector<SpinAPI::interaction_ptr>& tdi, int M)
     {
         FloquetPropogator propogator_specs;
 
@@ -803,13 +803,67 @@ MCSpherePoint* CalculateMCSpherePoints(int n, double rmax_x, double rmax_y, doub
         //then find the lcm for all a and highest common factor for all b via prime factorisation
 
         std::vector<std::pair<double,double>> frequencies;
+        int max_numerator = 0;
+        int max_denominator = 0;
+        int index = 0;
         for (auto i = tdi.begin(); i != tdi.end(); i++)
         {
             double freq = (*i)->GetTDFrequency();
             frequencies.push_back(ContinuedFraction(freq));
+
+            if(frequencies[index].first > max_numerator)
+                max_numerator = frequencies[index].first;
+
+            if(frequencies[index].second > max_denominator)
+                max_denominator = frequencies[index].second;
+
+            index++;
         }
 
+        std::vector<std::vector<int>> numerator_pf;
+        std::vector<std::vector<int>> denominator_pf;
 
+        FactorSieve numerator = BuildSieveParallel(max_numerator);
+        FactorSieve denominator = BuildSieveParallel(max_denominator);
+        
+        for(auto f : frequencies)
+        {
+            numerator_pf.push_back(PrimeFactors(f.first, numerator));
+            denominator_pf.push_back(PrimeFactors(f.second, denominator));
+        }
+
+        int LCM_N = LCM(numerator_pf);
+        int HCF_D = HCF(denominator_pf);
+
+        double F = (double)LCM_N / (double)HCF_D;
+
+        int D = L.n_cols;
+        double T = 1/F;
+        double Omega= 2 * M_PI * F;
+        if (M==0)
+        {
+            int num_freq= tdi.size();
+            if(num_freq <= 2)
+                M = tdi.size() + 3;
+            else
+                M = tdi.size() + 5;
+        }
+
+        int Nt = 8 * (2*M + 1);
+        int K = D;
+        
+        auto Lm = FourierSeriesDecomposition(D, T, Nt, M, TDH);
+        arma::sp_cx_mat Lf = BuildExtendedSpace(Lm, Omega, M);
+        FloquetSpectrum spec = DiagonalizeLF(Lf, D);
+
+        auto coeffs = ExpandInFBasis(spec.eigenvecs, rho0, D, M);
+
+        propogator_specs.spec = spec;
+        propogator_specs.D = D;
+        propogator_specs.M = M;
+        propogator_specs.T = T;
+        propogator_specs.Omega = Omega;
+        propogator_specs.coeffs = coeffs;
 
         return propogator_specs;
     }
@@ -1252,26 +1306,116 @@ MCSpherePoint* CalculateMCSpherePoints(int n, double rmax_x, double rmax_y, doub
         return blocksieve;
     }   
 
-    FactorSieve FactorSieveBuildSieveParallel(int n)
+    FactorSieve BuildSieveParallel(int n)
     {
         int limit = (int)std::floor(std::sqrt(n)) + 1;
+        std::vector<int> primes = BuildSieveSimple(limit).PrimeNumbers;
 
+        const size_t BLOCK_SIZE = 1E6;
+        std::vector<int> result;
+        result.reserve(n / std::log(n));
+        result.insert(result.end(), primes.begin(), primes.end());
+
+        long long low = (long long)limit;
+        long long high = (long long)limit + BLOCK_SIZE;
+
+        while (low < n)
+        {
+            if (high > n + 1)
+            {
+                high = n + 1;
+            }
+
+            size_t block_size = high - low;
+            size_t bit_size = (block_size >> 3) + 1;
+
+            std::vector<uint8_t> block(bit_size, 0);
+
+            #pragma omp parallel for schedule(dynamic)
+            for(size_t pi = 0; pi < primes.size(); pi++)
+            {
+                long long p = primes[p];
+
+                long long start = std::max(p * 1LL * p, ((low + p-1) / p) * p);
+                for(long long j = start; j < high; j += p)
+                {
+                    block.data()[(j-low) >> 3] |= (1 << ((j-low) & 7));
+                }
+            }
+
+            for (long long i = low; i < high; i++)
+            {
+                bool marked = block.data()[(i-low) >> 3] & (1 << ((i-low) & 7));
+                if(!marked)
+                {
+                    result.push_back(i);
+                }
+            }
+
+            low = high;
+            high += BLOCK_SIZE;
+        }
+
+        return {result};
     }
 
-std::vector<int> PrimeFactors(int n, FactorSieve sieve)
+    std::vector<int> PrimeFactors(int n, FactorSieve sieve)
     {
-        //quick check to check our number is not prime
+        std::vector<int> factors;
+        if(sieve.PrimeNumbers.size() == 0)
+        {
+            sieve = BuildSieveParallel(n);
+        }
 
-        //Pollard rho
+        if (n % 2 == 0)
+        {
+            factors.push_back(2);
+            n = (int)((double)n/2.0);
+        }
 
+        for(int p : sieve.PrimeNumbers)
+        {
+            if(p*p > n)
+                break;
+            while(n % p == 0) {
+                factors.push_back(p);
+                n /= p;
+            }
+        }
+
+        if (factors.size() == 0)
+            factors.push_back(n);
+
+        return factors;
     }
 
-    int HCF(std::vector<int>)
+    int HCF(std::vector<std::vector<int>> factors)
     {
-        return 0;
+        for(auto& v : factors)
+        {
+            std::sort(v.begin(), v.end());
+        }
+
+        std::vector<int> common = factors[0];
+
+        for(size_t i = i; i < factors.size(); i++)
+        {
+            std::vector<int> temp;
+            std::set_intersection(common.begin(),common.end(), factors[i].begin(), factors[i].end(), std::back_inserter(temp));
+            common = std::move(temp);
+            if(common.empty())
+                return 1;
+        }
+
+        int hcf = 1;
+        for(int p : common)
+        {
+            hcf *=p;
+        }
+        return hcf;
     }
 
-    int HCF(int a, int b)
+    int HCF(int a, int b) //euclids method
     {
         if(a > b)
         {
@@ -1292,9 +1436,30 @@ std::vector<int> PrimeFactors(int n, FactorSieve sieve)
         return a;
     }
 
-    int LCM(std::vector<int>)
+    int LCM(std::vector<std::vector<int>> factors)
     {
-        return 0;
+        std::unordered_map<int,int> lcm_map;
+        for(const auto& vec : factors)
+        {
+            std::unordered_map<int,int> m;
+            for(int p : vec)
+                m[p]++;
+            for(auto&[prime,exp] : m)
+            {
+                lcm_map[prime] = std::max(lcm_map[prime],exp);
+            }
+        }
+
+        int lcm = 1;
+        for(auto&[p,e] : lcm_map)
+        {
+            while(e--)
+            {
+                lcm *= p;
+            }
+        }
+        
+        return lcm;
     }
 
     bool IsBlockTridiagonal(arma::sp_cx_mat &A, int block_size)

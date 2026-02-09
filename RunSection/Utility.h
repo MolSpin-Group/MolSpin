@@ -140,7 +140,7 @@ namespace RunSection
     std::vector<std::complex<double>> ExpandInFBasis(const arma::cx_mat&, const arma::cx_vec&, int, int);
     arma::cx_vec Propogate(double, const FloquetSpectrum&, const std::vector<std::complex<double>> coeffs, int, int, double, double);
     std::pair<double,double> PropogatorWrapper(double t, arma::cx_vec& rho0, arma::cx_vec& rhoT, bool& timestepchange, FloquetPropogator& floquetparam, PropParam& param);
-    FloquetPropogator FloquetInitilizer(arma::sp_cx_mat& L, arma::cx_vec& rho0, HamiltonainTimeDepFuncArma, std::vector<SpinAPI::interaction_ptr>& tdi);
+    FloquetPropogator FloquetInitilizer(arma::sp_cx_mat& L, arma::cx_vec& rho0, HamiltonainTimeDepFuncArma, std::vector<SpinAPI::interaction_ptr>& tdi, int M = 0);
     
     //arma::cx_vec GetRho_t();
 
@@ -187,15 +187,15 @@ namespace RunSection
 //some mathmatical functions
     struct FactorSieve
     {
-        std::vector<int> PrimeNumbers;
+        std::vector<int> PrimeNumbers ={};
     };
     std::pair<int,int> ContinuedFraction(double, int depth = 100);
     FactorSieve BuildSieveSimple(int);
-    FactorSieve FactorSieveBuildSieveParallel(int);
-    std::vector<int> PrimeFactors(int, FactorSieve = {});
-    int HCF(std::vector<int>);
+    FactorSieve BuildSieveParallel(int);
+    std::vector<int> PrimeFactors(int, FactorSieve = {{}});
+    int HCF(std::vector<std::vector<int>>);
     int HCF(int, int); //euclids method
-    int LCM(std::vector<int>);
+    int LCM(std::vector<std::vector<int>>);
 
 // region SparseMatrixSolvers
     //DONT USE THESE FUNCTIONS THEY ARE SLOW 
