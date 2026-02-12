@@ -1151,20 +1151,6 @@ namespace SpinAPI
 			result.insert(result.begin(), this->group1.cbegin(), this->group1.cend()); // Insert at the beginning of the vector
 			result.insert(result.end(), this->group2.cbegin(), this->group2.cend());   // Insert after the previously inserted spins
 		}
-		else if (this->type == InteractionType::Dipolar_SA &&
-			(std::find(this->group1.cbegin(), this->group1.cend(), _spin) != this->group1.cend() || std::find(this->group2.cbegin(), this->group2.cend(), _spin) != this->group2.cend()))
-		{
-			result.reserve(this->group1.size() + this->group2.size());				   // Reserve space for both groups to avoid more than 1 reallocation
-			result.insert(result.begin(), this->group1.cbegin(), this->group1.cend()); // Insert at the beginning of the vector
-			result.insert(result.end(), this->group2.cbegin(), this->group2.cend());   // Insert after the previously inserted spins
-		}
-		else if (this->type == InteractionType::Hyperfine_SA &&
-			(std::find(this->group1.cbegin(), this->group1.cend(), _spin) != this->group1.cend() || std::find(this->group2.cbegin(), this->group2.cend(), _spin) != this->group2.cend()))
-		{
-			result.reserve(this->group1.size() + this->group2.size());				   // Reserve space for both groups to avoid more than 1 reallocation
-			result.insert(result.begin(), this->group1.cbegin(), this->group1.cend()); // Insert at the beginning of the vector
-			result.insert(result.end(), this->group2.cbegin(), this->group2.cend());   // Insert after the previously inserted spins
-		}
 		else if (this->type == InteractionType::Exchange &&
 				 (std::find(this->group1.cbegin(), this->group1.cend(), _spin) != this->group1.cend() || std::find(this->group2.cbegin(), this->group2.cend(), _spin) != this->group2.cend()))
 		{

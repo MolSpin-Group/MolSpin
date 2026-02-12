@@ -991,7 +991,7 @@ namespace SpinAPI
 				tmp += Sz * field(2) * sqrt(g(2, 2) * g(2, 2) + g(2, 1) * g(2, 1) + g(2, 0) * g(2, 0));
 			}
 		}
-		else if (_interaction->Type() == InteractionType::Hyperfine_SA)
+		else if (_interaction->Type() == InteractionType::DoubleSpin)
 		{
 			// Obtain lists of interacting spins, coupling tensor, and define matrices to hold the magnetic moment operators
 			auto spins1 = _interaction->Group1();
