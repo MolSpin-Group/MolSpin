@@ -672,7 +672,7 @@ int main(int argc, char **argv)
 	catch(const std::exception& err)
 	{
 		delete[] _badallocemergmem; // Free the emergency memory to hopefully allow for a graceful shutdown
-		std::cerr << "MolSpin terminated early" << err.what() << std::endl;
+		std::cerr << "MolSpin terminated early: " << err.what() << std::endl;
 		return EXIT_FAILURE;
 	}
 }
