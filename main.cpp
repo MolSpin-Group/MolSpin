@@ -658,6 +658,11 @@ int main(int argc, char **argv)
 
 		return 0;
 	}
+	catch(std::bad_alloc& ba)
+	{
+		std::cerr << "MolSpin terminated early due to a bad memory allocation: " << ba.what() << std::endl;
+		return EXIT_FAILURE;
+	}
 	catch(const std::exception&)
 	{
 		std::cerr << "MolSpin terminated early" << std::endl;
