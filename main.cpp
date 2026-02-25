@@ -20,6 +20,8 @@
 #include <thread>
 #include <unistd.h>
 
+#define EMERGENCY_MEMORY_ALLOCATION_SIZE 16384
+
 //////////////////////////////////////////////////////////////////////////////
 // #ifdef USE_OPENBLAS
 extern "C" void openblas_set_num_threads(int);
@@ -71,6 +73,8 @@ int main(int argc, char **argv)
 {
 	const std::string MolSpin_version = "v2.3";
 	const std::string hline = "# ---------------------------------------------------------------------------------";
+
+	char* _badallocemergmem = new char[EMERGENCY_MEMORY_ALLOCATION_SIZE];
 
 	// Check for proper input
 	if (argc < 2)
@@ -655,16 +659,19 @@ int main(int argc, char **argv)
 			std::cout << hline << std::endl;
 			std::cout << "# Shutting down without doing calculations." << std::endl;
 		}
-
+		
+		delete[] _badallocemergmem;
 		return 0;
 	}
 	catch(std::bad_alloc& ba)
 	{
+		delete[] _badallocemergmem; // Free the emergency memory to hopefully allow for a graceful shutdown
 		std::cerr << "MolSpin terminated early due to a bad memory allocation: " << ba.what() << std::endl;
 		return EXIT_FAILURE;
 	}
 	catch(const std::exception&)
 	{
+		delete[] _badallocemergmem; // Free the emergency memory to hopefully allow for a graceful shutdown
 		std::cerr << "MolSpin terminated early" << std::endl;
 		return EXIT_FAILURE;
 	}
