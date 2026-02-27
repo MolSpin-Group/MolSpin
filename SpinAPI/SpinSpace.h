@@ -320,7 +320,8 @@ namespace SpinAPI
 		// ------------------------------------------------
 		bool PulseOperator(const pulse_ptr &_pulse, arma::cx_mat &_out) const;
 		bool PulseOperator(const pulse_ptr &_pulse, arma::sp_cx_mat &_out) const;
-		bool PulseOperator_mw(const pulse_ptr &_pulse, arma::sp_cx_mat &_out, arma::sp_cx_mat &_lrot, arma::sp_cx_mat &_lsz) const;
+		bool PulseOperator_mw(const pulse_ptr &_pulse, arma::cx_mat &_out, double &_time) const;
+		bool PulseOperator_mw(const pulse_ptr &_pulse, arma::sp_cx_mat &_out, double &_time) const;
 		bool PulseOperator(const pulse_ptr &_pulse, arma::cx_mat &_left, arma::cx_mat &_right) const;
 		bool PulseOperator(const pulse_ptr &_pulse, arma::sp_cx_mat &_left, arma::sp_cx_mat &_right) const;
 		bool PulseOperatorFrameChange(const pulse_ptr &_pulse, arma::cx_mat _rotationmatrix, arma::cx_mat &_out) const;

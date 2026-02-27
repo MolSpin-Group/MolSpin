@@ -48,6 +48,10 @@ namespace RunSection
 		bool ProjectAndPrintOutputLine(auto &_i, SpinAPI::SpinSpace &_space, const ProjectionCache &_cache, arma::cx_vec &_rhovec, double &_printedtime, double _timestep, unsigned int &_n, bool &_cidsp, std::ostream &_data_stream, std::ostream &_log_stream);
 		bool ProjectAndPrintOutputLineInf(auto &_i, SpinAPI::SpinSpace &_space, const ProjectionCache &_cache, arma::cx_vec &_rhovec, double &_printedtime, double _timestep, bool &_cidsp, std::ostream &_datastream, std::ostream &_logstream);
 
+		arma::cx_vec KrylovPropagator(const arma::sp_cx_mat &_A, const arma::cx_vec &_rho, double _dt, int _m);
+
+		bool GetEigenvectors_H0(SpinAPI::SpinSpace &_space, arma::vec &_eigen_val, arma::sp_cx_mat &_eigen_vec_sp) const;
+
 	protected:
 		bool RunLocal() override;
 		bool Validate() override;
@@ -56,8 +60,7 @@ namespace RunSection
 		// Constructors / Destructors
 		TaskStaticSSSpectra(const MSDParser::ObjectParser &, const RunSection &); // Normal constructor
 		~TaskStaticSSSpectra();	                                                  // Destructor
-		
-		bool GetEigenvectors_H0(SpinAPI::SpinSpace &_space, arma::vec &_eigen_val, arma::sp_cx_mat &_eigen_vec_sp) const;												
+														
 	};
 
 }

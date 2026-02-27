@@ -218,6 +218,669 @@ namespace RunSection
 				this->Log() << "Failed to obtain an Uniform grid." << std::endl;
 			}
 
+			// Pulse sequence stuff
+			//  Read printtimeframe from the input file
+			std::string Timewindow;
+			if (!this->Properties()->Get("printtimeframe", Timewindow))
+			{
+				this->Log() << "Failed to obtain an input for a printtimeframe. Please choose printtimeframe =  pulse / freeevo / full. Using full propagation evolution window by default" << std::endl;
+				Timewindow = "full";
+			}
+			this->Log() << "Timewindow for the propagation printing: " << Timewindow << std::endl;
+
+			// Read integrationwindow from the input file
+			std::string Integrationwindow;
+			if (!this->Properties()->Get("integrationtimeframe", Integrationwindow))
+			{
+				this->Log() << "Failed to obtain an input for a integrationtimeframe. Please choose integrationtimeframe =  pulse / freeevo / full. Using freeevo propagation evolution window by default" << std::endl;
+				Integrationwindow = "freeevo";
+			}
+			this->Log() << "Timewindow for the propagation integration: " << Integrationwindow << std::endl;
+
+			// Create a common density array holder to be able to propagate over the whole time (pulsesequence + calcultion)
+			std::vector<arma::cx_vec> rhovec(numPoints);
+			// Initialize a firststep
+			for (auto &v : rhovec)
+			{
+				// v.zeros(size(rho0vec));
+				v = rho0vec;
+			}
+
+			// Read a pulse sequence from the input
+			std::vector<std::tuple<std::string, double>> Pulsesequence;
+			if (this->Properties()->GetPulseSequence("pulsesequence", Pulsesequence))
+			{
+				this->Log() << "Pulsesequence" << std::endl;
+
+				// Loop through all pulse sequences
+				for (const auto &seq : Pulsesequence)
+				{
+					// Write which pulse in pulsesequence is calculating now
+					this->Log() << std::get<0>(seq) << ", " << std::get<1>(seq) << std::endl;
+
+					// Save the parameters from the input as variables
+					std::string pulse_name = std::get<0>(seq);
+					double timerelaxation = std::get<1>(seq);
+
+					for (auto pulse = (*i)->pulses_cbegin(); pulse < (*i)->pulses_cend(); pulse++)
+					{
+						if ((*pulse)->Name().compare(pulse_name) == 0)
+						{
+
+							// Apply a pulse to our density vector
+							if ((*pulse)->Type() == SpinAPI::PulseType::InstantPulse)
+							{
+
+								// Create a Pulse operator in SS. Here pulse_operator is exp[-i * angle * (Vx * Sx  + Vy * Sy  + Vz * Sz )]
+								arma::sp_cx_mat pulse_operator;
+								if (!space.PulseOperator((*pulse), pulse_operator))
+								{
+									this->Log() << "Failed to create a pulse operator in SS." << std::endl;
+									continue;
+								}
+
+								for (int grid_num = 0; grid_num < numPoints; ++grid_num)
+								{
+									auto [theta, phi, weight] = grid[grid_num];
+
+									// Make the option without powdering from inside possible
+									if (numPoints <= 1)
+									{
+										theta = 0.0;
+										phi = 0.0;
+										weight = 1.0;
+									}
+
+									rhovec[grid_num] = pulse_operator * rhovec[grid_num];
+								}
+
+								// Since there is no time propagation, we don't print the result here
+
+							}
+							else if ((*pulse)->Type() == SpinAPI::PulseType::LongPulseStaticField)
+							{
+								// Create a Pulse operator in SS. Here pulse_operator is Bx * Sx * gamma + By * Sy * gamma  + Bz * Sz * gamma
+								arma::sp_cx_mat pulse_operator;
+								if (!space.PulseOperator((*pulse), pulse_operator))
+								{
+									this->Log() << "Failed to create a pulse operator in SS." << std::endl;
+									continue;
+								}
+
+								// Check is it the very first step and define the firststep for current propagation 
+								int firststep;
+								if (Printedtime == 0)
+									firststep = 0;
+								else
+									firststep = 1;
+
+								// Define the number of propagation steps
+								unsigned int steps = static_cast<unsigned int>(std::abs((*pulse)->Pulsetime() / (*pulse)->Timestep()));
+
+								// Create the holder vector for gurrent propagation times 
+								std::vector<arma::cx_vec> rho_avg(steps + 1);
+								for (auto &v : rho_avg)
+									v.zeros(size(rho0vec));
+
+								// Create a holder vector for the integral 
+								arma::cx_vec rhoavg_n;
+								rhoavg_n.zeros(size(rho0vec));
+
+								// store the memory place for the operators to avoid memory issues of allocation for every orientation
+								std::pair<arma::cx_mat, arma::cx_vec> G;
+								arma::sp_cx_mat A_sp;
+								arma::sp_cx_mat A;
+
+								for (int grid_num = 0; grid_num < numPoints; ++grid_num)
+								{
+									auto [theta, phi, weight] = grid[grid_num];
+
+									// Make the option without powdering from inside possible
+									if (numPoints <= 1)
+									{
+										theta = 0.0;
+										phi = 0.0;
+										weight = 1.0;
+									}
+
+									// arma::sp_cx_mat A;
+									if (!this->Create_A_for_current_orientation(i, space, theta, phi, A, this->Log()))
+									{
+										this->Log() << "Could not construc the Liuovillian operator for specific orientation" << std::endl;
+									}
+
+									if (A.n_rows <= 64) // for the systems not bigger than 2 electrons and 1 spin 1/2 nuclei
+									{
+										// Create array containing a propagator and the current state of each system
+										A_sp = arma::conv_to<arma::sp_cx_mat>::from(arma::expmat(arma::conv_to<arma::cx_mat>::from((A + (arma::cx_double(0.0, -1.0) * pulse_operator)) * (*pulse)->Timestep())));
+										// Get the propagator and put it into the array together with the initial state
+										G = std::pair<arma::sp_cx_mat, arma::cx_vec>(A_sp, rhovec[grid_num]);
+
+										for (unsigned int n = firststep; n <= steps; n++)
+										{
+											if (n == 0)
+											{
+												rho_avg[n] += weight * G.second;
+											}
+											else
+											{
+												// Take a step, "first" is propagator and "second" is current state
+												rhovec[grid_num] = G.first * G.second;
+
+												// Integrate the density vector over the current time interval
+												if (integration)
+												{
+													rhoavg_n += (*pulse)->Timestep() * (G.second + rhovec[grid_num]) / 2;
+												}
+
+												// Get the new current state density vector
+												G.second = rhovec[grid_num];
+
+												// Save the result if there were some changes
+												if (!rhoavg_n.is_zero(0))
+												{
+													rhovec[grid_num] = rhoavg_n;
+												}
+
+												rho_avg[n] += weight * rhovec[grid_num];
+											}
+										}
+									}
+									else // Use Krylov propagation
+									{
+										// save the density on the current step
+										arma::cx_vec tmp_rho = rhovec[grid_num];
+
+										for (unsigned int n = firststep; n <= steps; n++)
+										{
+											if (n == 0)
+											{
+												rho_avg[n] += weight * rhovec[grid_num];
+											}
+											else
+											{
+												A_sp = A + (arma::cx_double(0.0, -1.0) * pulse_operator);
+
+												rhovec[grid_num] = KrylovPropagator(A_sp, tmp_rho, (*pulse)->Timestep(), 30); // divention of the krylov matrix is m=30 so far. did not check if we chould reduse it or not.
+
+												// Integrate the density vector over the current time interval
+												if (integration)
+												{
+													rhoavg_n += (*pulse)->Timestep() * (tmp_rho + rhovec[grid_num]) / 2;
+												}
+
+												// Get the new current state density vector
+												tmp_rho = rhovec[grid_num];
+
+												// Save the result if there were some changes
+												if (!rhoavg_n.is_zero(0))
+												{
+													rhovec[grid_num] = rhoavg_n;
+												}
+												
+												// Integrate the result fot the current time 
+												rho_avg[n] += weight * rhovec[grid_num];
+											}
+										}
+									}
+								}
+
+								// Print the current averaged result
+								for (unsigned int n = firststep; n <= steps; n++)
+								{
+									if (Timewindow.compare("freeevo") != 0)
+									{
+										if (!this->ProjectAndPrintOutputLine(i, space, rho_avg[n], Printedtime, (*pulse)->Timestep(), n, CIDSP, this->Data(), this->Log()))
+											this->Log() << "Could not project the state vector and print the result into a file" << std::endl;
+									}
+								}
+							}
+							else if ((*pulse)->Type() == SpinAPI::PulseType::LongPulse)
+							{
+								// Create a Pulse operator in SS. Here pulse_operator is Bx * Sx * gamma + By * Sy * gamma  + Bz * Sz * gamma
+								arma::sp_cx_mat pulse_operator;
+								if (!space.PulseOperator((*pulse), pulse_operator))
+								{
+									this->Log() << "Failed to create a pulse operator in SS." << std::endl;
+									continue;
+								}
+
+								// Check is it the very first step and define the firststep for current propagation 
+								int firststep;
+								if (Printedtime == 0)
+									firststep = 0;
+								else
+									firststep = 1;
+
+								// Define the number of propagation steps
+								unsigned int steps = static_cast<unsigned int>(std::abs((*pulse)->Pulsetime() / (*pulse)->Timestep()));
+
+								// Create the holder vector for gurrent propagation times 
+								std::vector<arma::cx_vec> rho_avg(steps + 1);
+								for (auto &v : rho_avg)
+									v.zeros(size(rho0vec));
+
+								// Create a holder vector for the integral 
+								arma::cx_vec rhoavg_n;
+								rhoavg_n.zeros(size(rho0vec));
+
+								// store the memory place for the operators to avoid memory issues of allocation for every orientation
+								arma::sp_cx_mat A;
+								arma::sp_cx_mat A_sp;
+
+								for (int grid_num = 0; grid_num < numPoints; ++grid_num)
+								{
+									auto [theta, phi, weight] = grid[grid_num];
+
+									// Make the option without powdering from inside possible
+									if (numPoints <= 1)
+									{
+										theta = 0.0;
+										phi = 0.0;
+										weight = 1.0;
+									}
+
+									// arma::sp_cx_mat A;
+									if (!this->Create_A_for_current_orientation(i, space, theta, phi, A, this->Log()))
+									{
+										this->Log() << "Could not construc the Liuovillian operator for specific orientation" << std::endl;
+									}
+
+									// Here we don't save a tupple anymore, because the A_sp needs to be constructed on every step
+
+									// save the density on the current step
+									arma::cx_vec tmp_rho = rhovec[grid_num];
+
+									if (A.n_rows <= 64) // for the systems not bigger than 2 electrons and 1 spin 1/2 nuclei
+									{
+										for (unsigned int n = firststep; n <= steps; n++)
+										{
+											if (n == 0)
+											{
+												rho_avg[n] += weight * tmp_rho;
+											}
+											else
+											{
+												// Get current time
+												double t = n * (*pulse)->Timestep();
+
+												// Get propagator
+												A_sp = arma::conv_to<arma::sp_cx_mat>::from(arma::expmat(arma::conv_to<arma::cx_mat>::from((A + (arma::cx_double(0.0, -1.0) * pulse_operator * std::cos((*pulse)->Frequency() * t))) * (*pulse)->Timestep())));
+
+												// Take a step
+												rhovec[grid_num] = A_sp * tmp_rho;
+
+												// Integrate the density vector over the current time interval
+												if (integration)
+												{
+													rhoavg_n += (*pulse)->Timestep() * (tmp_rho + rhovec[grid_num]) / 2;
+												}
+
+												// Get the new current state density vector
+												tmp_rho = rhovec[grid_num];
+
+												// Save the result if there were some changes
+												if (!rhoavg_n.is_zero(0))
+												{
+													rhovec[grid_num] = rhoavg_n;
+												}
+
+												rho_avg[n] += weight * rhovec[grid_num];
+											}
+										}
+									}
+									else // Use Krylov propagation
+									{
+										for (unsigned int n = firststep; n <= steps; n++)
+										{
+											if (n == 0)
+											{
+												rho_avg[n] += weight * rhovec[grid_num];
+											}
+											else
+											{
+
+												// Get current time
+												double t = n * (*pulse)->Timestep();
+
+												// Midpoint time (better approximation fos cos(w * t) )
+												double t_mid = t + 0.5 * (*pulse)->Timestep();
+
+												// Build the propagation matrix
+												A_sp = A + (arma::cx_double(0.0, -1.0) * std::cos((*pulse)->Frequency() * t_mid) * pulse_operator);
+
+												rhovec[grid_num] = KrylovPropagator(A_sp, tmp_rho, (*pulse)->Timestep(), 30); // divention of the krylov matrix is m=30 so far. did not check if we chould reduse it or not.
+
+												// Integrate the density vector over the current time interval
+												if (integration)
+												{
+													rhoavg_n += (*pulse)->Timestep() * (tmp_rho + rhovec[grid_num]) / 2;
+												}
+
+												// Get the new current state density vector
+												tmp_rho = rhovec[grid_num];
+
+												// Save the result if there were some changes
+												if (!rhoavg_n.is_zero(0))
+												{
+													rhovec[grid_num] = rhoavg_n;
+												}
+												
+												// Integrate the result fot the current time 
+												rho_avg[n] += weight * rhovec[grid_num];
+											}
+										}
+									}
+								}
+
+								// Print the current averaged result
+								for (unsigned int n = firststep; n <= steps; n++)
+								{
+									if (Timewindow.compare("freeevo") != 0)
+									{
+										if (!this->ProjectAndPrintOutputLine(i, space, rho_avg[n], Printedtime, (*pulse)->Timestep(), n, CIDSP, this->Data(), this->Log()))
+											this->Log() << "Could not project the state vector and print the result into a file" << std::endl;
+									}
+								}
+							}
+							else if ((*pulse)->Type() == SpinAPI::PulseType::MWPulse)
+							{
+								// Check is it the very first step and define the firststep for current propagation 
+								int firststep;
+								if (Printedtime == 0)
+									firststep = 0;
+								else
+									firststep = 1;
+
+								// Define the number of propagation steps
+								unsigned int steps = static_cast<unsigned int>(std::abs((*pulse)->Pulsetime() / (*pulse)->Timestep()));
+
+								// Create the holder vector for gurrent propagation times 
+								std::vector<arma::cx_vec> rho_avg(steps + 1);
+								for (auto &v : rho_avg)
+									v.zeros(size(rho0vec));
+
+								// Create a holder vector for the integral density 
+								arma::cx_vec rhoavg_n;
+								rhoavg_n.zeros(size(rho0vec));
+
+								// store the memory place for the operators to avoid memory issues of allocation for every orientation
+								arma::sp_cx_mat A;
+								arma::sp_cx_mat A_sp;
+
+								for (int grid_num = 0; grid_num < numPoints; ++grid_num)
+								{
+									auto [theta, phi, weight] = grid[grid_num];
+
+									// Make the option without powdering from inside possible
+									if (numPoints <= 1)
+									{
+										theta = 0.0;
+										phi = 0.0;
+										weight = 1.0;
+									}
+
+									// arma::sp_cx_mat A;
+									if (!this->Create_A_for_current_orientation(i, space, theta, phi, A, this->Log()))
+									{
+										this->Log() << "Could not construc the Liuovillian operator for specific orientation" << std::endl;
+									}
+
+									// save the density on the current step
+									arma::cx_vec tmp_rho = rhovec[grid_num];
+
+									if (A.n_rows <= 64) // for the systems not bigger than 2 electrons and 1 spin 1/2 nuclei
+									{
+										// Here we don't save a tupple anymore, because the A_sp needs to be constructed on every step
+										for (unsigned int n = firststep; n <= steps; n++)
+										{
+											if (n == 0)
+											{
+												rho_avg[n] += weight * tmp_rho;
+											}
+											else
+											{
+												// Get current time
+												double t = n * (*pulse)->Timestep();
+
+												// Create a Pulse operator in SS. Here pulse_operator is Bx * Sx * gamma + By * Sy * gamma  + Bz * Sz * gamma
+												arma::sp_cx_mat pulse_operator;
+												if (!space.PulseOperator_mw((*pulse), pulse_operator, t))
+												{
+													this->Log() << "Failed to create a pulse operator in SS." << std::endl;
+													continue;
+												}
+
+												// Get propagator
+												arma::sp_cx_mat A_sp = arma::conv_to<arma::sp_cx_mat>::from(arma::expmat(arma::conv_to<arma::cx_mat>::from((A + (arma::cx_double(0.0, -1.0) * pulse_operator)) * (*pulse)->Timestep())));
+
+												// Take a step
+												rhovec[grid_num] = A_sp * tmp_rho;
+
+												// Integrate the density vector over the current time interval
+												if (integration)
+												{
+													rhoavg_n += (*pulse)->Timestep() * (tmp_rho + rhovec[grid_num]) / 2;
+												}
+
+												// Get the new current state density vector
+												tmp_rho = rhovec[grid_num];
+
+												// Save the result if there were some changes
+												if (!rhoavg_n.is_zero(0))
+												{
+													rhovec[grid_num] = rhoavg_n;
+												}
+
+												rho_avg[n] += weight * rhovec[grid_num];
+											}
+										}
+									}
+									else // Use Krylov propagation
+									{
+										for (unsigned int n = firststep; n <= steps; n++)
+										{
+											if (n == 0)
+											{
+												rho_avg[n] += weight * rhovec[grid_num];
+											}
+											else
+											{
+
+												// Get current time
+												double t = n * (*pulse)->Timestep();
+
+												// Midpoint time (better approximation fos cos(w * t) )
+												double t_mid = t + 0.5 * (*pulse)->Timestep();
+
+												// Create a Pulse operator in SS. Here pulse_operator is exactly Bx * Sx * gamma * cos (omega * t) + By * Sy * gamma * sin (omega * t) + Bz * sz
+												arma::sp_cx_mat pulse_operator;
+												if (!space.PulseOperator_mw((*pulse), pulse_operator, t_mid))
+												{
+													this->Log() << "Failed to create a pulse operator in SS." << std::endl;
+													continue;
+												}
+
+												// Build the propagation matrix
+												arma::sp_cx_mat A_sp = A + (arma::cx_double(0.0, -1.0) * pulse_operator);
+
+												rhovec[grid_num] = KrylovPropagator(A_sp, tmp_rho, (*pulse)->Timestep(), 30); // divention of the krylov matrix is m=30 so far. did not check if we chould reduse it or not.
+
+												// Integrate the density vector over the current time interval
+												if (integration)
+												{
+													rhoavg_n += (*pulse)->Timestep() * (tmp_rho + rhovec[grid_num]) / 2;
+												}
+
+												// Get the new current state density vector
+												tmp_rho = rhovec[grid_num];
+
+												// Save the result if there were some changes
+												if (!rhoavg_n.is_zero(0))
+												{
+													rhovec[grid_num] = rhoavg_n;
+												}
+												
+												// Integrate the result fot the current time 
+												rho_avg[n] += weight * rhovec[grid_num];
+											}
+										}
+									}
+								}
+
+								// Print the current averaged result
+								for (unsigned int n = firststep; n <= steps; n++)
+								{
+									if (Timewindow.compare("freeevo") != 0)
+									{
+										if (!this->ProjectAndPrintOutputLine(i, space, rho_avg[n], Printedtime, (*pulse)->Timestep(), n, CIDSP, this->Data(), this->Log()))
+											this->Log() << "Could not project the state vector and print the result into a file" << std::endl;
+									}
+								}
+							}
+							else
+							{
+								this->Log() << "Current pulse type is not implemented. Please use type = InstantPulse / LongPulseStaticField / LongPulse / MWPulse." << std::endl;
+							}
+
+							// Update the printed time according to the printtimeframe key
+							if (Timewindow.compare("freeevo") != 0)
+							{
+								Printedtime += (*pulse)->Pulsetime();
+							}
+
+							// Get the system relax during the time
+
+							if (timerelaxation != 0)
+							{
+								//Define number of steps for the propagation
+								unsigned int steps = static_cast<unsigned int>(std::abs(timerelaxation / (*pulse)->Timestep()));
+
+								// Create the holder vector for gurrent propagation times 
+								std::vector<arma::cx_vec> rho_avg(steps + 1);
+								for (auto &v : rho_avg)
+									v.zeros(size(rho0vec));
+								
+								// Create a holder vector for an averaged density
+								arma::cx_vec rhoavg_n;
+								rhoavg_n.zeros(size(rho0vec));
+
+								// store the memory place for the operators to avoid memory issues of allocation for every orientation
+								arma::sp_cx_mat A;
+								arma::sp_cx_mat A_sp;
+								std::pair<arma::cx_mat, arma::cx_vec> G;
+
+								for (int grid_num = 0; grid_num < numPoints; ++grid_num)
+								{
+									auto [theta, phi, weight] = grid[grid_num];
+
+									// Make the option without powdering from inside possible
+									if (numPoints <= 1)
+									{
+										theta = 0.0;
+										phi = 0.0;
+										weight = 1.0;
+									}
+
+									if (!this->Create_A_for_current_orientation(i, space, theta, phi, A, this->Log()))
+									{
+										this->Log() << "Could not construc the Liuovillian operator for specific orientation" << std::endl;
+									}
+
+									if (A.n_rows <= 64) // for the systems not bigger than 2 electrons and 1 spin 1/2 nuclei
+									{
+										// Create array containing a propagator and the current state of each system
+										A_sp = arma::conv_to<arma::sp_cx_mat>::from(arma::expmat(arma::conv_to<arma::cx_mat>::from(A * (*pulse)->Timestep())));
+										// Get the propagator and put it into the array together with the initial state
+										G = std::pair<arma::sp_cx_mat, arma::cx_vec>(A_sp, rhovec[grid_num]);
+
+										for (unsigned int n = 1; n <= steps; n++) // n always starts with one here, because this part cannot be done without the pulse part on top
+										{
+											if (n == 0)
+											{
+												rho_avg[n] += weight * G.second;
+											}
+											else
+											{
+												// Take a step, "first" is propagator and "second" is current state
+												rhovec[grid_num] = G.first * G.second;
+
+												// Integrate the density vector over the current time interval
+												if (integration)
+												{
+													rhoavg_n += (*pulse)->Timestep() * (G.second + rhovec[grid_num]) / 2;
+												}
+
+												// Get the new current state density vector
+												G.second = rhovec[grid_num];
+
+												// Save the result if there were some changes
+												if (!rhoavg_n.is_zero(0))
+												{
+													rhovec[grid_num] = rhoavg_n;
+												}
+
+												rho_avg[n] += weight * rhovec[grid_num];
+											}
+										}
+									}
+									else // Use Krylov propagation
+									{
+										// save the density on the current step
+										arma::cx_vec tmp_rho = rhovec[grid_num];
+
+										for (unsigned int n = 1; n <= steps; n++)  // n always starts with one here, because this part cannot be done without the pulse part on top
+										{
+											if (n == 0)
+											{
+												rho_avg[n] += weight * rhovec[grid_num];
+											}
+											else
+											{
+												rhovec[grid_num] = KrylovPropagator(A, tmp_rho, (*pulse)->Timestep(), 30); // divention of the krylov matrix is m=30 so far. did not check if we chould reduse it or not.
+
+												// Integrate the density vector over the current time interval
+												if (integration)
+												{
+													rhoavg_n += (*pulse)->Timestep() * (tmp_rho + rhovec[grid_num]) / 2;
+												}
+
+												// Get the new current state density vector
+												tmp_rho = rhovec[grid_num];
+
+												// Save the result if there were some changes
+												if (!rhoavg_n.is_zero(0))
+												{
+													rhovec[grid_num] = rhoavg_n;
+												}
+												
+												// Integrate the result fot the current time 
+												rho_avg[n] += weight * rhovec[grid_num];
+											}
+										}
+									}
+								}
+								// Print the current averaged result
+								for (unsigned int n = 1; n <= steps; n++)  // n always starts with one here, because this part cannot be done without the pulse part on top
+								{
+									if (Timewindow.compare("freeevo") != 0)
+									{
+										if (!this->ProjectAndPrintOutputLine(i, space, rho_avg[n], Printedtime, (*pulse)->Timestep(), n, CIDSP, this->Data(), this->Log()))
+											this->Log() << "Could not project the state vector and print the result into a file" << std::endl;
+									}
+								}
+
+							}
+							// Update the printed time according to the printtimeframe key
+							if (Timewindow.compare("freeevo") != 0)
+							{
+								Printedtime += timerelaxation;
+							}
+						}
+					}
+				}
+			}
+
 			// Method Propagation to infinity
 			if (Method.compare("timeinf") == 0)
 			{
@@ -226,15 +889,17 @@ namespace RunSection
 
 				this->Log() << "Method = " << Method << std::endl;
 
-				std::vector<arma::cx_vec> rho_tmp(numPoints);
-				for (auto &v : rho_tmp)
-					v.zeros(size(rho0vec));
+				// Print the warning to the user, what integration keyword is used
+				if (integration)
+				{
+					this->Log() << "Warning: steady state method (timeinf) is calculated as an inverse of the Liouvillian operator, instead of the integration on a grid." << "The integration of the pulse sequence timewindow could be added if integration = true and integrationtimeframe = pulse / full." << std::endl;
+				}
 
 				arma::cx_vec integral;
 				integral.zeros(size(rho0vec));
 
-				// Initialize a first step
-				arma::cx_vec rhovec = rho0vec;
+				// Trying to get rid of memory overflow
+				arma::sp_cx_mat A;
 
 				for (int grid_num = 0; grid_num < numPoints; ++grid_num)
 				{
@@ -248,119 +913,50 @@ namespace RunSection
 						weight = 1.0;
 					}
 
-					// Construct the rotation matrix
-					arma::mat Rot_mat;
-					double gamma = 0;
-					if (!this->CreateRotationMatrix(gamma, theta, phi, Rot_mat))
+					if (!this->Create_A_for_current_orientation(i, space, theta, phi, A, this->Log()))
 					{
-						this->Log() << "Failed to obtain an Lebedev grid." << std::endl;
+						this->Log() << "Could not construc the Liuovillian operator for specific orientation" << std::endl;
 					}
 
-					// Construct the hamiltonian H0
-					std::vector<std::string> HamiltonianH0list;
-					if (!this->Properties()->GetList("hamiltonianh0list", HamiltonianH0list, ','))
-					{
-						this->Log() << "Failed to obtain an input for a HamiltonianH0." << std::endl;
-					}
-
-					space.UseSuperoperatorSpace(false);
-					// Get the Hamiltonian
-					arma::sp_cx_mat H0;
-					if (!space.BaseHamiltonianRotated_SA(HamiltonianH0list, Rot_mat, H0))
-					{
-						this->Log() << "Failed to obtain Hamiltonian in superspace." << std::endl;
-						continue;
-					}
-
-					// Transforming into superspace
-					arma::sp_cx_mat lhs;
-					arma::sp_cx_mat rhs;
-					arma::sp_cx_mat H_SS;
-					space.SuperoperatorFromLeftOperator(H0, lhs);
-					space.SuperoperatorFromRightOperator(H0, rhs);
-
-					H_SS = lhs - rhs;
-
-					// Get a matrix to collect all the terms (the total Liouvillian)
-					arma::sp_cx_mat A = arma::cx_double(0.0, -1.0) * H_SS;
-
-					std::vector<std::string> HamiltonianH1list;
-					if (!this->Properties()->GetList("hamiltonianh1list", HamiltonianH1list, ','))
-					{
-						this->Log() << "Failed to obtain an input for a HamiltonianH1." << std::endl;
-					}
-
-					// Get the Hamiltonian H1
-					arma::sp_cx_mat H1;
-					if (!space.ThermalHamiltonian(HamiltonianH1list, H1))
-					{
-						this->Log() << "Failed to obtain Hamiltonian in superspace." << std::endl;
-						continue;
-					}
-
-					arma::sp_cx_mat H1lhs;
-					arma::sp_cx_mat H1rhs;
-					arma::sp_cx_mat H1_SS;
-
-					space.SuperoperatorFromLeftOperator(H1, H1lhs);
-					space.SuperoperatorFromRightOperator(H1, H1rhs);
-
-					H1_SS = H1lhs - H1rhs;
-					A += arma::cx_double(0.0, -1.0) * H1_SS;
-
-					space.UseSuperoperatorSpace(true);
-
-					////////////////////
-					// Add reaction
-					arma::sp_cx_mat K;
-					if (!space.TotalReactionOperator(K))
-					{
-						this->Log() << "Warning: Failed to obtain matrix representation of the reaction operators!" << std::endl;
-					}
-					A -= K;
-
-					// Get the relaxation terms, assuming that they can just be added to the Liouvillian superoperator
-					arma::sp_cx_mat R;
-					for (auto j = (*i)->operators_cbegin(); j != (*i)->operators_cend(); j++)
-					{
-						if (space.RelaxationOperator((*j), R))
-						{
-							A += R;
-							this->Log() << "Added relaxation operator \"" << (*j)->Name() << "\" to the Liouvillian.\n";
-						}
-					}
-					/////////////////////////////
-
-					arma::cx_vec result = -solve(arma::conv_to<arma::cx_mat>::from(A), rhovec);
+					arma::cx_vec result = -solve(arma::conv_to<arma::cx_mat>::from(A), rhovec[grid_num]);
 
 					// Integrate over all grid points
 					integral += weight * result;
 				}
 
-				rhovec = integral;
-
-				if (!this->ProjectAndPrintOutputLineInf(i, space, rhovec, Printedtime, this->timestep, CIDSP, this->Data(), this->Log()))
-					this->Log() << "Could not project the state vector and print the result into a file" << std::endl;
+				if (Timewindow.compare("pulse") != 0)
+				{
+					if (!this->ProjectAndPrintOutputLineInf(i, space, integral, Printedtime, this->timestep, CIDSP, this->Data(), this->Log()))
+						this->Log() << "Could not project the state vector and print the result into a file" << std::endl;
+				}
 
 				this->Log() << "Done with calculation." << std::endl;
 			}
 			// Method TIME EVOLUTION
 			else if (Method.compare("timeevo") == 0)
 			{
-
-				if (!this->totaltime == 0)
+				if (this->totaltime != 0)
 				{
 					// Perform the calculation
 					this->Log() << "Ready to perform calculation." << std::endl;
 
 					this->Log() << "Method = " << Method << std::endl;
 
+					// Avoid printing double timesteps
+					int firststep;
+					if (Printedtime == 0)
+						firststep = 0;
+					else
+						firststep = 1;
+
 					// Create a holder vector for an averaged density
-					int firststep = 0;
 					unsigned int time_steps = static_cast<unsigned int>(std::abs(this->totaltime / this->timestep));
 					std::vector<arma::cx_vec> rho_avg(time_steps + 1);
 					for (auto &v : rho_avg)
 						v.zeros(size(rho0vec));
+
+					// Trying to get rid of memory overflow
+					arma::sp_cx_mat A;
 
 					for (int grid_num = 0; grid_num < numPoints; ++grid_num)
 					{
@@ -374,141 +970,98 @@ namespace RunSection
 							weight = 1.0;
 						}
 
-						// Initialize a first step
-						arma::cx_vec rhovec = rho0vec;
-
-						// Create rotation matrix
-						arma::mat Rot_mat;
-						double gamma = 0;
-						if (!this->CreateRotationMatrix(gamma, theta, phi, Rot_mat))
+						if (!this->Create_A_for_current_orientation(i, space, theta, phi, A, this->Log()))
 						{
-							this->Log() << "Failed to obtain an Lebedev grid." << std::endl;
+							this->Log() << "Could not construct the Liuovillian operator for specific orientation" << std::endl;
 						}
-
-						// Create Hamiltonian H0
-						std::vector<std::string> HamiltonianH0list;
-						if (!this->Properties()->GetList("hamiltonianh0list", HamiltonianH0list, ','))
-						{
-							this->Log() << "Failed to obtain an input for a HamiltonianH0." << std::endl;
-						}
-
-						space.UseSuperoperatorSpace(false);
-						// Get the Hamiltonian
-						arma::sp_cx_mat H0;
-						if (!space.BaseHamiltonianRotated_SA(HamiltonianH0list, Rot_mat, H0))
-						{
-							this->Log() << "Failed to obtain Hamiltonian in superspace." << std::endl;
-							continue;
-						}
-
-						// Transforming into superspace
-						arma::sp_cx_mat lhs;
-						arma::sp_cx_mat rhs;
-						arma::sp_cx_mat H_SS;
-						space.SuperoperatorFromLeftOperator(H0, lhs);
-						space.SuperoperatorFromRightOperator(H0, rhs);
-
-						H_SS = lhs - rhs;
-
-						// Get a matrix to collect all the terms (the total Liouvillian)
-						arma::sp_cx_mat A = arma::cx_double(0.0, -1.0) * H_SS;
-
-						// Create Hamiltonian H1
-						std::vector<std::string> HamiltonianH1list;
-						if (!this->Properties()->GetList("hamiltonianh1list", HamiltonianH1list, ','))
-						{
-							this->Log() << "Failed to obtain an input for a HamiltonianH1." << std::endl;
-						}
-
-						// Get the Hamiltonian
-						arma::sp_cx_mat H1;
-						if (!space.ThermalHamiltonian(HamiltonianH1list, H1))
-						{
-							this->Log() << "Failed to obtain Hamiltonian in superspace." << std::endl;
-							continue;
-						}
-
-						arma::sp_cx_mat H1lhs;
-						arma::sp_cx_mat H1rhs;
-						arma::sp_cx_mat H1_SS;
-
-						space.SuperoperatorFromLeftOperator(H1, H1lhs);
-						space.SuperoperatorFromRightOperator(H1, H1rhs);
-
-						H1_SS = H1lhs - H1rhs;
-						A += arma::cx_double(0.0, -1.0) * H1_SS;
-
-						space.UseSuperoperatorSpace(true);
-
-						////////////////////
-
-						// Get transition operator
-						arma::sp_cx_mat K;
-						if (!space.TotalReactionOperator(K))
-						{
-							this->Log() << "Warning: Failed to obtain matrix representation of the reaction operators!" << std::endl;
-						}
-						A -= K;
-
-						// Get the relaxation terms, assuming that they can just be added to the Liouvillian superoperator
-						arma::sp_cx_mat R;
-						for (auto j = (*i)->operators_cbegin(); j != (*i)->operators_cend(); j++)
-						{
-							if (space.RelaxationOperator((*j), R))
-							{
-								A += R;
-								this->Log() << "Added relaxation operator \"" << (*j)->Name() << "\" to the Liouvillian.\n";
-							}
-						}
-						////
 
 						arma::cx_vec rhoavg_n;
 						rhoavg_n.zeros(size(rho0vec));
 
-						// Create array containing a propagator and the current state of each system
-						std::pair<arma::sp_cx_mat, arma::cx_vec> G;
-						arma::sp_cx_mat A_sp = arma::conv_to<arma::sp_cx_mat>::from(arma::expmat(arma::conv_to<arma::cx_mat>::from(A * this->timestep)));
-						// Get the propagator and put it into the array together with the initial state
-						G = std::pair<arma::sp_cx_mat, arma::cx_vec>(A_sp, rhovec);
-
-						// unsigned int steps = static_cast<unsigned int>(std::abs(this->totaltime / this->timestep));
-						for (unsigned int n = firststep; n <= time_steps; n++)
+						if (A.n_rows <= 64) // for the systems not bigger than 2 electrons and 1 spin 1/2 nuclei
 						{
-							if (n == 0)
+							// Create array containing a propagator and the current state of each system
+							std::pair<arma::sp_cx_mat, arma::cx_vec> G;
+							arma::sp_cx_mat A_sp = arma::conv_to<arma::sp_cx_mat>::from(arma::expmat(arma::conv_to<arma::cx_mat>::from(A * this->timestep)));
+							// Get the propagator and put it into the array together with the initial state
+							G = std::pair<arma::sp_cx_mat, arma::cx_vec>(A_sp, rhovec[grid_num]);
+
+							// unsigned int steps = static_cast<unsigned int>(std::abs(this->totaltime / this->timestep));
+							for (unsigned int n = firststep; n <= time_steps; n++)
 							{
-								rho_avg[n] += weight * G.second;
+								if (n == 0)
+								{
+									rho_avg[n] += weight * G.second;
+								}
+								else
+								{
+									// Take a step, "first" is propagator and "second" is current state
+									rhovec[grid_num] = G.first * G.second;
+
+									// Integrate the density vector over the current time interval
+									if (integration)
+									{
+										rhoavg_n += this->timestep * (G.second + rhovec[grid_num]) / 2;
+									}
+
+									// Get the new current state density vector
+									G.second = rhovec[grid_num];
+
+									// Save the result if there were some changes
+									if (!rhoavg_n.is_zero(0))
+									{
+										rhovec[grid_num] = rhoavg_n;
+									}
+
+									rho_avg[n] += weight * rhovec[grid_num];
+								}
 							}
-							else
+						}
+						else
+						{
+							// save the density on the current step
+							arma::cx_vec tmp_rho = rhovec[grid_num];
+
+							// Use Krylov propagation
+							unsigned int steps = static_cast<unsigned int>(std::abs(this->totaltime / this->timestep));
+							for (unsigned int n = firststep; n <= steps; n++)
 							{
-								// Take a step, "first" is propagator and "second" is current state
-								rhovec = G.first * G.second;
-
-								// Integrate the density vector over the current time interval
-								if (integration)
+								if (n == 0)
 								{
-									rhoavg_n += this->timestep * (G.second + rhovec) / 2;
+									rho_avg[n] += weight * rhovec[grid_num];
 								}
-
-								// Get the new current state density vector
-								G.second = rhovec;
-
-								// Save the result if there were some changes
-								if (!rhoavg_n.is_zero(0))
+								else
 								{
-									rhovec = rhoavg_n;
-								}
+									rhovec[grid_num] = KrylovPropagator(A, tmp_rho, this->timestep, 30); // divention of the krylov matrix is m=30 so far. did not check if we chould reduse it or not.
+									// Integrate the density vector over the current time interval
+									if (integration)
+									{
+										rhoavg_n += this->timestep * (tmp_rho + rhovec[grid_num]) / 2;
+									}
 
-								rho_avg[n] += weight * rhovec;
+									// Get the new current state density vector
+									tmp_rho = rhovec[grid_num];
+
+									// Save the result if there were some changes
+									if (!rhoavg_n.is_zero(0))
+									{
+										rhovec[grid_num] = rhoavg_n;
+									}
+
+									rho_avg[n] += weight * rhovec[grid_num];
+								}
 							}
 						}
 					}
 
-					for (unsigned int n = firststep; n <= time_steps; n++)
+					if (Timewindow.compare("pulse") != 0)
 					{
-						if (!this->ProjectAndPrintOutputLine(i, space, rho_avg[n], Printedtime, this->timestep, n, CIDSP, this->Data(), this->Log()))
-							this->Log() << "Could not project the state vector and print the result into a file" << std::endl;
+						for (unsigned int n = firststep; n <= time_steps; n++)
+						{
+							if (!this->ProjectAndPrintOutputLine(i, space, rho_avg[n], Printedtime, this->timestep, n, CIDSP, this->Data(), this->Log()))
+								this->Log() << "Could not project the state vector and print the result into a file" << std::endl;
+						}
 					}
-
 				}
 
 				this->Log() << "Done with calculation." << std::endl;
@@ -652,6 +1205,54 @@ namespace RunSection
 		return true;
 	}
 
+	bool TaskStaticSSPowderSpectra::GetEigenvectors_H0(SpinAPI::SpinSpace &_space, arma::vec &_eigen_val, arma::sp_cx_mat &_eigen_vec_sp) const
+	{
+		_space.UseSuperoperatorSpace(false);
+
+		arma::cx_mat H;
+
+		if (!_space.Hamiltonian(H))
+		{
+			// this->Log() << "Failed to obtain Static Hamiltonian in Hilbert Space." << std::endl;
+		}
+
+		arma::cx_mat _eigen_vec;
+
+		// this->Log() << "Starting diagonalization..." << std::endl;
+		arma::eig_sym(_eigen_val, _eigen_vec, (H));
+		// this->Log() << "Diagonalization done! Eigenvalues: " << _eigen_val.n_elem << ", eigenvectors: " << _eigen_vec.n_cols << std::endl;
+
+		_eigen_vec_sp = arma::conv_to<arma::sp_cx_mat>::from(_eigen_vec);
+
+		_space.UseSuperoperatorSpace(true);
+
+		return true;
+	}
+
+	bool TaskStaticSSPowderSpectra::GetEigenvectors_H0_Thermal(SpinAPI::SpinSpace &_space, std::vector<std::string> &_thermalhamiltonian_list, arma::vec &_eigen_val, arma::sp_cx_mat &_eigen_vec_sp) const
+	{
+		_space.UseSuperoperatorSpace(false);
+
+		arma::cx_mat H;
+
+		if (!_space.ThermalHamiltonian(_thermalhamiltonian_list, H))
+		{
+			// this->Log() << "Failed to obtain Static Hamiltonian in Hilbert Space." << std::endl;
+		}
+
+		arma::cx_mat _eigen_vec;
+
+		// this->Log() << "Starting diagonalization..." << std::endl;
+		arma::eig_sym(_eigen_val, _eigen_vec, (H));
+		// this->Log() << "Diagonalization done! Eigenvalues: " << _eigen_val.n_elem << ", eigenvectors: " << _eigen_vec.n_cols << std::endl;
+
+		_eigen_vec_sp = arma::conv_to<arma::sp_cx_mat>::from(_eigen_vec);
+
+		_space.UseSuperoperatorSpace(true);
+
+		return true;
+	}
+
 	arma::cx_vec TaskStaticSSPowderSpectra::ComputeRhoDot(double t, arma::sp_cx_mat &L, arma::cx_vec &K, arma::cx_vec RhoNaught)
 	{
 		arma::cx_vec ReturnVec(L.n_rows);
@@ -759,6 +1360,130 @@ namespace RunSection
 							_datastream << std::real(arma::trace(Iprojz * rho0)) << " ";
 							_datastream << std::real(arma::trace(Iprojp * rho0)) << " ";
 							_datastream << std::real(arma::trace(Iprojm * rho0)) << " ";
+						}
+					}
+				}
+			}
+		}
+		else
+		{
+			if (_n == 0)
+				_logstream << "No nucleus was specified for projection" << std::endl;
+			return false;
+		}
+
+		_datastream << std::endl;
+
+		return true;
+	}
+
+	bool TaskStaticSSPowderSpectra::ProjectAndPrintOutputLine(auto &_i, SpinAPI::SpinSpace &_space, arma::cx_vec &_rhovec, arma::sp_cx_mat &_eigen_vec, double &_printedtime, double _timestep, unsigned int &_n, bool &_cidsp, std::ostream &_datastream, std::ostream &_logstream)
+	{
+		arma::cx_mat rho0;
+
+		// Convert the resulting density operator back to its Hilbert space representation
+		if ((!_space.OperatorFromSuperspace(_rhovec, rho0)) && (_n == 0))
+		{
+			_logstream << "Failed to convert resulting superspace-vector back to native Hilbert space." << std::endl;
+			return false;
+		}
+
+		// rho0 = (_eigen_vec * rho0 * _eigen_vec.t());
+
+		// Get nuclei of interest for CIDNP spectrum
+		arma::cx_mat Iprojx;
+		arma::cx_mat Iprojy;
+		arma::cx_mat Iprojz;
+		arma::cx_mat Iprojp;
+		arma::cx_mat Iprojm;
+
+		std::vector<std::string> spinList;
+
+		if (_n == 0)
+			_logstream << "CIDSP = " << _cidsp << std::endl;
+
+		// Save the current step
+		_datastream << this->RunSettings()->CurrentStep() << " ";
+		// Save the current time
+		_datastream << std::setprecision(12) << _printedtime + (_n * _timestep) << " ";
+		this->WriteStandardOutput(_datastream);
+
+		if (this->Properties()->GetList("spinlist", spinList, ','))
+		{
+
+			for (auto l = (*_i)->spins_cbegin(); l != (*_i)->spins_cend(); l++)
+			{
+				for (int m = 0; m < (int)spinList.size(); m++)
+				{
+					if ((*l)->Name() == spinList[m])
+					{
+						if (!_space.CreateOperator(arma::conv_to<arma::cx_mat>::from((*l)->Sx()), (*l), Iprojx))
+						{
+							return false;
+						}
+
+						if (!_space.CreateOperator(arma::conv_to<arma::cx_mat>::from((*l)->Sy()), (*l), Iprojy))
+						{
+							return false;
+						}
+
+						if (!_space.CreateOperator(arma::conv_to<arma::cx_mat>::from((*l)->Sz()), (*l), Iprojz))
+						{
+							return false;
+						}
+
+						if (!_space.CreateOperator(arma::conv_to<arma::cx_mat>::from((*l)->Sp()), (*l), Iprojp))
+						{
+							return false;
+						}
+
+						if (!_space.CreateOperator(arma::conv_to<arma::cx_mat>::from((*l)->Sm()), (*l), Iprojm))
+						{
+							return false;
+						}
+
+						Iprojx = (_eigen_vec.t() * Iprojx * _eigen_vec);
+						Iprojy = (_eigen_vec.t() * Iprojy * _eigen_vec);
+						Iprojz = (_eigen_vec.t() * Iprojz * _eigen_vec);
+						Iprojp = (_eigen_vec.t() * Iprojp * _eigen_vec);
+						Iprojm = (_eigen_vec.t() * Iprojm * _eigen_vec);
+
+						arma::cx_mat P;
+
+						// There are two result modes - either write results per transition  if CIDSP is true or for each defined state if CIDSP is false
+
+						if (_cidsp == true)
+						{
+							// Loop through all defind transitions
+							auto transitions = (*_i)->Transitions();
+							for (auto j = transitions.cbegin(); j != transitions.cend(); j++)
+							{
+								// Make sure that there is a state object
+								if ((*j)->SourceState() == nullptr)
+									continue;
+
+								if ((!_space.GetState((*j)->SourceState(), P)) && (_n == 0))
+								{
+									_logstream << "Failed to obtain projection matrix onto state \"" << (*j)->Name() << "\" of SpinSystem \"" << (*_i)->Name() << "\"." << std::endl;
+									continue;
+								}
+
+								// Return the yield for this transition
+								_datastream << std::real(arma::trace(Iprojx * (*j)->Rate() * P * rho0)) << " ";
+								_datastream << std::real(arma::trace(Iprojy * (*j)->Rate() * P * rho0)) << " ";
+								_datastream << std::real(arma::trace(Iprojz * (*j)->Rate() * P * rho0)) << " ";
+								_datastream << std::real(arma::trace(Iprojp * (*j)->Rate() * P * rho0)) << " ";
+								_datastream << std::real(arma::trace(Iprojm * (*j)->Rate() * P * rho0)) << " ";
+							}
+						}
+						else if (_cidsp == false)
+						{
+							// Return the yield for this state - note that no reaction rates are included here.
+							_datastream << std::real(arma::trace(_eigen_vec * Iprojx * rho0 * _eigen_vec.t())) << " ";
+							_datastream << std::real(arma::trace(_eigen_vec * Iprojy * rho0 * _eigen_vec.t())) << " ";
+							_datastream << std::real(arma::trace(_eigen_vec * Iprojz * rho0 * _eigen_vec.t())) << " ";
+							_datastream << std::real(arma::trace(_eigen_vec * Iprojp * rho0 * _eigen_vec.t())) << " ";
+							_datastream << std::real(arma::trace(_eigen_vec * Iprojm * rho0 * _eigen_vec.t())) << " ";
 						}
 					}
 				}
@@ -888,6 +1613,126 @@ namespace RunSection
 		return true;
 	}
 
+	bool TaskStaticSSPowderSpectra::ProjectAndPrintOutputLineInf(auto &_i, SpinAPI::SpinSpace &_space, arma::cx_vec &_rhovec, arma::sp_cx_mat &_eigen_vec, double &_printedtime, double _timestep, bool &_cidsp, std::ostream &_datastream, std::ostream &_logstream)
+	{
+		arma::cx_mat rho0;
+
+		// Convert the resulting density operator back to its Hilbert space representation
+		if ((!_space.OperatorFromSuperspace(_rhovec, rho0)))
+		{
+			_logstream << "Failed to convert resulting superspace-vector back to native Hilbert space." << std::endl;
+			return false;
+		}
+
+		// rho0 = (_eigen_vec * rho0 * _eigen_vec.t());
+
+		// Get nuclei of interest for CIDNP spectrum
+		arma::cx_mat Iprojx;
+		arma::cx_mat Iprojy;
+		arma::cx_mat Iprojz;
+		arma::cx_mat Iprojp;
+		arma::cx_mat Iprojm;
+
+		std::vector<std::string> spinList;
+
+		_logstream << "CIDSP = " << _cidsp << std::endl;
+
+		// Save the current step
+		_datastream << this->RunSettings()->CurrentStep() << " ";
+		// Save the current time
+		_datastream << "inf" << " ";
+		this->WriteStandardOutput(_datastream);
+
+		if (this->Properties()->GetList("spinlist", spinList, ','))
+		{
+
+			for (auto l = (*_i)->spins_cbegin(); l != (*_i)->spins_cend(); l++)
+			{
+				for (int m = 0; m < (int)spinList.size(); m++)
+				{
+					if ((*l)->Name() == spinList[m])
+					{
+						if (!_space.CreateOperator(arma::conv_to<arma::cx_mat>::from((*l)->Sx()), (*l), Iprojx))
+						{
+							return false;
+						}
+
+						if (!_space.CreateOperator(arma::conv_to<arma::cx_mat>::from((*l)->Sy()), (*l), Iprojy))
+						{
+							return false;
+						}
+
+						if (!_space.CreateOperator(arma::conv_to<arma::cx_mat>::from((*l)->Sz()), (*l), Iprojz))
+						{
+							return false;
+						}
+
+						if (!_space.CreateOperator(arma::conv_to<arma::cx_mat>::from((*l)->Sp()), (*l), Iprojp))
+						{
+							return false;
+						}
+
+						if (!_space.CreateOperator(arma::conv_to<arma::cx_mat>::from((*l)->Sm()), (*l), Iprojm))
+						{
+							return false;
+						}
+
+						Iprojx = (_eigen_vec * Iprojx * _eigen_vec.t());
+						Iprojy = (_eigen_vec * Iprojy * _eigen_vec.t());
+						Iprojz = (_eigen_vec * Iprojz * _eigen_vec.t());
+						Iprojp = (_eigen_vec * Iprojp * _eigen_vec.t());
+						Iprojm = (_eigen_vec * Iprojm * _eigen_vec.t());
+
+						arma::cx_mat P;
+
+						// There are two result modes - either write results per transition  if CIDSP is true or for each defined state if CIDSP is false
+
+						if (_cidsp == true)
+						{
+							// Loop through all defind transitions
+							auto transitions = (*_i)->Transitions();
+							for (auto j = transitions.cbegin(); j != transitions.cend(); j++)
+							{
+								// Make sure that there is a state object
+								if ((*j)->SourceState() == nullptr)
+									continue;
+
+								if ((!_space.GetState((*j)->SourceState(), P)))
+								{
+									_logstream << "Failed to obtain projection matrix onto state \"" << (*j)->Name() << "\" of SpinSystem \"" << (*_i)->Name() << "\"." << std::endl;
+									continue;
+								}
+
+								// Return the yield for this transition
+								_datastream << std::real(arma::trace(Iprojx * (*j)->Rate() * P * rho0)) << " ";
+								_datastream << std::real(arma::trace(Iprojy * (*j)->Rate() * P * rho0)) << " ";
+								_datastream << std::real(arma::trace(Iprojz * (*j)->Rate() * P * rho0)) << " ";
+								_datastream << std::real(arma::trace(Iprojp * (*j)->Rate() * P * rho0)) << " ";
+								_datastream << std::real(arma::trace(Iprojm * (*j)->Rate() * P * rho0)) << " ";
+							}
+						}
+						else if (_cidsp == false)
+						{
+							// Return the yield for this state - note that no reaction rates are included here.
+							_datastream << std::setprecision(12) << std::real(arma::trace(Iprojx * rho0)) << " ";
+							_datastream << std::setprecision(12) << std::real(arma::trace(Iprojy * rho0)) << " ";
+							_datastream << std::setprecision(12) << std::real(arma::trace(Iprojz * rho0)) << " ";
+							_datastream << std::setprecision(12) << std::real(arma::trace(Iprojp * rho0)) << " ";
+							_datastream << std::setprecision(12) << std::real(arma::trace(Iprojm * rho0)) << " ";
+						}
+					}
+				}
+			}
+		}
+		else
+		{
+			_logstream << "No nucleus was specified for projection" << std::endl;
+			return false;
+		}
+
+		return true;
+	}
+
 	bool TaskStaticSSPowderSpectra::CreateRotationMatrix(double &_alpha, double &_beta, double &_gamma, arma::mat &_R) const
 	{
 		arma::mat R1 = {
@@ -959,6 +1804,159 @@ namespace RunSection
 				idx++;
 			}
 		}
+
+		return true;
+	}
+
+	arma::cx_vec TaskStaticSSPowderSpectra::KrylovPropagator(const arma::sp_cx_mat &_A, const arma::cx_vec &_rho, double _dt, int _m)
+	{
+		// Dimension of the space
+		const int N = _rho.n_rows;
+
+		// Compute norm of initial rho (used for normalization and rescaling)
+		double beta = arma::norm(_rho);
+
+		// First Krylov basis vector: normalized initial vector
+		arma::cx_vec v1 = _rho / beta;
+
+		// Matrix whose columns will contain the Krylov basis vectors size: N × m  (large dimension × Krylov subspace size)
+		arma::cx_mat V(N, _m, arma::fill::zeros);
+
+		// Small Hessenberg matrix from Arnoldi projection
+		// Size: m × m
+		arma::cx_mat H(_m, _m, arma::fill::zeros);
+
+		// Set first Krylov basis vector
+		V.col(0) = v1;
+
+		// Arnoldi iteration
+		// Builds an orthonormal basis of the Krylov subspace. K_m(A, rho) = span{rho, A*rho, A^2*rho, ..., A^{m-1}*rho}
+		// At the same time constructs the projected matrix H such that:  A V ≈ V H
+		for (int j = 0; j < _m - 1; ++j)
+		{
+			// Apply _A to current Krylov vector
+			arma::cx_vec w = _A * V.col(j);
+
+			// Orthogonalize against all previous Krylov vectors
+			for (int i = 0; i <= j; ++i)
+			{
+				H(i, j) = arma::cdot(V.col(i), w);
+				w -= H(i, j) * V.col(i);
+			}
+
+			// Norm gives subdiagonal element of Hessenberg matrix
+			H(j + 1, j) = arma::norm(w);
+
+			// If norm is ~0, Krylov space has converged early
+			if (std::abs(H(j + 1, j)) < 1e-14)
+				break;
+
+			// Normalize to obtain next Krylov basis vector
+			V.col(j + 1) = w / H(j + 1, j);
+		}
+
+		// Instead of computing exp(A*dt) directly (large N×N matrix), we approximate as exp(A*dt) _rho ≈ β * V * exp(H*dt) * e1, and H is small (m×m), e1 = (1,0,0,...), β = ||_rho||
+
+		// Compute exponential of small reduced matrix
+		arma::cx_mat expH = arma::expmat(H * _dt);
+
+		// First canonical basis vector in Krylov space
+		arma::cx_vec e1(_m, arma::fill::zeros);
+		e1(0) = 1.0;
+
+		// Compute Krylov-space propagated coefficients
+		arma::cx_vec y = beta * expH * e1;
+
+		// Map vector back to full space
+		return V * y;
+	}
+
+	bool TaskStaticSSPowderSpectra::Create_A_for_current_orientation(auto &_i, SpinAPI::SpinSpace &_space, double &_theta, double &_phi, arma::sp_cx_mat &_A, std::ostream &_logstream) const
+	{
+		// Create rotation matrix
+		arma::mat Rot_mat;
+		double gamma = 0; // here this is not euler angles, but I use the same function for creating rotations
+		if (!this->CreateRotationMatrix(gamma, _theta, _phi, Rot_mat))
+		{
+			_logstream << "Failed to obtain an Lebedev grid." << std::endl;
+		}
+
+		// Create Hamiltonian H0
+		std::vector<std::string> HamiltonianH0list;
+		if (!this->Properties()->GetList("hamiltonianh0list", HamiltonianH0list, ','))
+		{
+			_logstream << "Failed to obtain an input for a HamiltonianH0." << std::endl;
+		}
+
+		_space.UseSuperoperatorSpace(false);
+		// Get the Hamiltonian
+		arma::sp_cx_mat H0;
+		if (!_space.BaseHamiltonianRotated_SA(HamiltonianH0list, Rot_mat, H0))
+		{
+			_logstream << "Failed to obtain Hamiltonian in superspace." << std::endl;
+			return false;
+		}
+
+		// Transforming into superspace
+		arma::sp_cx_mat lhs;
+		arma::sp_cx_mat rhs;
+		arma::sp_cx_mat H_SS;
+		_space.SuperoperatorFromLeftOperator(H0, lhs);
+		_space.SuperoperatorFromRightOperator(H0, rhs);
+
+		H_SS = lhs - rhs;
+
+		// Get a matrix to collect all the terms (the total Liouvillian)
+		_A = arma::cx_double(0.0, -1.0) * H_SS;
+
+		// Create Hamiltonian H1
+		std::vector<std::string> HamiltonianH1list;
+		if (!this->Properties()->GetList("hamiltonianh1list", HamiltonianH1list, ','))
+		{
+			_logstream << "Failed to obtain an input for a HamiltonianH1." << std::endl;
+		}
+
+		// Get the Hamiltonian
+		arma::sp_cx_mat H1;
+		if (!_space.ThermalHamiltonian(HamiltonianH1list, H1))
+		{
+			_logstream << "Failed to obtain Hamiltonian in superspace." << std::endl;
+			return false;
+		}
+
+		arma::sp_cx_mat H1lhs;
+		arma::sp_cx_mat H1rhs;
+		arma::sp_cx_mat H1_SS;
+
+		_space.SuperoperatorFromLeftOperator(H1, H1lhs);
+		_space.SuperoperatorFromRightOperator(H1, H1rhs);
+
+		H1_SS = H1lhs - H1rhs;
+		_A += arma::cx_double(0.0, -1.0) * H1_SS;
+
+		_space.UseSuperoperatorSpace(true);
+
+		////////////////////
+
+		// Get transition operator
+		arma::sp_cx_mat K;
+		if (!_space.TotalReactionOperator(K))
+		{
+			_logstream << "Warning: Failed to obtain matrix representation of the reaction operators!" << std::endl;
+		}
+		_A -= K;
+
+		// Get the relaxation terms, assuming that they can just be added to the Liouvillian superoperator
+		arma::sp_cx_mat R;
+		for (auto j = (*_i)->operators_cbegin(); j != (*_i)->operators_cend(); j++)
+		{
+			if (_space.RelaxationOperator((*j), R))
+			{
+				_A += R;
+				_logstream << "Added relaxation operator \"" << (*j)->Name() << "\" to the Liouvillian.\n";
+			}
+		}
+		///////////////
 
 		return true;
 	}
