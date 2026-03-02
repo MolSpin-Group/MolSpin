@@ -74,6 +74,31 @@ namespace RunSection
 // endregion SemiClassical
 // region TimeEvo
     typedef arma::cx_vec (*RungeKuttaFuncArma)(double t, arma::sp_cx_mat &, arma::cx_vec &, arma::cx_vec);
+    typedef arma::sp_cx_mat (*HamiltonainTimeDepFuncArma)(double t, const arma::sp_cx_mat &);
+    
+    struct PropParam
+    {
+        double atol = 1e-8;
+        double rtol = 1e-10;
+        double min = 1e-6;
+        double max = 1e6;
+        double safety = 0.8;
+        double f1 = 0.1;
+        double f2 = 5.0;
+
+        int max_krylov_iterations = 30;
+        int reject_limit = 2;
+
+        double CurrentTime = 0.0;
+    };
+
+    double EstimateStiffnessArmadillo(arma::sp_cx_mat &L);
+
+    struct TimePropReturnInfo
+    {
+        double timestep;
+        bool step_accepted;
+    };
     
     /// Runge-Kutta-Fehlberg method (4th and 5th order) with adaptive time step control
     ///     @param L: Liouvillian superoperator (sparse complex matrix)
@@ -86,8 +111,9 @@ namespace RunSection
     ///     @param MaxTimeStep: Maximum allowed time step (double) - Optional, default = 1e6
     ///     @param time: Current time (double) - Optional, default = 0
     ///     @return New time step (double)
-    double RungeKutta45Armadillo(arma::sp_cx_mat &, arma::cx_vec &, arma::cx_vec &, double, RungeKuttaFuncArma, std::pair<double, double>, double MinTimeStep = 1e-6, double MaxTimeStep = 1e6, double time = 0);
+    TimePropReturnInfo RungeKutta45Armadillo(arma::sp_cx_mat &, arma::cx_vec &, arma::cx_vec &, double, RungeKuttaFuncArma, double time = 0, PropParam PropParams = PropParam());
 
+    TimePropReturnInfo AdaptiveDirectKrylovArmadillo(arma::sp_cx_mat &L, arma::cx_vec &rho0, arma::cx_vec &drhodt, double dumpstep, double time = 0, PropParam PropParams = PropParam(), HamiltonainTimeDepFuncArma GetTDH = nullptr);
 // endregion TimeEvo 
     unsigned int GetNumThreads();
 
@@ -113,11 +139,11 @@ namespace RunSection
     /// @param b The right hand side vector
     /// @param block_size The size of the blocks in the block matrix
     /// @return The solution vector x
-    bool BlockSolver(arma::sp_cx_mat &A, arma::cx_vec &b, int block_size, arma::cx_vec &x); //TODO: work on the error handling
+    bool BlockSolver(arma::sp_cx_mat &A, arma::cx_vec &b, std::vector<int> block_sizes, arma::cx_vec &x); //TODO: work on the error handling
 
     //Internal functions used by the block solvers
     bool IsBlockTridiagonal(arma::sp_cx_mat &A, int block_size);
-    arma::cx_mat BlockMatrixInverse(arma::sp_cx_mat &A, int block_size, bool &Invertible);
+    arma::cx_mat BlockMatrixInverse(arma::sp_cx_mat &A, std::vector<int> block_sizes, bool &Invertible);
     arma::cx_mat SchurComplementA(arma::cx_mat &A11_inv, arma::sp_cx_mat &A12, arma::sp_cx_mat &A21, arma::sp_cx_mat &A22, bool &invertible);
     arma::cx_mat SchurComplementB(arma::sp_cx_mat &A11, arma::sp_cx_mat &A12, arma::sp_cx_mat &A21, arma::cx_mat &A22_inv, bool &invertible);
     arma::cx_mat BothSchurComponents(arma::sp_cx_mat&A11, arma::cx_mat &A11_inv, arma::sp_cx_mat &A12, arma::sp_cx_mat &A21, arma::sp_cx_mat &A22, arma::cx_mat &A22_inv, bool &invertible);

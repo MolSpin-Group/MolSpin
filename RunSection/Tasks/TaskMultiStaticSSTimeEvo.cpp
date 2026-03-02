@@ -53,6 +53,7 @@ namespace RunSection
 			// We are using superoperator space, and need the total dimensions
 			space->UseSuperoperatorSpace(true);
 			space->SetReactionOperatorType(this->reactionOperators);
+			space->SetTime(0.0);
 			dimensions += space->SpaceDimensions();
 
 			// Make sure to save the newly created spin space
@@ -196,11 +197,18 @@ namespace RunSection
 		//	// Move on to next spin space
 		//	nextDimension += i->second->SpaceDimensions();
 		//}
+		SeperateSpinSystems(rho0,spaces,this->ProductYieldsOnly, this->timestep);
 		this->Data() << std::endl;
 
 		arma::cx_vec result = arma::cx_vec(rho0.n_rows);
 		double CurrentTime = 0.0;
 		bool NoFail = false;
+		
+		CheckPropagator(L, this->timestep);
+		if(this->prop == Propagator::Default)
+		{
+			DetermineBestPropagator(L);
+		}
 
 		// Very much a quick solution atm
 		if (this->prop == Propagator::exp)
@@ -222,7 +230,7 @@ namespace RunSection
 					arma::cx_vec tmp = P * rho0;
 					rho0 = tmp;
 				}
-				NoFail = SeperateSpinSystems(rho0,spaces,this->ProductYieldsOnly);
+				NoFail = SeperateSpinSystems(rho0,spaces,this->ProductYieldsOnly, this->timestep);
 				if (!NoFail)
 					return false;
 				this->Data() << std::endl;
@@ -236,6 +244,7 @@ namespace RunSection
 		this->Log() << "Ready to perform calculation." << std::endl;
 		double InitialTimeStep = this->timestep;
 		double MinTimeStep, MaxTimeStep = 0.0;
+		double MinTolerance, MaxTolerance = 0.0;
 		if (!this->Properties()->Get("minimumtimestep", MinTimeStep) and !this->Properties()->Get("minimum timestep", MinTimeStep))
 		{
 			MinTimeStep = InitialTimeStep * 1e-3;
@@ -245,24 +254,76 @@ namespace RunSection
 			MaxTimeStep = InitialTimeStep * 1e4;
 		}
 
+		if (!this->Properties()->Get("absolutetolerance", MinTolerance) and (!this->Properties()->Get("absolute tolerance", MinTolerance) and !this->Properties()->Get("atol", MinTolerance)))
+		{
+			MinTolerance = 1e-8;
+		}
+		if (!this->Properties()->Get("relativetolerance", MaxTolerance) and (!this->Properties()->Get("relative tolerance", MaxTolerance) and !this->Properties()->Get("rtol", MinTolerance)))
+		{
+			MaxTolerance = 1e-10;
+		}
+		
+		PropParam params;
+		params.atol = MinTolerance;
+		params.rtol = MaxTolerance;
+		params.min = MinTimeStep;
+		params.max = MaxTimeStep;
+		params.safety = 0.8;
+		params.f1 = 0.1;
+		params.f2 = 5.0;
+
+		//auto eigs = arma::eig_gen(arma::conv_to<arma::cx_mat>::from(L));
+		//double max_eig = 0.0;
+		//double min_eig = 1e+20;
+		//for (auto e = eigs.cbegin(); e != eigs.cend(); e++)
+		//{
+		//	if (std::abs((*e).imag()) > max_eig)
+		//		max_eig = std::abs((*e).imag());
+		//	if (std::abs((*e).imag()) < min_eig && std::abs((*e).imag()) > 1e-10)
+		//		min_eig = std::abs((*e).imag());
+		//}
+		//this->Log() << "Maximum eigenvalue imaginary part of Liouvillian: " << max_eig << std::endl;
+		//this->Log() << "Minimum eigenvalue imaginary part of Liouvillian: " << min_eig << std::endl;
+//
+		//double stiffness = max_eig / min_eig;
+		//this->Log() << "Liouvillian stiffness: " << stiffness << std::endl;
+		
+
 		this->Log() << "Starting time evolution with timestep: " << this->timestep << ", total time: " << this->totaltime << ", minimum timestep: " << MinTimeStep << ", maximum timestep: " << MaxTimeStep << std::endl;
 		while (CurrentTime <= this->totaltime)
 		{
+			// Propagate
+
+			TimePropReturnInfo r;
+
+			//this->timestep = RungeKutta45Armadillo(L, rho0, rho0, this->timestep, ComputeRhoDot,0.0,params);
+
+			if(this->prop == Propagator::RK45)
+			{
+				r = RungeKutta45Armadillo(L, rho0, rho0, this->timestep, ComputeRhoDot, CurrentTime, params);
+			}
+			else
+			{
+				r = AdaptiveDirectKrylovArmadillo(L, rho0, rho0, this->timestep, CurrentTime, params, nullptr);
+			}
+
+			double t = r.timestep;
+			bool a = r.step_accepted;
+
 			this->Data() << this->RunSettings()->CurrentStep() << " ";
-			CurrentTime += this->timestep;
+			CurrentTime += (a == true) ? this->timestep : t;
+			this->timestep = t;
 			this->Data() << CurrentTime << " ";
 			this->WriteStandardOutput(this->Data());
 
-			// Propagate
-			this->timestep = RungeKutta45Armadillo(L, rho0, rho0, this->timestep, ComputeRhoDot, {1e-7, 1e-6}, MinTimeStep, MaxTimeStep);
-
-			NoFail = SeperateSpinSystems(rho0, spaces, this->ProductYieldsOnly);
+			NoFail = SeperateSpinSystems(rho0, spaces, this->ProductYieldsOnly, (a == true) ? this->timestep : t);
 			if (!NoFail)
 				return false;
 			// Terminate the line in the data file after iteration through all spin systems
 			this->Data() << std::endl;
 		}
 		this->Log() << "Done with calculation." << std::endl;
+		this->timestep = InitialTimeStep;
 
 		return true;
 	}
@@ -286,7 +347,7 @@ namespace RunSection
 		}
 	}
 
-    bool TaskMultiStaticSSTimeEvo::SeperateSpinSystems(const arma::cx_vec &rho0, const std::vector<std::pair<SpinAPI::system_ptr, std::shared_ptr<SpinAPI::SpinSpace>>> &spaces, bool transitionyields)
+    bool TaskMultiStaticSSTimeEvo::SeperateSpinSystems(const arma::cx_vec &rho0, const std::vector<std::pair<SpinAPI::system_ptr, std::shared_ptr<SpinAPI::SpinSpace>>> &spaces, bool transitionyields, double t)
     {
 		// Retrieve the resulting density matrix for each spin system and output the results
 		int nextDimension = 0;
@@ -319,7 +380,7 @@ namespace RunSection
 						this->Log() << "Failed to obtain projection matrix onto state \"" << (*j)->Name() << "\" of SpinSystem \"" << (*i).first->Name() << "\"." << std::endl;
 						continue;
 					}
-					double Yield = (*j)->Rate() * std::abs(arma::trace(P * rho_result));
+					double Yield = std::exp(-1 * (*j)->Rate() * t) * std::abs(arma::trace(P * rho_result));
 					SumYield += Yield;
 					// Return the yield for this transition
 					this->Data() << Yield << " ";
@@ -427,14 +488,17 @@ namespace RunSection
 		if (!this->Properties()->Get("Propagator", propagator_str) && !this->Properties()->Get("propagator", propagator_str))
 		{
 			this->Log() << "No propagator defined, using the default propogator (RK45)" << std::endl;
+			this->propogator_cached = false;
+			this->prop = Propagator::Default;
 		}
 		else
 		{
 			this->SelectPropagator(propagator_str);
+			//this->propogator_cached = true;
 		}
 
-		if (this->prop == Propagator::Default)
-			this->prop = Propagator::RK45;
+		//if (this->prop == Propagator::Default)
+		//	this->prop = Propagator::RK45;
 
 		// Get the reacton operator type
 		std::string str;
