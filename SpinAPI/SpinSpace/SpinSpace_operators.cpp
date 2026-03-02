@@ -1216,7 +1216,7 @@ namespace SpinAPI
 		return step;
 	}
 	// Returns the action of the matrix exponential of sparse symmetric complex matrix H onto complex column vector b, with krylov subspave dimension of KryDim.
-	arma::cx_colvec SpinSpace::KrylovExpmSymm(const arma::sp_cx_mat &H, const arma::cx_colvec &b, const arma::cx_double dt, int KryDim, int HilbSize)
+	SpinSpace::return_struct SpinSpace::KrylovExpmSymm(const arma::sp_cx_mat &H, const arma::cx_colvec &b, const arma::cx_double dt, int KryDim, int HilbSize)
 	{
 		// Initialize Krylov basis and upper Hessenberg matrix
 		arma::cx_mat Hessen; // Upper Hessenberg matrix
@@ -1224,7 +1224,8 @@ namespace SpinAPI
 
 		arma::cx_mat KryBasis(HilbSize, KryDim, arma::fill::zeros); // Orthogonal krylov subspace
 
-		KryBasis.col(0) = b / norm(b);
+		double beta = norm(b);
+		KryBasis.col(0) = b / beta;
 
 		double h_mplusone_m;
 		// Compute upper Hessenberg matrix and krylov basis using Lanczos process
@@ -1233,8 +1234,20 @@ namespace SpinAPI
 		arma::cx_colvec e1;
 		e1.zeros(KryDim);
 		e1(0) = 1;
+
+		arma::cx_mat Exponent = arma::expmat(Hessen * dt);
+		arma::cx_vec w = Exponent * e1;
+
+		std::complex<double> error_val = Exponent(KryDim - 1, 0);
+        double err = std::abs(beta * h_mplusone_m * error_val);
+
+		SpinSpace::return_struct step;
+        //step.result = norm(b) * KryBasis * arma::expmat(Hessen * dt) * e1;
+		step.result = beta * KryBasis * w;
+        step.error_estimate = err;
+
 		// Compute the matrix exponential action
-		return norm(b) * KryBasis * arma::expmat(Hessen * dt) * e1;
+		return step;
 	}
 
 	// Compute the Arnoldi process for the given sparse complex general matrix H, complex column vector b, and integer KryDim.

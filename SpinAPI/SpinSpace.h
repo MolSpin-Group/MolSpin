@@ -267,7 +267,7 @@ namespace SpinAPI
 		arma::mat SelectTaylorDegree(const arma::sp_cx_mat &H, const std::string precision, const int lengthB);													 // Precision of Taylor series used for HighamProp
 		double normAmEst(const arma::sp_cx_mat &H, double m, std::mt19937 &generator);																			 // Used in SelectTaylorDegree to normalize
 		return_struct KrylovExpmGeneral(const arma::sp_cx_mat &H, const arma::cx_colvec &b, const arma::cx_double dt, int KryDim, int HilbSize);				 // Krylov subspace method
-		arma::cx_colvec KrylovExpmSymm(const arma::sp_cx_mat &H, const arma::cx_colvec &b, const arma::cx_double dt, int KryDim, int HilbSize);					 // Krylov subspace method for symmetric decay
+		return_struct KrylovExpmSymm(const arma::sp_cx_mat &H, const arma::cx_colvec &b, const arma::cx_double dt, int KryDim, int HilbSize);					 // Krylov subspace method for symmetric decay
 		void ArnoldiProcess(const arma::sp_cx_mat &H, const arma::cx_colvec &b, arma::cx_mat &KryBasis, arma::cx_mat &Hessen, int KryDim, double &h_mplusone_m); // Arnoldi process for propagation using Krylov subsspace
 		void LanczosProcess(const arma::sp_cx_mat &H, const arma::cx_colvec &b, arma::cx_mat &KryBasis, arma::cx_mat &Hessen, int KryDim, double &h_mplusone_m); // Lanczos process for propagation using Krylov subsspace
 
