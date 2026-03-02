@@ -298,8 +298,7 @@ namespace SpinAPI
 		};
 
 
-		typedef return_struct (SpinSpace::*KrylovRoutine)(const arma::sp_cx_mat&, const arma::cx_colvec&, const arma::cx_double, int, int);
-		TimePropReturnInfo TimeAdapativeKrylovRoutine(const arma::sp_cx_mat &H, const arma::cx_colvec &b, double dt, int kryDim, int HilbSize, PropParam &propParam, const KrylovRoutine& krylov_routine);
+		TimePropReturnInfo TimeAdapativeKrylovRoutine(const arma::sp_cx_mat &H, const arma::cx_colvec &b, double dt, int kryDim, int HilbSize, PropParam &propParam, bool general);
 		TimePropReturnInfo TimeAdaptiveKrylovGeneral(const arma::sp_cx_mat &H, const arma::cx_colvec &b, double dt, int kryDim, int HilbSize, PropParam &propParam);
 		TimePropReturnInfo TimeAdaptiveKrylovSymm(const arma::sp_cx_mat &H, const arma::cx_colvec &b, double dt, int kryDim, int HilbSize, PropParam &propParam);
 
