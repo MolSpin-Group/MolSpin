@@ -90,7 +90,30 @@ namespace RunSection
 				for (auto j = initial_states.cbegin(); j < initial_states.cend(); j++)
 				{
 					arma::cx_mat tmp_rho0;
-					if (!i->second->GetState(*j, tmp_rho0))
+					if ((*j) == nullptr) // "Thermal initial state"
+					{
+						this->Log() << "Initial state = thermal " << std::endl;
+
+						std::vector<std::string> thermalhamiltonian_list = i->first->ThermalHamiltonianList();
+						this->Log() << "ThermalHamiltonianList = [";
+						for (size_t k = 0; k < thermalhamiltonian_list.size(); k++)
+						{
+							this->Log() << thermalhamiltonian_list[k];
+							if (k < thermalhamiltonian_list.size() - 1)
+								this->Log() << ", ";
+						}
+						this->Log() << "]" << std::endl;
+
+						double temperature = i->first->Temperature();
+						this->Log() << "Temperature = " << temperature << "K" << std::endl;
+
+						if (!i->second->GetThermalState(*(i->second), temperature, thermalhamiltonian_list, tmp_rho0))
+						{
+							this->Log() << "ERROR: Failed to obtain projection matrix onto thermal state, initial state of SpinSystem \"" << i->first->Name() << "\"." << std::endl;
+							return false;
+						}
+					}
+					else if (!i->second->GetState(*j, tmp_rho0))
 					{
 						this->Log() << "ERROR: Failed to obtain projection matrix onto state \"" << (*j)->Name() << "\", initial state of SpinSystem \"" << i->first->Name() << "\"." << std::endl;
 						return false;

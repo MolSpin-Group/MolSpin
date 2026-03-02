@@ -755,7 +755,7 @@ namespace RunSection
 						for (int idx = 0; idx < num_transitions; idx++)
 						{
 							double abs_trace = std::abs(arma::trace(B.t() * Operators[idx] * B));
-							double expected_value = std::exp(-kmin * current_time) * abs_trace / Z;
+							double expected_value = std::exp(-kmin * current_time) * abs_trace / mc_samples;
 							ExptValues(k, idx) = expected_value;
 						}
 
@@ -784,7 +784,7 @@ namespace RunSection
 						for (int idx = 0; idx < num_transitions; ++idx)
 						{
 							double abs_trace = std::abs(arma::trace(B.t() * arma::cx_mat(Operators[idx]) * B));
-							double expected_value = abs_trace / Z;
+							double expected_value = abs_trace / mc_samples;
 							ExptValues(k, idx) = expected_value;
 						}
 

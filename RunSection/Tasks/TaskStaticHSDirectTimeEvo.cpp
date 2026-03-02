@@ -202,6 +202,17 @@ namespace RunSection
 				return 1;
 			}
 
+			SpinAPI::HilbertRelaxationCache relaxation_cache;
+			bool use_density_matrix = false;
+			for (auto j = (*i)->operators_cbegin(); j != (*i)->operators_cend(); j++)
+			{
+				if (space.RelaxationOperator((*j), relaxation_cache))
+				{
+					use_density_matrix = true;
+					this->Log() << "Added relaxation operator \"" << (*j)->Name() << "\" to Hilbert-space propagation.\n";
+				}
+			}
+
 			// Check transitions, rates and projection operators
 			auto transitions = (*i)->Transitions();
 			arma::sp_cx_mat P;
@@ -403,6 +414,67 @@ namespace RunSection
 			arma::mat ExptValues;
 			ExptValues.zeros(num_steps, num_transitions);
 			arma::vec time(num_steps);
+
+			if (use_density_matrix)
+			{
+				this->Log() << "Relaxation operators detected. Using density-matrix RK4 propagation in Hilbert space." << std::endl;
+
+				const int dim = InitialStateVector.n_rows * Z;
+				arma::cx_mat rho = B * B.t();
+				arma::cx_mat Hdense = arma::cx_mat(H);
+				arma::cx_mat Kdense(dim, dim, arma::fill::zeros);
+				std::vector<arma::cx_mat> operators_dense(num_transitions);
+				for (int idx = 0; idx < num_transitions; ++idx)
+				{
+					operators_dense[idx] = arma::cx_mat(Operators[idx]);
+					Kdense += (rates(idx) / 2.0) * operators_dense[idx];
+				}
+
+				const arma::cx_double imag_unit(0.0, 1.0);
+				auto rhs = [&](const arma::cx_mat &state, arma::cx_mat &out) {
+					out = -imag_unit * (Hdense * state - state * Hdense) - (Kdense * state + state * Kdense);
+					arma::cx_mat relax_term(dim, dim, arma::fill::zeros);
+					space.ApplyRelaxationHilbert(relaxation_cache, state, relax_term);
+					out += relax_term;
+				};
+
+				arma::cx_mat k1(dim, dim, arma::fill::zeros);
+				arma::cx_mat k2(dim, dim, arma::fill::zeros);
+				arma::cx_mat k3(dim, dim, arma::fill::zeros);
+				arma::cx_mat k4(dim, dim, arma::fill::zeros);
+				arma::cx_mat tmp(dim, dim, arma::fill::zeros);
+
+				for (int k = 0; k < num_steps; ++k)
+				{
+					double current_time = k * dt;
+
+					this->Data() << this->RunSettings()->CurrentStep() << " ";
+					this->Data() << current_time << " ";
+					this->WriteStandardOutput(this->Data());
+
+					for (int idx = 0; idx < num_transitions; ++idx)
+					{
+						double expected_value = std::abs(arma::trace(operators_dense[idx] * rho)) / Z;
+						this->Data() << " " << expected_value;
+					}
+					this->Data() << std::endl;
+
+					if (k + 1 >= num_steps)
+						continue;
+
+					rhs(rho, k1);
+					tmp = rho + 0.5 * dt * k1;
+					rhs(tmp, k2);
+					tmp = rho + 0.5 * dt * k2;
+					rhs(tmp, k3);
+					tmp = rho + dt * k3;
+					rhs(tmp, k4);
+					rho += (dt / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4);
+				}
+
+				this->Log() << "\nDone with SpinSystem \"" << (*i)->Name() << "\"" << std::endl;
+				continue;
+			}
 
 			// Propagate the system in time using the specified method
 			// Propagation using autoexpm for matrix exponential

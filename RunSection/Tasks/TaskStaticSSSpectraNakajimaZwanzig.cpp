@@ -9,6 +9,8 @@
 #include <iomanip>
 #include <omp.h>
 #include <memory>
+#include <sstream>
+#include <cmath>
 #include "TaskStaticSSSpectraNakajimaZwanzig.h"
 #include "Transition.h"
 #include "Settings.h"
@@ -23,6 +25,37 @@
 
 namespace RunSection
 {
+	namespace
+	{
+		bool ParseVec3(const std::string &s, arma::vec &v)
+		{
+			v.set_size(3);
+			std::string tmp = s;
+			for (char &c : tmp)
+			{
+				if (c == ',')
+					c = ' ';
+			}
+
+			std::istringstream iss(tmp);
+			double x, y, z;
+			if (!(iss >> x >> y >> z))
+				return false;
+			v(0) = x;
+			v(1) = y;
+			v(2) = z;
+			return true;
+		}
+
+		arma::vec SafeNormalise(const arma::vec &v, const arma::vec &fallback)
+		{
+			double n = arma::norm(v);
+			if (!std::isfinite(n) || n < 1e-15)
+				return fallback;
+			return v / n;
+		}
+	}
+
 	// -----------------------------------------------------
 	// TaskStaticSSSpectraNakajimaZwanzig Constructors and Destructor
 	// -----------------------------------------------------
@@ -92,6 +125,11 @@ namespace RunSection
 				for (auto j = initial_states.cbegin(); j != initial_states.cend(); j++)
 				{
 					arma::cx_mat tmp_rho0;
+					if ((*j) == nullptr)
+					{
+						this->Log() << "Failed to obtain weighted thermal initial state for SpinSystem \"" << (*i)->Name() << "\". Weighted thermal initial states are not supported." << std::endl;
+						continue;
+					}
 					if (!space.GetState(*j, tmp_rho0))
 					{
 						this->Log() << "Failed to obtain projection matrix onto state \"" << (*j)->Name() << "\", initial state of SpinSystem \"" << (*i)->Name() << "\"." << std::endl;
@@ -1908,6 +1946,12 @@ namespace RunSection
 			{
 				this->Log() << "Failed to obtain an input for a CIDSP. Plese use cidsp = true/false. Using cidsp = false by default. " << std::endl;
 			}
+			ProjectionCache projection_cache;
+			if (!this->BuildProjectionCache(*i, space, eigen_vec, CIDSP, projection_cache, this->Log()))
+			{
+				this->Log() << "Failed to build projection cache for SpinSystem \"" << (*i)->Name() << "\". Skipping system." << std::endl;
+				continue;
+			}
 
 			// Read printtimeframe from the input file
 			std::string Timewindow;
@@ -1978,40 +2022,122 @@ namespace RunSection
 								else
 									firststep = 1;
 
-								// Create array containing a propagator and the current state of each system
-								std::pair<arma::cx_mat, arma::cx_vec> G;
-								// Get the propagator and put it into the array together with the initial state
-								arma::cx_mat A_sp = arma::expmat((A + (arma::cx_double(0.0, -1.0) * pulse_operator)) * (*pulse)->Timestep());
-								G = std::pair<arma::cx_mat, arma::cx_vec>(A_sp, rhovec);
-
 								unsigned int steps = static_cast<unsigned int>(std::abs((*pulse)->Pulsetime() / (*pulse)->Timestep()));
-								for (unsigned int n = firststep; n <= steps; n++)
+								bool use_dense_expm = (A.n_rows <= 64);
+								arma::cx_mat A_sp_dense;
+								if (use_dense_expm)
 								{
-									if (!n == 0) // for the very first step just printing is done, no propagation
+									try
 									{
-										// Take a step, "first" is propagator and "second" is current state
-										rhovec = G.first * G.second;
+										A_sp_dense = arma::expmat((A + (arma::cx_double(0.0, -1.0) * pulse_operator)) * (*pulse)->Timestep());
+									}
+									catch (const std::exception &e)
+									{
+										this->Log() << "Dense expm LongPulseStaticField propagation failed (" << e.what() << "). Falling back to Krylov propagation." << std::endl;
+										use_dense_expm = false;
+									}
+								}
+								if (use_dense_expm)
+								{
+									// Create array containing a propagator and the current state of each system
+									std::pair<arma::cx_mat, arma::cx_vec> G;
+									G = std::pair<arma::cx_mat, arma::cx_vec>(A_sp_dense, rhovec);
 
-										// Integrate the result if needed
-										if ((integration) && (Integrationwindow.compare("freeevo") != 0))
+									for (unsigned int n = firststep; n <= steps; n++)
+									{
+										if (n != 0) // for the very first step just printing is done, no propagation
 										{
-											rhoavg += (*pulse)->Timestep() * (G.second + rhovec) / 2;
+											// Take a step, "first" is propagator and "second" is current state
+											rhovec = G.first * G.second;
+
+											// Integrate the result if needed
+											if ((integration) && (Integrationwindow.compare("freeevo") != 0))
+											{
+												rhoavg += (*pulse)->Timestep() * (G.second + rhovec) / 2;
+											}
+
+											// Get the new current state density vector
+											G.second = rhovec;
+
+											// Save the result if there were some changes
+											if (!rhoavg.is_zero(0))
+											{
+												rhovec = rhoavg;
+											}
 										}
 
-										// Get the new current state density vector
-										G.second = rhovec;
-
-										// Save the result if there were some changes
-										if (!rhoavg.is_zero(0))
+										if (Timewindow.compare("freeevo") != 0)
 										{
-											rhovec = rhoavg;
+											if (!this->ProjectAndPrintOutputLine(i, space, projection_cache, rhovec, Printedtime, (*pulse)->Timestep(), n, CIDSP, this->Data(), this->Log()))
+												this->Log() << "Could not project the state vector and print the result into a file" << std::endl;
 										}
 									}
+								}
+								else
+								{
+									arma::sp_cx_mat A_step = arma::conv_to<arma::sp_cx_mat>::from(A + (arma::cx_double(0.0, -1.0) * pulse_operator));
+									arma::cx_vec tmp_rho = rhovec;
 
-									if (Timewindow.compare("freeevo") != 0)
+									for (unsigned int n = firststep; n <= steps; n++)
 									{
-										if (!this->ProjectAndPrintOutputLine(i, space, rhovec, eigen_vec, Printedtime, (*pulse)->Timestep(), n, CIDSP, this->Data(), this->Log()))
-											this->Log() << "Could not project the state vector and print the result into a file" << std::endl;
+										if (n != 0)
+										{
+											arma::cx_vec out_rho;
+											if (arma::norm(tmp_rho, 2) < 1.0e-20)
+											{
+												out_rho = tmp_rho;
+											}
+											else
+											{
+												try
+												{
+													out_rho = space.KrylovExpmGeneral(A_step, tmp_rho, (*pulse)->Timestep(), 16, A_step.n_rows);
+												}
+												catch (const std::exception &e)
+												{
+													this->Log() << "Krylov LongPulseStaticField propagation failed (" << e.what() << "). Retrying with smaller substeps." << std::endl;
+													const int substeps = 8;
+													const double sub_dt = (*pulse)->Timestep() / static_cast<double>(substeps);
+													arma::cx_vec sub_rho = tmp_rho;
+													bool sub_ok = true;
+													for (int sub = 0; sub < substeps; ++sub)
+													{
+														try
+														{
+															sub_rho = space.KrylovExpmGeneral(A_step, sub_rho, sub_dt, 16, A_step.n_rows);
+														}
+														catch (...)
+														{
+															sub_ok = false;
+															break;
+														}
+													}
+													out_rho = sub_ok ? sub_rho : tmp_rho;
+												}
+											}
+
+											// Integrate the result if needed
+											if ((integration) && (Integrationwindow.compare("freeevo") != 0))
+											{
+												rhoavg += (*pulse)->Timestep() * (tmp_rho + out_rho) / 2;
+											}
+
+											// Get the new current state density vector
+											tmp_rho = out_rho;
+											rhovec = out_rho;
+
+											// Save the result if there were some changes
+											if (!rhoavg.is_zero(0))
+											{
+												rhovec = rhoavg;
+											}
+										}
+
+										if (Timewindow.compare("freeevo") != 0)
+										{
+											if (!this->ProjectAndPrintOutputLine(i, space, projection_cache, rhovec, Printedtime, (*pulse)->Timestep(), n, CIDSP, this->Data(), this->Log()))
+												this->Log() << "Could not project the state vector and print the result into a file" << std::endl;
+										}
 									}
 								}
 							}
@@ -2035,29 +2161,285 @@ namespace RunSection
 								else
 									firststep = 1;
 
-								// Create array containing a propagator and the current state of each system
-								std::pair<arma::cx_mat, arma::cx_vec> G;
+								// Save the density on the current step.
+								arma::cx_vec tmp_rho = rhovec;
+								unsigned int steps = static_cast<unsigned int>(std::abs((*pulse)->Pulsetime() / (*pulse)->Timestep()));
+								if (A.n_rows <= 64)
+								{
+									for (unsigned int n = firststep; n <= steps; n++)
+										{
+											if (n != 0) // for the very first step just printing is done, no propagation
+											{
+												// Use time-dependent pulse strength at this propagation step.
+												double t = n * (*pulse)->Timestep();
+												bool used_dense_expm = true;
+												try
+												{
+													arma::cx_mat A_sp = arma::expmat((A + (arma::cx_double(0.0, -1.0) * pulse_operator * std::cos((*pulse)->Frequency() * t))) * (*pulse)->Timestep());
+													rhovec = A_sp * tmp_rho;
+												}
+												catch (const std::exception &e)
+												{
+													used_dense_expm = false;
+													this->Log() << "Dense expm LongPulse propagation failed (" << e.what() << "). Falling back to Krylov propagation for this step." << std::endl;
+												}
+												if (!used_dense_expm)
+												{
+													arma::sp_cx_mat A_step = arma::conv_to<arma::sp_cx_mat>::from(
+														A + (arma::cx_double(0.0, -1.0) * pulse_operator * std::cos((*pulse)->Frequency() * t)));
+													if (arma::norm(tmp_rho, 2) < 1.0e-20)
+													{
+														rhovec = tmp_rho;
+													}
+													else
+													{
+														try
+														{
+															rhovec = space.KrylovExpmGeneral(A_step, tmp_rho, (*pulse)->Timestep(), 16, A_step.n_rows);
+														}
+														catch (const std::exception &e2)
+														{
+															this->Log() << "Krylov LongPulse fallback propagation failed (" << e2.what() << "). Retrying with smaller substeps." << std::endl;
+															const int substeps = 8;
+															const double sub_dt = (*pulse)->Timestep() / static_cast<double>(substeps);
+															arma::cx_vec sub_rho = tmp_rho;
+															bool sub_ok = true;
+															for (int sub = 0; sub < substeps; ++sub)
+															{
+																try
+																{
+																	sub_rho = space.KrylovExpmGeneral(A_step, sub_rho, sub_dt, 16, A_step.n_rows);
+																}
+																catch (...)
+																{
+																	sub_ok = false;
+																	break;
+																}
+															}
+															rhovec = sub_ok ? sub_rho : tmp_rho;
+														}
+													}
+												}
 
-								// Get the propagator and put it into the array together with the initial state
-								arma::cx_mat A_sp = arma::expmat((A + (arma::cx_double(0.0, -1.0) * pulse_operator * std::cos((*pulse)->Frequency() * (*pulse)->Timestep()))) * (*pulse)->Timestep());
-								G = std::pair<arma::cx_mat, arma::cx_vec>(A_sp, rhovec);
+												// Integrate the result if needed
+												if ((integration) && (Integrationwindow.compare("freeevo") != 0))
+												{
+												rhoavg += (*pulse)->Timestep() * (tmp_rho + rhovec) / 2;
+											}
+
+											// Get the new current state density vector
+											tmp_rho = rhovec;
+
+											// Save the result if there were some changes
+											if (!rhoavg.is_zero(0))
+											{
+												rhovec = rhoavg;
+											}
+										}
+
+										if (Timewindow.compare("freeevo") != 0)
+										{
+											if (!this->ProjectAndPrintOutputLine(i, space, projection_cache, rhovec, Printedtime, (*pulse)->Timestep(), n, CIDSP, this->Data(), this->Log()))
+												this->Log() << "Could not project the state vector and print the result into a file" << std::endl;
+										}
+									}
+								}
+								else
+								{
+									for (unsigned int n = firststep; n <= steps; n++)
+									{
+										if (n != 0)
+										{
+											arma::cx_vec out_rho;
+											// Midpoint time gives a better approximation for large systems under harmonic drive.
+											double t_eval = n * (*pulse)->Timestep() + 0.5 * (*pulse)->Timestep();
+											arma::sp_cx_mat A_step = arma::conv_to<arma::sp_cx_mat>::from(
+												A + (arma::cx_double(0.0, -1.0) * pulse_operator * std::cos((*pulse)->Frequency() * t_eval)));
+											if (arma::norm(tmp_rho, 2) < 1.0e-20)
+											{
+												out_rho = tmp_rho;
+											}
+											else
+											{
+												try
+												{
+													out_rho = space.KrylovExpmGeneral(A_step, tmp_rho, (*pulse)->Timestep(), 16, A_step.n_rows);
+												}
+												catch (const std::exception &e)
+												{
+													this->Log() << "Krylov LongPulse propagation failed (" << e.what() << "). Retrying with smaller substeps." << std::endl;
+													const int substeps = 8;
+													const double sub_dt = (*pulse)->Timestep() / static_cast<double>(substeps);
+													arma::cx_vec sub_rho = tmp_rho;
+													bool sub_ok = true;
+													for (int sub = 0; sub < substeps; ++sub)
+													{
+														try
+														{
+															sub_rho = space.KrylovExpmGeneral(A_step, sub_rho, sub_dt, 16, A_step.n_rows);
+														}
+														catch (...)
+														{
+															sub_ok = false;
+															break;
+														}
+													}
+													out_rho = sub_ok ? sub_rho : tmp_rho;
+												}
+											}
+
+											// Integrate the result if needed
+											if ((integration) && (Integrationwindow.compare("freeevo") != 0))
+											{
+												rhoavg += (*pulse)->Timestep() * (tmp_rho + out_rho) / 2;
+											}
+
+											// Get the new current state density vector
+											tmp_rho = out_rho;
+											rhovec = out_rho;
+
+											// Save the result if there were some changes
+											if (!rhoavg.is_zero(0))
+											{
+												rhovec = rhoavg;
+											}
+										}
+
+										if (Timewindow.compare("freeevo") != 0)
+										{
+											if (!this->ProjectAndPrintOutputLine(i, space, projection_cache, rhovec, Printedtime, (*pulse)->Timestep(), n, CIDSP, this->Data(), this->Log()))
+												this->Log() << "Could not project the state vector and print the result into a file" << std::endl;
+										}
+									}
+								}
+							}
+							else if ((*pulse)->Type() == SpinAPI::PulseType::MWPulse)
+							{
+								// Create a holder vector for an averaged density
+								arma::cx_vec rhoavg;
+								rhoavg.zeros(size(rho0vec));
+
+								// Define first propagation step
+								int firststep;
+								if (Printedtime == 0)
+									firststep = 0;
+								else
+									firststep = 1;
+
+								// Save the density on the current step
+								arma::cx_vec tmp_rho = rhovec;
 
 								unsigned int steps = static_cast<unsigned int>(std::abs((*pulse)->Pulsetime() / (*pulse)->Timestep()));
-								for (unsigned int n = firststep; n <= steps; n++)
-								{
-									if (!n == 0) // for the very first step just printing is done, no propagation
+									for (unsigned int n = firststep; n <= steps; n++)
 									{
-										// Take a step, "first" is propagator and "second" is current state
-										rhovec = G.first * G.second;
+										if (n != 0) // for the very first step just printing is done, no propagation
+										{
+											arma::cx_vec out_rho;
+											// Midpoint time gives a better approximation for large systems under harmonic drive.
+											double t_eval = (A.n_rows <= 64) ? (n * (*pulse)->Timestep()) : (n * (*pulse)->Timestep() + 0.5 * (*pulse)->Timestep());
+											arma::cx_mat pulse_operator;
+											if (!space.PulseOperatorFrameChange_mw((*pulse), eigen_vec, pulse_operator, t_eval))
+											{
+												this->Log() << "Failed to create a frame-changed microwave pulse operator in SS." << std::endl;
+												continue;
+											}
+
+												if (A.n_rows <= 64)
+												{
+													bool used_dense_expm = true;
+													try
+													{
+														arma::cx_mat A_step = arma::expmat((A + (arma::cx_double(0.0, -1.0) * pulse_operator)) * (*pulse)->Timestep());
+														out_rho = A_step * tmp_rho;
+													}
+													catch (const std::exception &e)
+													{
+														used_dense_expm = false;
+														this->Log() << "Dense expm MWPulse propagation failed (" << e.what() << "). Falling back to Krylov propagation for this step." << std::endl;
+													}
+													if (!used_dense_expm)
+													{
+														arma::sp_cx_mat A_step = arma::conv_to<arma::sp_cx_mat>::from(A + (arma::cx_double(0.0, -1.0) * pulse_operator));
+														if (arma::norm(tmp_rho, 2) < 1.0e-20)
+														{
+															out_rho = tmp_rho;
+														}
+														else
+														{
+															try
+															{
+																out_rho = space.KrylovExpmGeneral(A_step, tmp_rho, (*pulse)->Timestep(), 16, A_step.n_rows);
+															}
+															catch (const std::exception &e2)
+															{
+																this->Log() << "Krylov MWPulse fallback propagation failed (" << e2.what() << "). Retrying with smaller substeps." << std::endl;
+																const int substeps = 8;
+																const double sub_dt = (*pulse)->Timestep() / static_cast<double>(substeps);
+																arma::cx_vec sub_rho = tmp_rho;
+																bool sub_ok = true;
+																for (int sub = 0; sub < substeps; ++sub)
+																{
+																	try
+																	{
+																		sub_rho = space.KrylovExpmGeneral(A_step, sub_rho, sub_dt, 16, A_step.n_rows);
+																	}
+																	catch (...)
+																	{
+																		sub_ok = false;
+																		break;
+																	}
+																}
+																out_rho = sub_ok ? sub_rho : tmp_rho;
+															}
+														}
+													}
+												}
+											else
+											{
+												arma::sp_cx_mat A_step = arma::conv_to<arma::sp_cx_mat>::from(A + (arma::cx_double(0.0, -1.0) * pulse_operator));
+												if (arma::norm(tmp_rho, 2) < 1.0e-20)
+												{
+													out_rho = tmp_rho;
+												}
+												else
+												{
+													try
+													{
+														out_rho = space.KrylovExpmGeneral(A_step, tmp_rho, (*pulse)->Timestep(), 16, A_step.n_rows);
+													}
+													catch (const std::exception &e)
+													{
+														this->Log() << "Krylov MWPulse propagation failed (" << e.what() << "). Retrying with smaller substeps." << std::endl;
+														const int substeps = 8;
+														const double sub_dt = (*pulse)->Timestep() / static_cast<double>(substeps);
+														arma::cx_vec sub_rho = tmp_rho;
+														bool sub_ok = true;
+														for (int sub = 0; sub < substeps; ++sub)
+														{
+															try
+															{
+																sub_rho = space.KrylovExpmGeneral(A_step, sub_rho, sub_dt, 16, A_step.n_rows);
+															}
+															catch (...)
+															{
+																sub_ok = false;
+																break;
+															}
+														}
+														out_rho = sub_ok ? sub_rho : tmp_rho;
+													}
+												}
+											}
 
 										// Integrate the result if needed
 										if ((integration) && (Integrationwindow.compare("freeevo") != 0))
 										{
-											rhoavg += (*pulse)->Timestep() * (G.second + rhovec) / 2;
+											rhoavg += (*pulse)->Timestep() * (tmp_rho + out_rho) / 2;
 										}
 
 										// Get the new current state density vector
-										G.second = rhovec;
+										tmp_rho = out_rho;
+										rhovec = out_rho;
 
 										// Save the result if there were some changes
 										if (!rhoavg.is_zero(0))
@@ -2068,14 +2450,14 @@ namespace RunSection
 
 									if (Timewindow.compare("freeevo") != 0)
 									{
-										if (!this->ProjectAndPrintOutputLine(i, space, rhovec, eigen_vec, Printedtime, (*pulse)->Timestep(), n, CIDSP, this->Data(), this->Log()))
+										if (!this->ProjectAndPrintOutputLine(i, space, projection_cache, rhovec, Printedtime, (*pulse)->Timestep(), n, CIDSP, this->Data(), this->Log()))
 											this->Log() << "Could not project the state vector and print the result into a file" << std::endl;
 									}
 								}
 							}
 							else
 							{
-								this->Log() << "Not implemented yet, sorry." << std::endl;
+								this->Log() << "Current pulse type is not implemented. Please use type = InstantPulse / LongPulseStaticField / LongPulse / MWPulse." << std::endl;
 							}
 
 							// Update the printed time according to the printtimeframe key
@@ -2085,47 +2467,120 @@ namespace RunSection
 							}
 
 							// Get the system relax during the time
-							if (!timerelaxation == 0)
-							{
-								// Create a holder vector for an averaged density
-								arma::cx_vec rhoavg;
-								rhoavg.zeros(size(rho0vec));
-
-								// Create array containing a propagator and the current state of each system
-								std::pair<arma::cx_mat, arma::cx_vec> G;
-								arma::cx_mat A_sp = arma::expmat(A * (*pulse)->Timestep());
-								// Get the propagator and put it into the array together with the initial state
-								G = std::pair<arma::cx_mat, arma::cx_vec>(A_sp, rhovec);
-
-								unsigned int steps = static_cast<unsigned int>(std::abs(timerelaxation / (*pulse)->Timestep()));
-								for (unsigned int n = 1; n <= steps; n++)  // n always starts with one here, because this part cannot be done without the pulse part on top
+								if (timerelaxation != 0)
 								{
-									// Take a step, "first" is propagator and "second" is current state
-									rhovec = G.first * G.second;
+									// Create a holder vector for an averaged density
+									arma::cx_vec rhoavg;
+									rhoavg.zeros(size(rho0vec));
 
-									// Integrate the result if needed
-									if ((integration) && (Integrationwindow.compare("freeevo") != 0))
+									unsigned int steps = static_cast<unsigned int>(std::abs(timerelaxation / (*pulse)->Timestep()));
+									bool use_dense_expm = (A.n_rows <= 64);
+									arma::cx_mat A_sp_dense;
+									if (use_dense_expm)
 									{
-										rhoavg += (*pulse)->Timestep() * (G.second + rhovec) / 2;
+										try
+										{
+											A_sp_dense = arma::expmat(A * (*pulse)->Timestep());
+										}
+										catch (const std::exception &e)
+										{
+											this->Log() << "Dense expm free-evolution propagation failed (" << e.what() << "). Falling back to Krylov propagation." << std::endl;
+											use_dense_expm = false;
+										}
 									}
-
-									// Get the new current state density vector
-									G.second = rhovec;
-
-									// Save the result if there were some changes
-									if (!rhoavg.is_zero(0))
+									if (use_dense_expm)
 									{
-										rhovec = rhoavg;
+										std::pair<arma::cx_mat, arma::cx_vec> G(A_sp_dense, rhovec);
+										for (unsigned int n = 1; n <= steps; n++) // n always starts with one here
+										{
+											rhovec = G.first * G.second;
+
+											// Integrate the result if needed
+											if ((integration) && (Integrationwindow.compare("freeevo") != 0))
+											{
+												rhoavg += (*pulse)->Timestep() * (G.second + rhovec) / 2;
+											}
+
+											// Get the new current state density vector
+											G.second = rhovec;
+
+											// Save the result if there were some changes
+											if (!rhoavg.is_zero(0))
+											{
+												rhovec = rhoavg;
+											}
+
+											if (Timewindow.compare("freeevo") != 0)
+											{
+												if (!this->ProjectAndPrintOutputLine(i, space, projection_cache, rhovec, Printedtime, (*pulse)->Timestep(), n, CIDSP, this->Data(), this->Log()))
+													this->Log() << "Could not project the state vector and print the result into a file" << std::endl;
+											}
+										}
 									}
-
-									if (Timewindow.compare("freeevo") != 0)
+									else
 									{
-										if (!this->ProjectAndPrintOutputLine(i, space, rhovec, eigen_vec, Printedtime, (*pulse)->Timestep(), n, CIDSP, this->Data(), this->Log()))
-											this->Log() << "Could not project the state vector and print the result into a file" << std::endl;
+										arma::sp_cx_mat A_sp = arma::conv_to<arma::sp_cx_mat>::from(A);
+										arma::cx_vec tmp_rho = rhovec;
+										for (unsigned int n = 1; n <= steps; n++) // n always starts with one here
+										{
+											arma::cx_vec out_rho;
+											if (arma::norm(tmp_rho, 2) < 1.0e-20)
+											{
+												out_rho = tmp_rho;
+											}
+											else
+											{
+												try
+												{
+													out_rho = space.KrylovExpmGeneral(A_sp, tmp_rho, (*pulse)->Timestep(), 16, A_sp.n_rows);
+												}
+												catch (const std::exception &e)
+												{
+													this->Log() << "Krylov free-evolution propagation failed (" << e.what() << "). Retrying with smaller substeps." << std::endl;
+													const int substeps = 8;
+													const double sub_dt = (*pulse)->Timestep() / static_cast<double>(substeps);
+													arma::cx_vec sub_rho = tmp_rho;
+													bool sub_ok = true;
+													for (int sub = 0; sub < substeps; ++sub)
+													{
+														try
+														{
+															sub_rho = space.KrylovExpmGeneral(A_sp, sub_rho, sub_dt, 16, A_sp.n_rows);
+														}
+														catch (...)
+														{
+															sub_ok = false;
+															break;
+														}
+													}
+													out_rho = sub_ok ? sub_rho : tmp_rho;
+												}
+											}
+											rhovec = out_rho;
+
+											// Integrate the result if needed
+											if ((integration) && (Integrationwindow.compare("freeevo") != 0))
+											{
+												rhoavg += (*pulse)->Timestep() * (tmp_rho + rhovec) / 2;
+											}
+
+											// Get the new current state density vector
+											tmp_rho = rhovec;
+
+											// Save the result if there were some changes
+											if (!rhoavg.is_zero(0))
+											{
+												rhovec = rhoavg;
+											}
+
+											if (Timewindow.compare("freeevo") != 0)
+											{
+												if (!this->ProjectAndPrintOutputLine(i, space, projection_cache, rhovec, Printedtime, (*pulse)->Timestep(), n, CIDSP, this->Data(), this->Log()))
+													this->Log() << "Could not project the state vector and print the result into a file" << std::endl;
+											}
+										}
 									}
 								}
-
-							}
 							// Update the printed time according to the printtimeframe key
 							if (Timewindow.compare("freeevo") != 0)
 							{
@@ -2160,7 +2615,7 @@ namespace RunSection
 
 				if (Timewindow.compare("pulse") != 0)
 				{
-					if (!this->ProjectAndPrintOutputLineInf(i, space, rhovec, eigen_vec, Printedtime, this->timestep, CIDSP, this->Data(), this->Log()))
+					if (!this->ProjectAndPrintOutputLineInf(i, space, projection_cache, rhovec, Printedtime, this->timestep, CIDSP, this->Data(), this->Log()))
 						this->Log() << "Could not project the state vector and print the result into a file" << std::endl;
 				}
 
@@ -2170,62 +2625,140 @@ namespace RunSection
 			else if (Method.compare("timeevo") == 0)
 			{
 
-				if (!this->totaltime == 0)
-				{
+					if (!this->totaltime == 0)
+					{
 					// Perform the calculation
 					this->Log() << "Ready to perform calculation." << std::endl;
 
 					this->Log() << "Method = " << Method << std::endl;
 
-					// Create a holder vector for an averaged density
-					arma::cx_vec rhoavg;
-					rhoavg.zeros(size(rho0vec));
+						// Create a holder vector for an averaged density
+						arma::cx_vec rhoavg;
+						rhoavg.zeros(size(rho0vec));
 
-					// Avoid printing double timesteps
-					int firststep;
-					if (Printedtime == 0)
-						firststep = 0;
-					else
-						firststep = 1;
+						// Avoid printing double timesteps
+						int firststep;
+						if (Printedtime == 0)
+							firststep = 0;
+						else
+							firststep = 1;
 
-					// Create array containing a propagator and the current state of each system
-					std::pair<arma::cx_mat, arma::cx_vec> G;
-					arma::cx_mat A_exp = arma::expmat(A * this->timestep);
-					// Get the propagator and put it into the array together with the initial state
-					G = std::pair<arma::cx_mat, arma::cx_vec>(A_exp, rhovec);
-
-					unsigned int steps = static_cast<unsigned int>(std::abs(this->totaltime / this->timestep));
-					for (unsigned int n = firststep; n <= steps; n++)
-					{
-						if (!n == 0)
+						unsigned int steps = static_cast<unsigned int>(std::abs(this->totaltime / this->timestep));
+						bool use_dense_expm = (A.n_rows <= 64);
+						arma::cx_mat A_sp_dense;
+						if (use_dense_expm)
 						{
-							// Take a step, "first" is propagator and "second" is current state
-							rhovec = G.first * G.second;
-
-							// Integrate the density vector over the current time interval
-							if ((integration) && (Integrationwindow.compare("pulse") != 0))
+							try
 							{
-								rhoavg += this->timestep * (G.second + rhovec) / 2;
+								A_sp_dense = arma::expmat(A * this->timestep);
 							}
-
-							// Get the new current state density vector
-							G.second = rhovec;
-
-							// Save the result if there were some changes (made so we can include TotalTime=0)
-							if (!rhoavg.is_zero(0))
+							catch (const std::exception &e)
 							{
-								rhovec = rhoavg;
+								this->Log() << "Dense expm time-evolution propagation failed (" << e.what() << "). Falling back to Krylov propagation." << std::endl;
+								use_dense_expm = false;
 							}
 						}
-
-						if (Timewindow.compare("pulse") != 0)
+						if (use_dense_expm)
 						{
-							if (!this->ProjectAndPrintOutputLine(i, space, rhovec, eigen_vec, Printedtime, this->timestep, n, CIDSP, this->Data(), this->Log()))
-								this->Log() << "Could not project the state vector and print the result into a file" << std::endl;
-						}
+							// Create array containing a propagator and the current state of each system.
+							std::pair<arma::cx_mat, arma::cx_vec> G(A_sp_dense, rhovec);
+							for (unsigned int n = firststep; n <= steps; n++)
+							{
+								if (n != 0)
+								{
+									// Take a step, "first" is propagator and "second" is current state.
+									rhovec = G.first * G.second;
 
+									// Integrate the density vector over the current time interval.
+									if ((integration) && (Integrationwindow.compare("pulse") != 0))
+									{
+										rhoavg += this->timestep * (G.second + rhovec) / 2;
+									}
+
+									// Get the new current state density vector.
+									G.second = rhovec;
+
+									// Save the result if there were some changes (made so we can include TotalTime=0).
+									if (!rhoavg.is_zero(0))
+									{
+										rhovec = rhoavg;
+									}
+								}
+
+								if (Timewindow.compare("pulse") != 0)
+								{
+									if (!this->ProjectAndPrintOutputLine(i, space, projection_cache, rhovec, Printedtime, this->timestep, n, CIDSP, this->Data(), this->Log()))
+										this->Log() << "Could not project the state vector and print the result into a file" << std::endl;
+								}
+							}
+						}
+						else
+						{
+							arma::sp_cx_mat A_sp = arma::conv_to<arma::sp_cx_mat>::from(A);
+							arma::cx_vec tmp_rho = rhovec;
+							for (unsigned int n = firststep; n <= steps; n++)
+							{
+								if (n != 0)
+								{
+									arma::cx_vec out_rho;
+									if (arma::norm(tmp_rho, 2) < 1.0e-20)
+									{
+										out_rho = tmp_rho;
+									}
+									else
+									{
+										try
+										{
+											out_rho = space.KrylovExpmGeneral(A_sp, tmp_rho, this->timestep, 16, A_sp.n_rows);
+										}
+										catch (const std::exception &e)
+										{
+											this->Log() << "Krylov time-evolution propagation failed (" << e.what() << "). Retrying with smaller substeps." << std::endl;
+											const int substeps = 8;
+											const double sub_dt = this->timestep / static_cast<double>(substeps);
+											arma::cx_vec sub_rho = tmp_rho;
+											bool sub_ok = true;
+											for (int sub = 0; sub < substeps; ++sub)
+											{
+												try
+												{
+													sub_rho = space.KrylovExpmGeneral(A_sp, sub_rho, sub_dt, 16, A_sp.n_rows);
+												}
+												catch (...)
+												{
+													sub_ok = false;
+													break;
+												}
+											}
+											out_rho = sub_ok ? sub_rho : tmp_rho;
+										}
+									}
+									rhovec = out_rho;
+
+									// Integrate the density vector over the current time interval.
+									if ((integration) && (Integrationwindow.compare("pulse") != 0))
+									{
+										rhoavg += this->timestep * (tmp_rho + rhovec) / 2;
+									}
+
+									// Get the new current state density vector.
+									tmp_rho = rhovec;
+
+									// Save the result if there were some changes (made so we can include TotalTime=0).
+									if (!rhoavg.is_zero(0))
+									{
+										rhovec = rhoavg;
+									}
+								}
+
+								if (Timewindow.compare("pulse") != 0)
+								{
+									if (!this->ProjectAndPrintOutputLine(i, space, projection_cache, rhovec, Printedtime, this->timestep, n, CIDSP, this->Data(), this->Log()))
+										this->Log() << "Could not project the state vector and print the result into a file" << std::endl;
+								}
+							}
+						}
 					}
-				}
 
 				this->Log() << "Done with calculation." << std::endl;
 			}
@@ -2250,6 +2783,22 @@ namespace RunSection
 		_stream << "Time ";
 		this->WriteStandardOutputHeader(_stream);
 
+		std::string outputframe = "lab";
+		(void)this->Properties()->Get("outputframe", outputframe);
+		std::string Lx = ".Ix ";
+		std::string Ly = ".Iy ";
+		std::string Lz = ".Iz ";
+		std::string Lp = ".Ip ";
+		std::string Lm = ".Im ";
+		if (outputframe == "cw")
+		{
+			Lx = ".Idrive ";
+			Ly = ".Iabs ";
+			Lz = ".In ";
+			Lp = ".Iplus ";
+			Lm = ".Iminus ";
+		}
+
 		std::vector<std::string> spinList;
 		bool CIDSP = false;
 		int m;
@@ -2272,30 +2821,25 @@ namespace RunSection
 
 						if ((*l)->Name() == spinList[m])
 						{
-							// Yields are written per transition
-							// bool CIDSP = false;
 							if (this->Properties()->Get("cidsp", CIDSP) && CIDSP == true)
 							{
-								// Write each transition name
 								auto transitions = (*i)->Transitions();
 								for (auto j = transitions.cbegin(); j != transitions.cend(); j++)
 								{
-									_stream << (*i)->Name() << "." << (*l)->Name() << "." << (*j)->Name() << ".yield" << ".Ix ";
-									_stream << (*i)->Name() << "." << (*l)->Name() << "." << (*j)->Name() << ".yield" << ".Iy ";
-									_stream << (*i)->Name() << "." << (*l)->Name() << "." << (*j)->Name() << ".yield" << ".Iz ";
-									_stream << (*i)->Name() << "." << (*l)->Name() << "." << (*j)->Name() << ".yield" << ".Ip ";
-									_stream << (*i)->Name() << "." << (*l)->Name() << "." << (*j)->Name() << ".yield" << ".Im ";
+									_stream << (*i)->Name() << "." << (*l)->Name() << "." << (*j)->Name() << ".yield" << Lx;
+									_stream << (*i)->Name() << "." << (*l)->Name() << "." << (*j)->Name() << ".yield" << Ly;
+									_stream << (*i)->Name() << "." << (*l)->Name() << "." << (*j)->Name() << ".yield" << Lz;
+									_stream << (*i)->Name() << "." << (*l)->Name() << "." << (*j)->Name() << ".yield" << Lp;
+									_stream << (*i)->Name() << "." << (*l)->Name() << "." << (*j)->Name() << ".yield" << Lm;
 								}
 							}
 							else
 							{
-								// Write each state name
-								auto states = (*i)->States();
-								_stream << (*i)->Name() << "." << (*l)->Name() << ".Ix ";
-								_stream << (*i)->Name() << "." << (*l)->Name() << ".Iy ";
-								_stream << (*i)->Name() << "." << (*l)->Name() << ".Iz ";
-								_stream << (*i)->Name() << "." << (*l)->Name() << ".Ip ";
-								_stream << (*i)->Name() << "." << (*l)->Name() << ".Im ";
+								_stream << (*i)->Name() << "." << (*l)->Name() << Lx;
+								_stream << (*i)->Name() << "." << (*l)->Name() << Ly;
+								_stream << (*i)->Name() << "." << (*l)->Name() << Lz;
+								_stream << (*i)->Name() << "." << (*l)->Name() << Lp;
+								_stream << (*i)->Name() << "." << (*l)->Name() << Lm;
 							}
 						}
 					}
@@ -2420,245 +2964,268 @@ namespace RunSection
 		return true;
 	}
 
-	bool TaskStaticSSSpectraNakajimaZwanzig::ProjectAndPrintOutputLine(auto &_i, SpinAPI::SpinSpace &_space, arma::cx_vec &_rhovec, arma::cx_mat &_rotationmtx, double &_printedtime, double _timestep, unsigned int &_n, bool &_cidsp, std::ostream &_datastream, std::ostream &_logstream)
+	bool TaskStaticSSSpectraNakajimaZwanzig::BuildProjectionCache(const SpinAPI::system_ptr &_system, SpinAPI::SpinSpace &_space, const arma::cx_mat &_rotationmtx, bool _cidsp, ProjectionCache &_cache, std::ostream &_log_stream)
 	{
-		arma::cx_mat rho0;
+		_cache = ProjectionCache{};
 
-		// Convert the resulting density operator back to its Hilbert space representation
+		std::string outputframe = "lab";
+		(void)this->Properties()->Get("outputframe", outputframe);
+		std::string b0dir_str, b1dir_str;
+		arma::vec b0dir = arma::vec({0.0, 0.0, 1.0});
+		arma::vec b1dir = arma::vec({1.0, 0.0, 0.0});
+		if (this->Properties()->Get("b0dir", b0dir_str))
+		{
+			arma::vec tmp;
+			if (ParseVec3(b0dir_str, tmp))
+				b0dir = SafeNormalise(tmp, b0dir);
+		}
+		if (this->Properties()->Get("b1dir", b1dir_str))
+		{
+			arma::vec tmp;
+			if (ParseVec3(b1dir_str, tmp))
+				b1dir = SafeNormalise(tmp, b1dir);
+		}
+
+		std::vector<std::string> spinList;
+		_cache.has_spinlist = this->Properties()->GetList("spinlist", spinList, ',');
+		if (!_cache.has_spinlist)
+		{
+			return false;
+		}
+
+		_cache.spin_Ix.reserve(spinList.size());
+		_cache.spin_Iy.reserve(spinList.size());
+		_cache.spin_Iz.reserve(spinList.size());
+		_cache.spin_Ip.reserve(spinList.size());
+		_cache.spin_Im.reserve(spinList.size());
+
+		for (auto l = _system->spins_cbegin(); l != _system->spins_cend(); l++)
+		{
+			for (const auto &spin_name : spinList)
+			{
+				if ((*l)->Name() == spin_name)
+				{
+					arma::cx_mat Iprojx;
+					arma::cx_mat Iprojy;
+					arma::cx_mat Iprojz;
+					arma::cx_mat Iprojp;
+					arma::cx_mat Iprojm;
+
+					if (!_space.CreateOperator(arma::conv_to<arma::cx_mat>::from((*l)->Sx()), (*l), Iprojx))
+					{
+						return false;
+					}
+
+					if (!_space.CreateOperator(arma::conv_to<arma::cx_mat>::from((*l)->Sy()), (*l), Iprojy))
+					{
+						return false;
+					}
+
+					if (!_space.CreateOperator(arma::conv_to<arma::cx_mat>::from((*l)->Sz()), (*l), Iprojz))
+					{
+						return false;
+					}
+
+					if (!_space.CreateOperator(arma::conv_to<arma::cx_mat>::from((*l)->Sp()), (*l), Iprojp))
+					{
+						return false;
+					}
+
+					if (!_space.CreateOperator(arma::conv_to<arma::cx_mat>::from((*l)->Sm()), (*l), Iprojm))
+					{
+						return false;
+					}
+
+					if (outputframe == "cw" && (*l)->Type() == SpinAPI::SpinType::Electron)
+					{
+						arma::mat G = (*l)->GetTensor().LabFrame();
+						arma::vec a = G.t() * b0dir;
+						arma::vec n = SafeNormalise(a, b0dir);
+
+						arma::vec v = G.t() * b1dir;
+						arma::vec v_perp = v - arma::dot(v, n) * n;
+						arma::vec e1 = SafeNormalise(v_perp, b1dir);
+
+						arma::vec e2 = arma::cross(n, e1);
+						e2 = SafeNormalise(e2, arma::vec({0.0, 1.0, 0.0}));
+
+						arma::cx_mat I_e1 = e1(0) * Iprojx + e1(1) * Iprojy + e1(2) * Iprojz;
+						arma::cx_mat I_e2 = e2(0) * Iprojx + e2(1) * Iprojy + e2(2) * Iprojz;
+						arma::cx_mat I_n = n(0) * Iprojx + n(1) * Iprojy + n(2) * Iprojz;
+
+						arma::cx_double I(0.0, 1.0);
+						arma::cx_mat I_plus = I_e1 + I * I_e2;
+						arma::cx_mat I_minus = I_e1 - I * I_e2;
+
+						Iprojx = std::move(I_e1);
+						Iprojy = std::move(I_e2);
+						Iprojz = std::move(I_n);
+						Iprojp = std::move(I_plus);
+						Iprojm = std::move(I_minus);
+					}
+
+					// NZ task propagates in H0 eigenbasis, so cache observables in that basis.
+					Iprojx = _rotationmtx.t() * Iprojx * _rotationmtx;
+					Iprojy = _rotationmtx.t() * Iprojy * _rotationmtx;
+					Iprojz = _rotationmtx.t() * Iprojz * _rotationmtx;
+					Iprojp = _rotationmtx.t() * Iprojp * _rotationmtx;
+					Iprojm = _rotationmtx.t() * Iprojm * _rotationmtx;
+
+					_cache.spin_Ix.push_back(std::move(Iprojx));
+					_cache.spin_Iy.push_back(std::move(Iprojy));
+					_cache.spin_Iz.push_back(std::move(Iprojz));
+					_cache.spin_Ip.push_back(std::move(Iprojp));
+					_cache.spin_Im.push_back(std::move(Iprojm));
+				}
+			}
+		}
+
+		if (_cidsp)
+		{
+			auto transitions = _system->Transitions();
+			_cache.transition_proj.reserve(transitions.size());
+			_cache.transition_rates.reserve(transitions.size());
+
+			for (auto j = transitions.cbegin(); j != transitions.cend(); j++)
+			{
+				if ((*j)->SourceState() == nullptr)
+					continue;
+
+				arma::cx_mat P;
+				if (!_space.GetState((*j)->SourceState(), P))
+				{
+					_log_stream << "Failed to obtain projection matrix onto state \"" << (*j)->Name() << "\" of SpinSystem \"" << _system->Name() << "\"." << std::endl;
+					continue;
+				}
+
+				P = _rotationmtx.t() * P * _rotationmtx;
+				_cache.transition_proj.push_back(std::move(P));
+				_cache.transition_rates.push_back((*j)->Rate());
+			}
+		}
+
+		_cache.ready = true;
+		return true;
+	}
+
+	bool TaskStaticSSSpectraNakajimaZwanzig::ProjectAndPrintOutputLine(auto &_i, SpinAPI::SpinSpace &_space, const ProjectionCache &_cache, arma::cx_vec &_rhovec, double &_printedtime, double _timestep, unsigned int &_n, bool &_cidsp, std::ostream &_datastream, std::ostream &_logstream)
+	{
+		(void)_i;
+
+		arma::cx_mat rho0;
 		if ((!_space.OperatorFromSuperspace(_rhovec, rho0)) && (_n == 0))
 		{
 			_logstream << "Failed to convert resulting superspace-vector back to native Hilbert space." << std::endl;
 			return false;
 		}
 
-		// Get nuclei of interest for CIDNP spectrum
-		arma::cx_mat Iprojx;
-		arma::cx_mat Iprojy;
-		arma::cx_mat Iprojz;
-		arma::cx_mat Iprojp;
-		arma::cx_mat Iprojm;
-
-		std::vector<std::string> spinList;
-
 		if (_n == 0)
 			_logstream << "CIDSP = " << _cidsp << std::endl;
 
-		// Save the current step
 		_datastream << this->RunSettings()->CurrentStep() << " ";
-		// Save the current time
 		_datastream << std::setprecision(12) << _printedtime + (_n * _timestep) << " ";
 		this->WriteStandardOutput(_datastream);
 
-		if (this->Properties()->GetList("spinlist", spinList, ','))
-		{
-
-			for (auto l = (*_i)->spins_cbegin(); l != (*_i)->spins_cend(); l++)
-			{
-				for (int m = 0; m < (int)spinList.size(); m++)
-				{
-					if ((*l)->Name() == spinList[m])
-					{
-						if (!_space.CreateOperator(arma::conv_to<arma::cx_mat>::from((*l)->Sx()), (*l), Iprojx))
-						{
-							return false;
-						}
-
-						if (!_space.CreateOperator(arma::conv_to<arma::cx_mat>::from((*l)->Sy()), (*l), Iprojy))
-						{
-							return false;
-						}
-
-						if (!_space.CreateOperator(arma::conv_to<arma::cx_mat>::from((*l)->Sz()), (*l), Iprojz))
-						{
-							return false;
-						}
-
-						if (!_space.CreateOperator(arma::conv_to<arma::cx_mat>::from((*l)->Sp()), (*l), Iprojp))
-						{
-							return false;
-						}
-
-						if (!_space.CreateOperator(arma::conv_to<arma::cx_mat>::from((*l)->Sm()), (*l), Iprojm))
-						{
-							return false;
-						}
-
-						Iprojx = (_rotationmtx.t() * Iprojx * _rotationmtx);
-						Iprojy = (_rotationmtx.t() * Iprojy * _rotationmtx);
-						Iprojz = (_rotationmtx.t() * Iprojz * _rotationmtx);
-						Iprojp = (_rotationmtx.t() * Iprojp * _rotationmtx);
-						Iprojm = (_rotationmtx.t() * Iprojm * _rotationmtx);
-
-						arma::cx_mat P;
-
-						// There are two result modes - either write results per transition  if CIDSP is true or for each defined state if CIDSP is false
-
-						if (_cidsp == true)
-						{
-							// Loop through all defind transitions
-							auto transitions = (*_i)->Transitions();
-							for (auto j = transitions.cbegin(); j != transitions.cend(); j++)
-							{
-								// Make sure that there is a state object
-								if ((*j)->SourceState() == nullptr)
-									continue;
-
-								if ((!_space.GetState((*j)->SourceState(), P)) && (_n == 0))
-								{
-									_logstream << "Failed to obtain projection matrix onto state \"" << (*j)->Name() << "\" of SpinSystem \"" << (*_i)->Name() << "\"." << std::endl;
-									continue;
-								}
-
-								P = (_rotationmtx.t() * P * _rotationmtx);
-
-								// Return the yield for this transition
-								_datastream << std::real(arma::trace(Iprojx * (*j)->Rate() * P * rho0)) << " ";
-								_datastream << std::real(arma::trace(Iprojy * (*j)->Rate() * P * rho0)) << " ";
-								_datastream << std::real(arma::trace(Iprojz * (*j)->Rate() * P * rho0)) << " ";
-								_datastream << std::real(arma::trace(Iprojp * (*j)->Rate() * P * rho0)) << " ";
-								_datastream << std::real(arma::trace(Iprojm * (*j)->Rate() * P * rho0)) << " ";
-							}
-						}
-						else if (_cidsp == false)
-						{
-							// Return the yield for this state - note that no reaction rates are included here.
-							_datastream << std::real(arma::trace(Iprojx * rho0)) << " ";
-							_datastream << std::real(arma::trace(Iprojy * rho0)) << " ";
-							_datastream << std::real(arma::trace(Iprojz * rho0)) << " ";
-							_datastream << std::real(arma::trace(Iprojp * rho0)) << " ";
-							_datastream << std::real(arma::trace(Iprojm * rho0)) << " ";
-						}
-					}
-				}
-			}
-		}
-		else
+		if (!_cache.has_spinlist)
 		{
 			if (_n == 0)
 				_logstream << "No nucleus was specified for projection" << std::endl;
 			return false;
 		}
 
-		_datastream << std::endl;
+		if (!_cache.ready)
+		{
+			return false;
+		}
 
+		if (_cidsp == true)
+		{
+			for (size_t s = 0; s < _cache.spin_Ix.size(); ++s)
+			{
+				for (size_t t = 0; t < _cache.transition_proj.size(); ++t)
+				{
+					const double rate = _cache.transition_rates[t];
+					const arma::cx_mat &P = _cache.transition_proj[t];
+					_datastream << std::real(arma::trace(_cache.spin_Ix[s] * rate * P * rho0)) << " ";
+					_datastream << std::real(arma::trace(_cache.spin_Iy[s] * rate * P * rho0)) << " ";
+					_datastream << std::real(arma::trace(_cache.spin_Iz[s] * rate * P * rho0)) << " ";
+					_datastream << std::real(arma::trace(_cache.spin_Ip[s] * rate * P * rho0)) << " ";
+					_datastream << std::real(arma::trace(_cache.spin_Im[s] * rate * P * rho0)) << " ";
+				}
+			}
+		}
+		else
+		{
+			for (size_t s = 0; s < _cache.spin_Ix.size(); ++s)
+			{
+				_datastream << std::real(arma::trace(_cache.spin_Ix[s] * rho0)) << " ";
+				_datastream << std::real(arma::trace(_cache.spin_Iy[s] * rho0)) << " ";
+				_datastream << std::real(arma::trace(_cache.spin_Iz[s] * rho0)) << " ";
+				_datastream << std::real(arma::trace(_cache.spin_Ip[s] * rho0)) << " ";
+				_datastream << std::real(arma::trace(_cache.spin_Im[s] * rho0)) << " ";
+			}
+		}
+
+		_datastream << std::endl;
 		return true;
 	}
 
-	bool TaskStaticSSSpectraNakajimaZwanzig::ProjectAndPrintOutputLineInf(auto &_i, SpinAPI::SpinSpace &_space, arma::cx_vec &_rhovec, arma::cx_mat &_rotationmtx, double &_printedtime, double _timestep, bool &_cidsp, std::ostream &_datastream, std::ostream &_logstream)
+	bool TaskStaticSSSpectraNakajimaZwanzig::ProjectAndPrintOutputLineInf(auto &_i, SpinAPI::SpinSpace &_space, const ProjectionCache &_cache, arma::cx_vec &_rhovec, double &_printedtime, double _timestep, bool &_cidsp, std::ostream &_datastream, std::ostream &_logstream)
 	{
-		arma::cx_mat rho0;
+		(void)_i;
+		(void)_printedtime;
+		(void)_timestep;
 
-		// Convert the resulting density operator back to its Hilbert space representation
+		arma::cx_mat rho0;
 		if ((!_space.OperatorFromSuperspace(_rhovec, rho0)))
 		{
 			_logstream << "Failed to convert resulting superspace-vector back to native Hilbert space." << std::endl;
 			return false;
 		}
 
-		// Get nuclei of interest for CIDNP spectrum
-		arma::cx_mat Iprojx;
-		arma::cx_mat Iprojy;
-		arma::cx_mat Iprojz;
-		arma::cx_mat Iprojp;
-		arma::cx_mat Iprojm;
-
-		std::vector<std::string> spinList;
-
 		_logstream << "CIDSP = " << _cidsp << std::endl;
 
-		// Save the current step
 		_datastream << this->RunSettings()->CurrentStep() << " ";
-		// Save the current time
 		_datastream << "inf" << " ";
 		this->WriteStandardOutput(_datastream);
 
-		if (this->Properties()->GetList("spinlist", spinList, ','))
+		if (!_cache.has_spinlist)
 		{
+			_logstream << "No nucleus was specified for projection" << std::endl;
+			return false;
+		}
 
-			for (auto l = (*_i)->spins_cbegin(); l != (*_i)->spins_cend(); l++)
+		if (!_cache.ready)
+		{
+			return false;
+		}
+
+		if (_cidsp == true)
+		{
+			for (size_t s = 0; s < _cache.spin_Ix.size(); ++s)
 			{
-				for (int m = 0; m < (int)spinList.size(); m++)
+				for (size_t t = 0; t < _cache.transition_proj.size(); ++t)
 				{
-					if ((*l)->Name() == spinList[m])
-					{
-						if (!_space.CreateOperator(arma::conv_to<arma::cx_mat>::from((*l)->Sx()), (*l), Iprojx))
-						{
-							return false;
-						}
-
-						if (!_space.CreateOperator(arma::conv_to<arma::cx_mat>::from((*l)->Sy()), (*l), Iprojy))
-						{
-							return false;
-						}
-
-						if (!_space.CreateOperator(arma::conv_to<arma::cx_mat>::from((*l)->Sz()), (*l), Iprojz))
-						{
-							return false;
-						}
-
-						if (!_space.CreateOperator(arma::conv_to<arma::cx_mat>::from((*l)->Sp()), (*l), Iprojp))
-						{
-							return false;
-						}
-
-						if (!_space.CreateOperator(arma::conv_to<arma::cx_mat>::from((*l)->Sm()), (*l), Iprojm))
-						{
-							return false;
-						}
-
-						Iprojx = (_rotationmtx.t() * Iprojx * _rotationmtx);
-						Iprojy = (_rotationmtx.t() * Iprojy * _rotationmtx);
-						Iprojz = (_rotationmtx.t() * Iprojz * _rotationmtx);
-						Iprojp = (_rotationmtx.t() * Iprojp * _rotationmtx);
-						Iprojm = (_rotationmtx.t() * Iprojm * _rotationmtx);
-
-						arma::cx_mat P;
-
-						// There are two result modes - either write results per transition  if CIDSP is true or for each defined state if CIDSP is false
-
-						if (_cidsp == true)
-						{
-							// Loop through all defind transitions
-							auto transitions = (*_i)->Transitions();
-							for (auto j = transitions.cbegin(); j != transitions.cend(); j++)
-							{
-								// Make sure that there is a state object
-								if ((*j)->SourceState() == nullptr)
-									continue;
-
-								if ((!_space.GetState((*j)->SourceState(), P)))
-								{
-									_logstream << "Failed to obtain projection matrix onto state \"" << (*j)->Name() << "\" of SpinSystem \"" << (*_i)->Name() << "\"." << std::endl;
-									continue;
-								}
-
-								P = (_rotationmtx.t() * P * _rotationmtx);
-
-								// Return the yield for this transition
-								_datastream << std::real(arma::trace(Iprojx * (*j)->Rate() * P * rho0)) << " ";
-								_datastream << std::real(arma::trace(Iprojy * (*j)->Rate() * P * rho0)) << " ";
-								_datastream << std::real(arma::trace(Iprojz * (*j)->Rate() * P * rho0)) << " ";
-								_datastream << std::real(arma::trace(Iprojp * (*j)->Rate() * P * rho0)) << " ";
-								_datastream << std::real(arma::trace(Iprojm * (*j)->Rate() * P * rho0)) << " ";
-							}
-						}
-						else if (_cidsp == false)
-						{
-							// Return the yield for this state - note that no reaction rates are included here.
-							_datastream << std::real(arma::trace(Iprojx * rho0)) << " ";
-							_datastream << std::real(arma::trace(Iprojy * rho0)) << " ";
-							_datastream << std::real(arma::trace(Iprojz * rho0)) << " ";
-							_datastream << std::real(arma::trace(Iprojp * rho0)) << " ";
-							_datastream << std::real(arma::trace(Iprojm * rho0)) << " ";
-						}
-					}
+					const double rate = _cache.transition_rates[t];
+					const arma::cx_mat &P = _cache.transition_proj[t];
+					_datastream << std::real(arma::trace(_cache.spin_Ix[s] * rate * P * rho0)) << " ";
+					_datastream << std::real(arma::trace(_cache.spin_Iy[s] * rate * P * rho0)) << " ";
+					_datastream << std::real(arma::trace(_cache.spin_Iz[s] * rate * P * rho0)) << " ";
+					_datastream << std::real(arma::trace(_cache.spin_Ip[s] * rate * P * rho0)) << " ";
+					_datastream << std::real(arma::trace(_cache.spin_Im[s] * rate * P * rho0)) << " ";
 				}
 			}
 		}
 		else
 		{
-			_logstream << "No nucleus was specified for projection" << std::endl;
-			return false;
+			for (size_t s = 0; s < _cache.spin_Ix.size(); ++s)
+			{
+				_datastream << std::real(arma::trace(_cache.spin_Ix[s] * rho0)) << " ";
+				_datastream << std::real(arma::trace(_cache.spin_Iy[s] * rho0)) << " ";
+				_datastream << std::real(arma::trace(_cache.spin_Iz[s] * rho0)) << " ";
+				_datastream << std::real(arma::trace(_cache.spin_Ip[s] * rho0)) << " ";
+				_datastream << std::real(arma::trace(_cache.spin_Im[s] * rho0)) << " ";
+			}
 		}
 
 		return true;

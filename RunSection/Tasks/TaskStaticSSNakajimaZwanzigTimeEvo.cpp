@@ -102,6 +102,11 @@ namespace RunSection
 				for (auto j = initial_states.cbegin(); j != initial_states.cend(); j++)
 				{
 					arma::cx_mat tmp_rho0;
+					if ((*j) == nullptr)
+					{
+						this->Log() << "Failed to obtain weighted thermal initial state for SpinSystem \"" << (*i)->Name() << "\". Weighted thermal initial states are not supported." << std::endl;
+						continue;
+					}
 					if (!space.GetState(*j, tmp_rho0))
 					{
 						this->Log() << "Failed to obtain projection matrix onto state \"" << (*j)->Name() << "\", initial state of SpinSystem \"" << (*i)->Name() << "\"." << std::endl;

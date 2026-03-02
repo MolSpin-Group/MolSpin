@@ -424,6 +424,7 @@ namespace SpinAPI
 	// Produces the thermal state
 	bool SpinSpace::GetThermalState(SpinAPI::SpinSpace &_space, double _Temperature, std::vector<std::string> thermalhamiltonian_list, arma::cx_mat &_mat) const
 	{
+		const bool useSuperspaceBeforeThermal = _space.useSuperspace;
 		_space.UseSuperoperatorSpace(false);
 
 		arma::cx_mat H;
@@ -431,6 +432,15 @@ namespace SpinAPI
 		if (!_space.ThermalHamiltonian(thermalhamiltonian_list, H))
 		{
 			std::cout << "Failed to obtain Static Hamiltonian in superspace." << std::endl;
+			_space.UseSuperoperatorSpace(useSuperspaceBeforeThermal);
+			return false;
+		}
+
+		if (_Temperature <= 0.0)
+		{
+			std::cout << "Failed to obtain thermal state: temperature must be > 0 K." << std::endl;
+			_space.UseSuperoperatorSpace(useSuperspaceBeforeThermal);
+			return false;
 		}
 
 		// Helper variables
@@ -446,7 +456,7 @@ namespace SpinAPI
 		result /= arma::trace(result);
 		_mat = result;
 
-		_space.UseSuperoperatorSpace(true);
+		_space.UseSuperoperatorSpace(useSuperspaceBeforeThermal);
 
 		return true;
 	}

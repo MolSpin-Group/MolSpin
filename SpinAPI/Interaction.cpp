@@ -26,7 +26,7 @@ namespace SpinAPI
 																		 trjHasTime(false), trjHasField(false), trjHasTensor(false), trjHasPrefactor(false), trjTime(0), trjFieldX(0), trjFieldY(0), trjFieldZ(0), trjPrefactor(0),
 																		 tdFrequency(1.0), tdPhase(0.0), tdAxis("0 0 1"), tdPerpendicularOscillation(false), tdInitialField({0, 0, 0}), tensorType(InteractionTensorType::Static), tdTimestep(0),
 																		 tdInitialTensor(3, 3, arma::fill::zeros), tdMinFreq(0.0), tdMaxFreq(0.0), tdFreqs(), tdAmps(), tdPhases(), tdComponents(0), tdRandOrients(false), tdThetas(), tdPhis(), tdCorrTime(0.0),
-																		 tdPrintTensor(false), tdPrintField(false), hffield(), orientations(0), OriWeights(), BondLengths(), Spacing(), tau(0.0), dist(), tdSeed(0), tdAutoseed(false), tdGenerator(1), framelist({0, 0, 0}), f() //, tdFreqs(3, 3, arma::fill::zeros)//, tdFreqs({0,0,0})
+																		 tdPrintTensor(false), tdPrintField(false), hffield(), orientations(0), OriWeights(), BondLengths(), Spacing(), tau(0.0), dist(), tdSeed(0), tdAutoseed(false), tdGenerator(1), framelist({0, 0, 0}), f()
 	{
 		// Is a trajectory specified?
 		std::string str;
@@ -77,9 +77,13 @@ namespace SpinAPI
 					this->type = InteractionType::SingleSpin;
 				}
 				std::vector<double> _framelist;
-				if (this->Properties()->GetList("orientation", _framelist)) // change to euler angles
+				if (this->Properties()->GetList("orientation", _framelist))
 				{
 					this->framelist = _framelist;
+					if (_framelist.size() != 3)
+					{
+						std::cerr << "Error: Orientation array must contain exactly 3 comma-separated angle values in radians like 'orientation = alpha, beta, gamma; '." << std::endl;
+					}
 				}
 			}
 			else if (str.compare("twospin") == 0 || str.compare("doublespin") == 0 || str.compare("hyperfine") == 0 || str.compare("dipole") == 0)
@@ -87,9 +91,13 @@ namespace SpinAPI
 				this->type = InteractionType::DoubleSpin;
 
 				std::vector<double> _framelist;
-				if (this->Properties()->GetList("orientation", _framelist)) //""
+				if (this->Properties()->GetList("orientation", _framelist))
 				{
 					this->framelist = _framelist;
+					if (_framelist.size() != 3)
+					{
+						std::cerr << "Error: Orientation array must contain exactly 3 comma-separated angle values in radians like 'orientation = alpha, beta, gamma; '." << std::endl;
+					}
 				}
 			}
 			else if (str.compare("quadraticspin") == 0)
@@ -797,8 +805,8 @@ namespace SpinAPI
 			return true;
 		else if (this->type == InteractionType::DoubleSpin && !this->group1.empty() && !this->group2.empty())
 			return true;
-			                else if (this->type == InteractionType::QuadraticSpin && !this->group1.empty())
-                        return true;
+		else if (this->type == InteractionType::QuadraticSpin && !this->group1.empty())
+			return true;
 		else if (this->type == InteractionType::Exchange && !this->group1.empty() && !this->group2.empty())
 			return true;
 		else if (this->type == InteractionType::Zfs && !this->group1.empty())
@@ -815,6 +823,15 @@ namespace SpinAPI
 	const arma::vec Interaction::Field() const
 	{
 		return this->field;
+	}
+
+	// Sets the field vector
+	bool Interaction::SetField(const arma::vec &_field)
+	{
+		if (!CheckActionVectorInteractionField(_field))
+			return false;
+		this->field = _field;
+		return true;
 	}
 
 	// Returns the D value for Zfs

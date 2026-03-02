@@ -11,6 +11,7 @@
 /////////////////////////////////////////////////////////////////////////
 #include "Settings.h"
 #include "ObjectParser.h"
+#include <limits>
 
 namespace RunSection
 {
@@ -23,17 +24,22 @@ namespace RunSection
 						   notificationLevel(DefaultNotificationLevel),
 						   time(0),
 						   trajectoryStep(0),
-						   setTrajectoryStepBeforeTime(true)
+						   setTrajectoryStepBeforeTime(true),
+						   dataPrecision(DefaultDataPrecision),
+						   logPrecision(DefaultDataPrecision)
 						   //m_Parallelize(false)
 	{
 		// Note: These cannot be initialized in the initializer list as the default values are initialized after the fields (unless header file is reordered)
 		steps = DefaultSteps;
 		time = DefaultTime;
 		trajectoryStep = DefaultTrajectoryStep;
+		dataPrecision = DefaultDataPrecision;
+		logPrecision = DefaultDataPrecision;
 	}
 
 	Settings::Settings(const Settings &_settings) : steps(_settings.steps), currentStep(_settings.currentStep), dataDelimiter(_settings.dataDelimiter), notificationLevel(_settings.notificationLevel),
-													time(_settings.time), trajectoryStep(_settings.trajectoryStep), setTrajectoryStepBeforeTime(_settings.setTrajectoryStepBeforeTime)//, m_Parallelize(_settings.m_Parallelize)
+													time(_settings.time), trajectoryStep(_settings.trajectoryStep), setTrajectoryStepBeforeTime(_settings.setTrajectoryStepBeforeTime),
+													dataPrecision(_settings.dataPrecision), logPrecision(_settings.logPrecision) //, m_Parallelize(_settings.m_Parallelize)
 	{
 	}
 
@@ -52,6 +58,8 @@ namespace RunSection
 		this->time = _settings.time;
 		this->trajectoryStep = _settings.trajectoryStep;
 		this->setTrajectoryStepBeforeTime = _settings.setTrajectoryStepBeforeTime;
+		this->dataPrecision = _settings.dataPrecision;
+		this->logPrecision = _settings.logPrecision;
 		//this->m_Parallelize = _settings.m_Parallelize;
 
 		return (*this);
@@ -88,6 +96,26 @@ namespace RunSection
 
 		// Allow the user to give the trajectory step priority over time
 		_settings.Get("trajectorystepbeforetime", this->setTrajectoryStepBeforeTime);
+
+		// Output precision for data/log streams
+		unsigned int prec = 0;
+		if (_settings.Get("outputprecision", prec) || _settings.Get("dataprecision", prec) ||
+			_settings.Get("data_precision", prec) || _settings.Get("output_precision", prec))
+		{
+			const unsigned int maxPrec = std::numeric_limits<double>::max_digits10;
+			if (prec >= 1 && prec <= maxPrec)
+				this->dataPrecision = prec;
+		}
+		if (_settings.Get("logprecision", prec) || _settings.Get("log_precision", prec))
+		{
+			const unsigned int maxPrec = std::numeric_limits<double>::max_digits10;
+			if (prec >= 1 && prec <= maxPrec)
+				this->logPrecision = prec;
+		}
+		else
+		{
+			this->logPrecision = this->dataPrecision;
+		}
 
 		// TODO: Allow the user to specify dataDelimiter
 

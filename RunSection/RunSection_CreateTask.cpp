@@ -38,6 +38,7 @@
 
 #include "TaskStaticSSSpectra.h"
 #include "TaskStaticSSPowderSpectra.h"
+#include "TaskStaticSSPowderSpectraNakajimaZwanzig.h"
 #include "TaskStaticSSSpectraNakajimaZwanzig.h"
 #include "TaskStaticSSCIDNP.h"
 
@@ -177,6 +178,10 @@ namespace RunSection
 		else if (_tasktype.compare("staticss-powderspectra") == 0 || _tasktype.compare("StaticSS-Powderspectra") == 0)
 		{
 			task = std::make_shared<TaskStaticSSPowderSpectra>(_obj, *this);
+		}
+		else if (_tasktype.compare("staticss-powderspectra-nakajimazwanzig") == 0 || _tasktype.compare("StaticSS-Powderspectra-Nakajimazwanzig") == 0)
+		{
+			task = std::make_shared<TaskStaticSSPowderSpectraNakajimaZwanzig>(_obj, *this);
 		}
 
 

@@ -198,6 +198,17 @@ namespace RunSection
 				B.col(it) = arma::kron(InitialStateVector, temp);
 			}
 
+			SpinAPI::HilbertRelaxationCache relaxation_cache;
+			bool use_density_matrix = false;
+			for (auto j = (*i)->operators_cbegin(); j != (*i)->operators_cend(); j++)
+			{
+				if (space.RelaxationOperator((*j), relaxation_cache))
+				{
+					use_density_matrix = true;
+					this->Log() << "Added relaxation operator \"" << (*j)->Name() << "\" to Hilbert-space propagation.\n";
+				}
+			}
+
 			// Check whether Hamiltonian terms and/or transitions are time-dependent
 			bool time_dependent_hamiltonian;
 			this->timedependentInteractions = space.HasTimedependentInteractions();
@@ -462,6 +473,125 @@ namespace RunSection
 			ExptValues.zeros(num_steps, num_transitions);
 			arma::vec Identity(num_steps);
 			arma::vec time(num_steps);
+
+			if (use_density_matrix)
+			{
+				this->Log() << "Relaxation operators detected. Using density-matrix RK4 propagation in Hilbert space." << std::endl;
+
+				const int dim = InitialStateVector.n_rows * Z;
+				arma::cx_mat rho = B * B.t();
+				arma::cx_mat Hbase = arma::cx_mat(H);
+				std::vector<arma::cx_mat> operators_dense(num_transitions);
+				for (int idx = 0; idx < num_transitions; ++idx)
+					operators_dense[idx] = arma::cx_mat(Operators[idx]);
+
+				auto build_terms = [&](double current_time, arma::cx_mat &Hterm, arma::cx_mat &Kterm) {
+					if (time_dependent_hamiltonian || time_dependent_transitions)
+						space.SetTime(current_time);
+
+					Hterm = Hbase;
+					if (time_dependent_hamiltonian)
+					{
+						arma::sp_cx_mat dH(dim, dim);
+						if (!space.DynamicHamiltonian(dH))
+							this->Log() << "Warning: Failed to update the Hamiltonian matrix representation!" << std::endl;
+						Hterm += arma::cx_mat(dH);
+					}
+
+					if (time_dependent_transitions)
+					{
+						arma::sp_cx_mat Ksp(dim, dim);
+						if (!space.DynamicTotalReactionOperator(Ksp))
+							this->Log() << "Warning: Failed to update matrix representation of transitions!" << std::endl;
+						Kterm = arma::cx_mat(Ksp);
+					}
+					else
+					{
+						Kterm.zeros(dim, dim);
+						for (int idx = 0; idx < num_transitions; ++idx)
+							Kterm += (rates(idx) / 2.0) * operators_dense[idx];
+					}
+				};
+
+				auto transition_rates_now = [&](double current_time, std::vector<double> &out_rates) {
+					out_rates.assign(num_transitions, 0.0);
+					space.SetTime(current_time);
+					auto dyn_transitions = (*i)->Transitions();
+					int idx = 0;
+					for (auto o = dyn_transitions.begin(); o != dyn_transitions.end(); ++o)
+					{
+						if ((*o)->SourceState() == nullptr)
+							continue;
+						if (idx < num_transitions)
+							out_rates[idx] = (*o)->Rate();
+						++idx;
+					}
+				};
+
+				const arma::cx_double imag_unit(0.0, 1.0);
+				auto rhs = [&](const arma::cx_mat &state, double current_time, arma::cx_mat &out) {
+					arma::cx_mat Hterm(dim, dim, arma::fill::zeros);
+					arma::cx_mat Kterm(dim, dim, arma::fill::zeros);
+					build_terms(current_time, Hterm, Kterm);
+					out = -imag_unit * (Hterm * state - state * Hterm) - (Kterm * state + state * Kterm);
+					arma::cx_mat relax_term(dim, dim, arma::fill::zeros);
+					space.ApplyRelaxationHilbert(relaxation_cache, state, relax_term);
+					out += relax_term;
+				};
+
+				arma::cx_mat k1(dim, dim, arma::fill::zeros);
+				arma::cx_mat k2(dim, dim, arma::fill::zeros);
+				arma::cx_mat k3(dim, dim, arma::fill::zeros);
+				arma::cx_mat k4(dim, dim, arma::fill::zeros);
+				arma::cx_mat tmp(dim, dim, arma::fill::zeros);
+				std::vector<double> rates_now;
+
+				for (int k = 0; k < num_steps; ++k)
+				{
+					double current_time = k * dt;
+					time(k) = current_time;
+
+					if (time_dependent_transitions)
+						transition_rates_now(current_time, rates_now);
+
+					for (int idx = 0; idx < num_transitions; ++idx)
+					{
+						double expected_value = std::abs(arma::trace(operators_dense[idx] * rho)) / Z;
+						if (time_dependent_transitions)
+						{
+							double rate_now = (idx < int(rates_now.size())) ? rates_now[idx] : 0.0;
+							ExptValues(k, idx) = rate_now * expected_value;
+						}
+						else
+						{
+							ExptValues(k, idx) = expected_value;
+						}
+					}
+
+					if (k + 1 >= num_steps)
+						continue;
+
+					rhs(rho, current_time, k1);
+					tmp = rho + 0.5 * dt * k1;
+					rhs(tmp, current_time + 0.5 * dt, k2);
+					tmp = rho + 0.5 * dt * k2;
+					rhs(tmp, current_time + 0.5 * dt, k3);
+					tmp = rho + dt * k3;
+					rhs(tmp, current_time + dt, k4);
+					rho += (dt / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4);
+				}
+
+				arma::mat ans = arma::trapz(time, ExptValues);
+				for (int it = 0; it < num_transitions; it++)
+				{
+					if (correction && !time_dependent_transitions)
+						ans(0, it) = ans(0, it) * rates(it) / (1 - std::exp(-ttotal * kmax));
+					else if (!time_dependent_transitions)
+						ans(0, it) = ans(0, it) * rates(it);
+					this->Data() << std::setprecision(6) << ans(0, it) << " ";
+				}
+				continue;
+			}
 
 			if (time_dependent_transitions && !time_dependent_hamiltonian)
 			{

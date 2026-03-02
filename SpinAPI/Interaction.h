@@ -116,9 +116,6 @@ namespace SpinAPI
 		void TensorTimeDependenceBroadband(arma::mat, double, arma::mat, arma::mat, arma::mat, int);
 		void TensorTimeDependenceOUGeneral(arma::mat, double, double, double);
 
-		// ActionTarget methods
-		void SetField(arma::vec &);
-
 		// Helper method called by ParseSpinGroups
 		bool AddSpinList(const std::string &, const std::vector<spin_ptr> &, std::vector<spin_ptr> &, const std::vector<spin_ptr> *_crossCheck = nullptr);
 
@@ -152,6 +149,7 @@ namespace SpinAPI
 		const bool IgnoreTensors() const { return this->ignoreTensors; };
 		const double Prefactor() const;
 		const std::shared_ptr<const Tensor> CouplingTensor() const { return this->couplingTensor; };
+		bool SetField(const arma::vec &);
 		const arma::vec Field() const;
 		const double Dvalue() const;
 		const double Evalue() const;

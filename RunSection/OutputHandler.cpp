@@ -5,6 +5,7 @@
 // (c) 2025 Quantum Biology and Computational Physics Group.
 // See LICENSE.txt for license information.
 /////////////////////////////////////////////////////////////////////////
+#include <iomanip>
 #include <iostream>
 #include "OutputHandler.h"
 
@@ -13,7 +14,7 @@ namespace RunSection
 	// -----------------------------------------------------
 	// Settings Constructors and Destructor
 	// -----------------------------------------------------
-	OutputHandler::OutputHandler() : log(nullptr), data(nullptr), logstream(nullptr), datastream(nullptr), ignored_messages_stream(std::make_shared<std::ostringstream>())
+	OutputHandler::OutputHandler() : log(nullptr), data(nullptr), logstream(nullptr), datastream(nullptr), logPrecision(6), dataPrecision(6), ignored_messages_stream(std::make_shared<std::ostringstream>())
 	{
 	}
 
@@ -46,6 +47,7 @@ namespace RunSection
 
 		// Set the logstream to the file stream
 		this->logstream = &(*log);
+		this->ApplyPrecision(this->logstream, this->logPrecision);
 
 		return true;
 	}
@@ -73,6 +75,7 @@ namespace RunSection
 
 		// Set the datastream to the file stream
 		this->datastream = &(*data);
+		this->ApplyPrecision(this->datastream, this->dataPrecision);
 
 		return true;
 	}
@@ -119,6 +122,7 @@ namespace RunSection
 
 		// Set the new stream
 		this->logstream = &_stream;
+		this->ApplyPrecision(this->logstream, this->logPrecision);
 
 		return true;
 	}
@@ -135,8 +139,34 @@ namespace RunSection
 
 		// Set the new stream
 		this->datastream = &_stream;
+		this->ApplyPrecision(this->datastream, this->dataPrecision);
 
 		return true;
+	}
+
+	bool OutputHandler::SetLogPrecision(unsigned int _precision)
+	{
+		if (_precision == 0)
+			return false;
+		this->logPrecision = _precision;
+		this->ApplyPrecision(this->logstream, this->logPrecision);
+		return true;
+	}
+
+	bool OutputHandler::SetDataPrecision(unsigned int _precision)
+	{
+		if (_precision == 0)
+			return false;
+		this->dataPrecision = _precision;
+		this->ApplyPrecision(this->datastream, this->dataPrecision);
+		return true;
+	}
+
+	void OutputHandler::ApplyPrecision(std::ostream *_stream, unsigned int _precision) const
+	{
+		if (_stream == nullptr)
+			return;
+		(*_stream) << std::setprecision(_precision);
 	}
 
 	// Sets the notification level (i.e. which types of messages to show)

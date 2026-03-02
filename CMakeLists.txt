@@ -104,6 +104,7 @@ set(SOURCES_RUNSECTION_TASKS
         ${PATH_SOURCE_RUNSECTION}/Tasks/TaskDynamicHSStochYields.cpp
         ${PATH_SOURCE_RUNSECTION}/Tasks/TaskDynamicHSStochTimeEvo.cpp
         ${PATH_SOURCE_RUNSECTION}/Tasks/TaskStaticSSPowderSpectra.cpp
+        ${PATH_SOURCE_RUNSECTION}/Tasks/TaskStaticSSPowderSpectraNakajimaZwanzig.cpp
 )
 
 # --------------------------------------------------------------------------
@@ -139,4 +140,3 @@ target_link_libraries(molspin molspin_core ${ARMADILLO_LIBRARIES} -lopenblas -ll
 # Unit tests
 add_executable(molspintest ${SOURCES_TESTS})
 target_link_libraries(molspintest molspin_core ${ARMADILLO_LIBRARIES} -lopenblas -llapack -fopenmp)
-

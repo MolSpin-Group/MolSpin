@@ -10,10 +10,10 @@ on:
 
 jobs:
   build:
-
     runs-on: ubuntu-latest
-    container: ghcr.io/das0mann/molspin-build-env:dockerenv
-
+    container: ghcr.io/molspin-group/molspin-build-env:dockerenv
+    permissions:
+      contents: write
     steps:
     - uses: actions/checkout@v4
     - name: ccache

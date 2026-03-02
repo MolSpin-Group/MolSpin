@@ -311,7 +311,6 @@ namespace RunSection
 			std::vector<std::pair<int,arma::cx_mat>> exp_prop;
 			if(SW[ic])
 			{
-				openblas_set_num_threads(1);
 				this->Log() << "Using exponential propogator" << std::endl;
 				this->Log() << "Calculating the propagator..." << std::endl;
 				arma::cx_mat temp_mat;

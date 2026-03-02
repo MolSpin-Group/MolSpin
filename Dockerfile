@@ -20,7 +20,7 @@ FROM build-env
 
 COPY . .
 
-RUN make -j 16
+RUN make -j 2
 
 RUN cp molspin /usr/bin
 

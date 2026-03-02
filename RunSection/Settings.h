@@ -28,6 +28,8 @@ namespace RunSection
 		double time;
 		unsigned int trajectoryStep;
 		bool setTrajectoryStepBeforeTime;
+		unsigned int dataPrecision;
+		unsigned int logPrecision;
 		//bool m_Parallelize;
 
 	public:
@@ -53,6 +55,8 @@ namespace RunSection
 		double Time() const { return this->time; };
 		unsigned int TrajectoryStep() const { return this->trajectoryStep; };
 		bool SetTrajectoryStepBeforeTime() const { return this->setTrajectoryStepBeforeTime; };
+		unsigned int DataPrecision() const { return this->dataPrecision; };
+		unsigned int LogPrecision() const { return this->logPrecision; };
 		//bool GetParallel() const { return this->m_Parallelize; };
 
 		// Method to define ActionTargets for the Settings object
@@ -62,6 +66,7 @@ namespace RunSection
 		const unsigned int DefaultSteps = 1;
 		const double DefaultTime = 0.0;
 		const unsigned int DefaultTrajectoryStep = 0;
+		const unsigned int DefaultDataPrecision = 6;
 	};
 
 	// Non-member non-friend functions for ActionTarget validation

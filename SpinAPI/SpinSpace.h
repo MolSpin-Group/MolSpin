@@ -90,6 +90,8 @@ namespace SpinAPI
 		bool useTrajectoryStep;		 // Set to true if trajectories should be used instead of time, where available
 		ReactionOperatorType reactionOperators;
 
+		bool CreateRotationMatrix(double &_alpha, double &_beta, double &_gamma, arma::mat &_R) const;
+
 	public:
 		// Constructors / Destructors
 		SpinSpace(); // Normal constructors
@@ -263,8 +265,8 @@ namespace SpinAPI
 		// ------------------------------------------------
 		bool InteractionOperator(const interaction_ptr &, arma::cx_mat &) const;	// Returns the matrix representation of the interaction on the spin space (dense matrix)
 		bool InteractionOperator(const interaction_ptr &, arma::sp_cx_mat &) const; // Returns the matrix representation of the interaction on the spin space (sparse matrix)
-		bool InteractionOperatorRotated(const interaction_ptr &, arma::mat &, arma::sp_cx_mat &) const;
-		bool InteractionOperatorRotatedLegacy(const interaction_ptr &, arma::mat &, arma::sp_cx_mat &) const;
+		bool InteractionOperatorRotatedZXZ(const interaction_ptr &, arma::mat &, arma::sp_cx_mat &) const;
+		bool InteractionOperatorRotated_SA(const interaction_ptr &, arma::mat &, arma::sp_cx_mat &) const;
 		bool Hamiltonian(arma::cx_mat &, int TaskNum = 0) const;										// Total Hamiltonian operator (dense matrix)
 		bool Hamiltonian(arma::sp_cx_mat &, int TaskNum = 0) const;									// Total Hamiltonian operator (sparse matrix)
 		bool SemiClassicalHamiltonian(arma::sp_cx_mat &, std::vector<interaction_ptr>&) const; 					// SemiClassical approximation of the Hamiltonian (sparse matrix), refer to BasicTask.cpp for tasknum conversion
@@ -275,8 +277,8 @@ namespace SpinAPI
 		bool DynamicHamiltonian(arma::sp_cx_mat &) const;							// Time-dependent part of the Hamiltonian operator (sparse matrix)
 		bool ThermalHamiltonian(std::vector<std::string> thermalhamiltonian_list, arma::cx_mat &_out) const;							// Time-independent part of the Hamiltonian for thermal state (dense matrix)
 		bool ThermalHamiltonian(std::vector<std::string> thermalhamiltonian_list, arma::sp_cx_mat &_out) const;							// Time-independent part of the Hamiltonian for thermal state (sparse matrix)
-		bool BaseHamiltonianRotated(std::vector<std::string> basehamiltonian_list, arma::mat rotmatrix, arma::sp_cx_mat &_out) const;
-		bool BaseHamiltonianRotatedLegacy(std::vector<std::string> basehamiltonian_list, arma::mat rotmatrix, arma::sp_cx_mat &_out) const;
+		bool BaseHamiltonianRotatedZXZ(std::vector<std::string> basehamiltonian_list, arma::mat rotmatrix, arma::sp_cx_mat &_out) const;
+		bool BaseHamiltonianRotated_SA(std::vector<std::string> basehamiltonian_list, arma::mat rotmatrix, arma::sp_cx_mat &_out) const;
 
 		// ------------------------------------------------
 		// Transitions/decay operators (SpinSpace_transitions.cpp)
@@ -318,11 +320,14 @@ namespace SpinAPI
 		// ------------------------------------------------
 		bool PulseOperator(const pulse_ptr &_pulse, arma::cx_mat &_out) const;
 		bool PulseOperator(const pulse_ptr &_pulse, arma::sp_cx_mat &_out) const;
-		bool PulseOperator_mw(const pulse_ptr &_pulse, arma::sp_cx_mat &_out, arma::sp_cx_mat &_lrot, arma::sp_cx_mat &_lsz) const;
+		bool PulseOperator_mw(const pulse_ptr &_pulse, arma::cx_mat &_out, double &_time) const;
+		bool PulseOperator_mw(const pulse_ptr &_pulse, arma::sp_cx_mat &_out, double &_time) const;
 		bool PulseOperator(const pulse_ptr &_pulse, arma::cx_mat &_left, arma::cx_mat &_right) const;
 		bool PulseOperator(const pulse_ptr &_pulse, arma::sp_cx_mat &_left, arma::sp_cx_mat &_right) const;
 		bool PulseOperatorFrameChange(const pulse_ptr &_pulse, arma::cx_mat _rotationmatrix, arma::cx_mat &_out) const;
 		bool PulseOperatorFrameChange(const pulse_ptr &_pulse, arma::sp_cx_mat _rotationmatrix, arma::sp_cx_mat &_out) const;
+		bool PulseOperatorFrameChange_mw(const pulse_ptr &_pulse, arma::cx_mat _rotationmatrix, arma::cx_mat &_out, double &_time) const;
+		bool PulseOperatorFrameChange_mw(const pulse_ptr &_pulse, arma::sp_cx_mat _rotationmatrix, arma::sp_cx_mat &_out, double &_time) const;
 		bool PulseOperatorFrameChange(const pulse_ptr &_pulse, arma::cx_mat _rotationmatrix, arma::cx_mat &_left, arma::cx_mat &_right) const;
 		bool PulseOperatorOnStatevector(const pulse_ptr &_pulse, arma::cx_mat &_out) const;
 		bool PulseOperatorOnStatevector(const pulse_ptr &_pulse, arma::sp_cx_mat &_out) const;

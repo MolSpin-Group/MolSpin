@@ -93,6 +93,13 @@ namespace RunSection
 				}
 			}
 		}
+
+		auto settings = _runsection.GetSettings();
+		if (settings != nullptr)
+		{
+			this->output.SetDataPrecision(settings->DataPrecision());
+			this->output.SetLogPrecision(settings->LogPrecision());
+		}
 	}
 
 	BasicTask::~BasicTask()
@@ -348,7 +355,6 @@ namespace RunSection
 		this->Log() << "Ready to perform calculation." << std::endl;
 		
 		//#pragma omp parallel for
-		openblas_set_num_threads(1);
 		#pragma omp parallel for
 		for (unsigned int i = 0; i < As.size(); i++)
 		{

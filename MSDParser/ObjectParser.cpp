@@ -7,6 +7,7 @@
 // See LICENSE.txt for license information.
 /////////////////////////////////////////////////////////////////////////
 #include <iostream>
+#include <regex>
 #include "Tensor.h"
 #include "ObjectParser.h"
 #include "SpinAPIfwd.h"
@@ -410,6 +411,25 @@ namespace MSDParser
 			str.erase(str.find_last_not_of(' ') + 1); // Suffix
 		};
 
+		// Parse numeric values robustly, even if whitespace was stripped upstream.
+		auto parse_numbers = [](const std::string &row, std::vector<double> &values) -> bool
+		{
+			values.clear();
+			static const std::regex num_re(R"([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)");
+			for (std::sregex_iterator it(row.begin(), row.end(), num_re), end; it != end; ++it)
+			{
+				try
+				{
+					values.push_back(std::stod((*it).str()));
+				}
+				catch (const std::exception &)
+				{
+					return false;
+				}
+			}
+			return !values.empty();
+		};
+
 		// Step 7: Validate the number of elements in each row (numElements).
 		for (const std::string &str : strs)
 		{
@@ -421,8 +441,10 @@ namespace MSDParser
 			// Trim leading and trailing whitespaces
 			trim(modified_str);
 
-			std::istringstream stream(modified_str);
-			size_t count = std::count(std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>(), ' ') + 1;
+			std::vector<double> row_values;
+			if (!parse_numbers(modified_str, row_values))
+				return false;
+			size_t count = row_values.size();
 
 			// Check if the number of elements in each row is consistent
 			if (numElements == 0)
@@ -448,25 +470,29 @@ namespace MSDParser
 			// Trim leading and trailing whitespaces
 			trim(str);
 
-			std::istringstream stream(str);
-			std::string token;
+			std::vector<double> row_values;
 			size_t j = 0;
 
 			// Parse each value and populate the matrix
-			while (std::getline(stream, token, ' '))
+			if (!parse_numbers(str, row_values))
 			{
-				trim(token);
-				try
+				std::cout << "Invalid number format while parsing matrix " << _str << std::endl;
+				return false;
+			}
+			for (double value : row_values)
+			{
+				if (j >= numElements)
 				{
-					tmp(i, j) = std::stod(token);
-				}
-				catch (const std::exception &e)
-				{
-					std::cout << "Invalid number format: " << token << std::endl;
-					std::cout << "Please check your list carefully. Such numbers should not appear for a float format.";
+					std::cout << "Invalid matrix row width while parsing " << _str << std::endl;
 					return false;
 				}
+				tmp(i, j) = value;
 				j++;
+			}
+			if (j != numElements)
+			{
+				std::cout << "Invalid number format while parsing matrix " << _str << std::endl;
+				return false;
 			}
 		}
 
