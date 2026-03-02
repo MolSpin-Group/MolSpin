@@ -250,15 +250,57 @@ namespace SpinAPI
 		// New added functions for wavefucntion formalism and SSE (by Gediminas Pazera and Luca Gerhards)
 		// ------------------------------------------------
 
+		struct return_struct
+		{
+			arma::cx_colvec result;
+			double error_estimate;
+
+			operator arma::cx_colvec()
+			{
+				return result;
+			}
+		};
+
 		arma::cx_colvec SUZstate(const int &spinmult, std::mt19937 &generator);																					 // returns stochastically determined SU(Z) state
 		arma::cx_colvec CoherentState(std::vector<SpinAPI::system_ptr>::const_iterator i, std::mt19937 &generator);												 // returns stochastically determined coherent state
 		arma::cx_mat HighamProp(arma::sp_cx_mat &H, arma::cx_mat &B, const std::complex<double> t, const std::string precision, arma::mat &M);					 // Propagation method using: https://doi.org/10.1137/100788860
 		arma::mat SelectTaylorDegree(const arma::sp_cx_mat &H, const std::string precision, const int lengthB);													 // Precision of Taylor series used for HighamProp
 		double normAmEst(const arma::sp_cx_mat &H, double m, std::mt19937 &generator);																			 // Used in SelectTaylorDegree to normalize
-		arma::cx_colvec KrylovExpmGeneral(const arma::sp_cx_mat &H, const arma::cx_colvec &b, const arma::cx_double dt, int KryDim, int HilbSize);				 // Krylov subspace method
-		arma::cx_colvec KrylovExpmSymm(const arma::sp_cx_mat &H, const arma::cx_colvec &b, const arma::cx_double dt, int KryDim, int HilbSize);					 // Krylov subspace method for symmetric decay
+		return_struct KrylovExpmGeneral(const arma::sp_cx_mat &H, const arma::cx_colvec &b, const arma::cx_double dt, int KryDim, int HilbSize);				 // Krylov subspace method
+		return_struct KrylovExpmSymm(const arma::sp_cx_mat &H, const arma::cx_colvec &b, const arma::cx_double dt, int KryDim, int HilbSize);					 // Krylov subspace method for symmetric decay
 		void ArnoldiProcess(const arma::sp_cx_mat &H, const arma::cx_colvec &b, arma::cx_mat &KryBasis, arma::cx_mat &Hessen, int KryDim, double &h_mplusone_m); // Arnoldi process for propagation using Krylov subsspace
 		void LanczosProcess(const arma::sp_cx_mat &H, const arma::cx_colvec &b, arma::cx_mat &KryBasis, arma::cx_mat &Hessen, int KryDim, double &h_mplusone_m); // Lanczos process for propagation using Krylov subsspace
+
+		//-----------------------------------------------
+		// Time Adaptive Versions of the KyrlovPropogation Methods
+		//-----------------------------------------------
+
+		struct PropParam
+    	{
+        	double atol = 1e-8;
+        	double rtol = 1e-10;
+        	double min = 1e-6;
+        	double max = 1e6;
+        	double safety = 0.8;
+        	double f1 = 0.1;
+        	double f2 = 5.0;
+
+        	int max_krylov_iterations = 30;
+        	int reject_limit = 2;
+
+        	double CurrentTime = 0.0;
+    	};
+    	struct TimePropReturnInfo
+    	{
+        	double timestep;
+			bool step_accepted;
+			arma::cx_colvec result;
+		};
+
+
+		TimePropReturnInfo TimeAdapativeKrylovRoutine(const arma::sp_cx_mat &H, const arma::cx_colvec &b, double dt, int kryDim, int HilbSize, PropParam &propParam, bool general);
+		TimePropReturnInfo TimeAdaptiveKrylovGeneral(const arma::sp_cx_mat &H, const arma::cx_colvec &b, double dt, int kryDim, int HilbSize, PropParam &propParam);
+		TimePropReturnInfo TimeAdaptiveKrylovSymm(const arma::sp_cx_mat &H, const arma::cx_colvec &b, double dt, int kryDim, int HilbSize, PropParam &propParam);
 
 		// ------------------------------------------------
 		// Hamiltonian representations in the space (SpinSpace_hamiltonians.cpp)
