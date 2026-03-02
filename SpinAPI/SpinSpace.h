@@ -255,7 +255,7 @@ namespace SpinAPI
 			arma::cx_colvec result;
 			double error_estimate;
 
-			operator arma::cx_colvec() const
+			operator arma::cx_colvec()
 			{
 				return result;
 			}
