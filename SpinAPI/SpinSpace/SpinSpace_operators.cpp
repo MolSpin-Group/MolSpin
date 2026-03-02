@@ -1,3 +1,4 @@
+#include "SpinSpace.h"
 /////////////////////////////////////////////////////////////////////////
 // SpinSpace class (SpinAPI Module)
 // ------------------
@@ -1309,9 +1310,9 @@ namespace SpinAPI
 		}
 	}
 
-	SpinSpace::TimePropReturnInfo SpinSpace::TimeAdaptiveKrylovGeneral(const arma::sp_cx_mat &H, const arma::cx_colvec &b, double dt, int kryDim, int HilbSize, PropParam &propParam)
-	{
-		bool keepstep = false;
+    TimePropReturnInfo SpinSpace::TimeAdapativeKrylovRoutine(const arma::sp_cx_mat &H, const arma::cx_colvec &b, double dt, int kryDim, int HilbSize, PropParam &propParam, KrylovRoutine &krylov_routine)
+    {
+        bool keepstep = false;
 		bool firstattempt = true;
 		double dumpstep = 0.0;
 
@@ -1323,7 +1324,7 @@ namespace SpinAPI
 
 		while (!keepstep)
 		{
-			auto KyrlovResult = this->KrylovExpmGeneral(H,b, dt, kryDim, HilbSize);
+			auto KyrlovResult = krylov_routine(H, b, dt, kryDim, HilbSize);
 
 			double ynorm = arma::norm(KyrlovResult.result,2);
 			double tol = propParam.atol + propParam.rtol * ynorm;
@@ -1359,6 +1360,16 @@ namespace SpinAPI
 		ReturnInfo.step_accepted = firstattempt;
 		ReturnInfo.timestep = dumpstep;
 		return ReturnInfo;
+    }
+
+    SpinSpace::TimePropReturnInfo SpinSpace::TimeAdaptiveKrylovGeneral(const arma::sp_cx_mat &H, const arma::cx_colvec &b, double dt, int kryDim, int HilbSize, PropParam &propParam)
+    {
+		return TimeAdapativeKrylovRoutine(H, b, dt, kryDim, HilbSize, propParam, std::bind(&SpinSpace::KrylovExpmGeneral, this, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, std::placeholders::_4, std::placeholders::_5));
+	}
+
+	SpinSpace::TimePropReturnInfo SpinSpace::TimeAdaptiveKrylovSymm(const arma::sp_cx_mat &H, const arma::cx_colvec &b, double dt, int kryDim, int HilbSize, PropParam &propParam)
+	{
+		return TimeAdapativeKrylovRoutine(H, b, dt, kryDim, HilbSize, propParam, std::bind(&SpinSpace::KrylovExpmSymm, this, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, std::placeholders::_4, std::placeholders::_5));
 	}
 
 }

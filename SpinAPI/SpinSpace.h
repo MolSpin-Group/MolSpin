@@ -254,7 +254,17 @@ namespace SpinAPI
 		{
 			arma::cx_colvec result;
 			double error_estimate;
+
+			operator arma::cx_colvec() const
+			{
+				return result;
+			}
 		};
+
+		arma::cx_colvec operator=(return_struct& input)
+		{
+			return input.result;
+		}
 
 		arma::cx_colvec SUZstate(const int &spinmult, std::mt19937 &generator);																					 // returns stochastically determined SU(Z) state
 		arma::cx_colvec CoherentState(std::vector<SpinAPI::system_ptr>::const_iterator i, std::mt19937 &generator);												 // returns stochastically determined coherent state
@@ -292,7 +302,11 @@ namespace SpinAPI
 			arma::cx_colvec result;
 		};
 
+
+		typedef return_struct (*KrylovRoutine)(const arma::sp_cx_mat&, const arma::cx_colvec&, double, int, int, PropParam&);
+		TimePropReturnInfo TimeAdapativeKrylovRoutine(const arma::sp_cx_mat &H, const arma::cx_colvec &b, double dt, int kryDim, int HilbSize, PropParam &propParam, KrylovRoutine& krylov_routine);
 		TimePropReturnInfo TimeAdaptiveKrylovGeneral(const arma::sp_cx_mat &H, const arma::cx_colvec &b, double dt, int kryDim, int HilbSize, PropParam &propParam);
+		TimePropReturnInfo TimeAdaptiveKrylovSymm(const arma::sp_cx_mat &H, const arma::cx_colvec &b, double dt, int kryDim, int HilbSize, PropParam &propParam);
 
 		// ------------------------------------------------
 		// Hamiltonian representations in the space (SpinSpace_hamiltonians.cpp)
