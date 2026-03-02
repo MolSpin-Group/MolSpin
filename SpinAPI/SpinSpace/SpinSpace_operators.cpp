@@ -1323,7 +1323,7 @@ namespace SpinAPI
 		}
 	}
 
-    TimePropReturnInfo SpinSpace::TimeAdapativeKrylovRoutine(const arma::sp_cx_mat &H, const arma::cx_colvec &b, double dt, int kryDim, int HilbSize, PropParam &propParam, KrylovRoutine &krylov_routine)
+    SpinSpace::TimePropReturnInfo SpinSpace::TimeAdapativeKrylovRoutine(const arma::sp_cx_mat &H, const arma::cx_colvec &b, double dt, int kryDim, int HilbSize, PropParam &propParam, SpinSpace::KrylovRoutine& krylov_routine)
     {
         bool keepstep = false;
 		bool firstattempt = true;
@@ -1377,12 +1377,12 @@ namespace SpinAPI
 
     SpinSpace::TimePropReturnInfo SpinSpace::TimeAdaptiveKrylovGeneral(const arma::sp_cx_mat &H, const arma::cx_colvec &b, double dt, int kryDim, int HilbSize, PropParam &propParam)
     {
-		return TimeAdapativeKrylovRoutine(H, b, dt, kryDim, HilbSize, propParam, &SpinSpace::KrylovExpmGeneral);
+		return TimeAdapativeKrylovRoutine(H, b, dt, kryDim, HilbSize, propParam, SpinSpace::KrylovExpmGeneral);
 	}
 
 	SpinSpace::TimePropReturnInfo SpinSpace::TimeAdaptiveKrylovSymm(const arma::sp_cx_mat &H, const arma::cx_colvec &b, double dt, int kryDim, int HilbSize, PropParam &propParam)
 	{
-		return TimeAdapativeKrylovRoutine(H, b, dt, kryDim, HilbSize, propParam, &SpinSpace::KrylovExpmSymm);
+		return TimeAdapativeKrylovRoutine(H, b, dt, kryDim, HilbSize, propParam, SpinSpace::KrylovExpmSymm);
 	}
 
 }
