@@ -263,7 +263,7 @@ namespace RunSection
 			MaxTolerance = 1e-10;
 		}
 		
-		PropParam params;
+		SpinAPI::SpinSpace::PropParam params;
 		params.atol = MinTolerance;
 		params.rtol = MaxTolerance;
 		params.min = MinTimeStep;
@@ -294,7 +294,7 @@ namespace RunSection
 		{
 			// Propagate
 
-			TimePropReturnInfo r;
+			SpinAPI::SpinSpace::TimePropReturnInfo r;
 
 			//this->timestep = RungeKutta45Armadillo(L, rho0, rho0, this->timestep, ComputeRhoDot,0.0,params);
 
@@ -304,7 +304,8 @@ namespace RunSection
 			}
 			else
 			{
-				r = AdaptiveDirectKrylovArmadillo(L, rho0, rho0, this->timestep, CurrentTime, params, nullptr);
+				//r = AdaptiveDirectKrylovArmadillo(L, rho0, rho0, this->timestep, CurrentTime, params, nullptr);
+				r = spaces[0].second->TimeAdaptiveKrylovGeneral(L, rho0, this->timestep, 30, L.n_rows, params);
 			}
 
 			double t = r.timestep;

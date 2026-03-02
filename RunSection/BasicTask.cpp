@@ -299,6 +299,40 @@ namespace RunSection
 		return;
     }
 
+    SpinAPI::SpinSpace::PropParam BasicTask::GetTimeAdaptiveProperties(double InitialTimeStep)
+    {
+		double MinTimeStep, MaxTimeStep = 0.0;
+		double MinTolerance, MaxTolerance = 0.0;
+		if (!this->Properties()->Get("minimumtimestep", MinTimeStep) and !this->Properties()->Get("minimum timestep", MinTimeStep))
+		{
+			MinTimeStep = InitialTimeStep * 1e-3;
+		}
+		if (!this->Properties()->Get("maximumtimestep", MaxTimeStep) and !this->Properties()->Get("maximum timestep", MaxTimeStep))
+		{
+			MaxTimeStep = InitialTimeStep * 1e4;
+		}
+
+		if (!this->Properties()->Get("absolutetolerance", MinTolerance) and (!this->Properties()->Get("absolute tolerance", MinTolerance) and !this->Properties()->Get("atol", MinTolerance)))
+		{
+			MinTolerance = 1e-8;
+		}
+		if (!this->Properties()->Get("relativetolerance", MaxTolerance) and (!this->Properties()->Get("relative tolerance", MaxTolerance) and !this->Properties()->Get("rtol", MinTolerance)))
+		{
+			MaxTolerance = 1e-10;
+		}
+		
+		SpinAPI::SpinSpace::PropParam params;
+		params.atol = MinTolerance;
+		params.rtol = MaxTolerance;
+		params.min = MinTimeStep;
+		params.max = MaxTimeStep;
+		params.safety = 0.8;
+		params.f1 = 0.1;
+		params.f2 = 5.0;
+
+		return params;
+    }
+
     void BasicTask::GetSamples(std::vector<arma::sp_cx_mat>& H, arma::sp_cx_mat& A, std::vector<SCData>& ori, std::vector<std::vector<double>>& SampleWeights, std::vector<std::vector<std::vector<double>>>& AllWeights)
     {
 		std::vector<SampleCombination> Combinations; 

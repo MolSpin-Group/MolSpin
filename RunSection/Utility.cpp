@@ -309,11 +309,11 @@ MCSpherePoint* CalculateMCSpherePoints(int n, double rmax_x, double rmax_y, doub
         return stiffness;
     }
 
-    TimePropReturnInfo RungeKutta45Armadillo(arma::sp_cx_mat &L, arma::cx_vec &rho0, arma::cx_vec &drhodt, double dumpstep, RungeKuttaFuncArma func, double time, PropParam params)
+    SpinAPI::SpinSpace::TimePropReturnInfo RungeKutta45Armadillo(arma::sp_cx_mat &L, arma::cx_vec &rho0, arma::cx_vec &drhodt, double dumpstep, RungeKuttaFuncArma func, double time, SpinAPI::SpinSpace::PropParam params)
     {
         VecType k0(rho0.n_rows);
 
-        static std::vector<std::pair<float, std::vector<float>>> ButcherTable = {{0.0, {}},
+        std::vector<std::pair<float, std::vector<float>>> ButcherTable = {{0.0, {}},
                                                                           {0.25, {0.25}},
                                                                           {3.0 / 8.0, {3.0 / 32.0, 9.0 / 32.0}},
                                                                           {12.0 / 13.0, {1932.0 / 2197.0, -7200.0 / 2197.0, 7296.0 / 2197.0}},
@@ -429,145 +429,145 @@ MCSpherePoint* CalculateMCSpherePoints(int n, double rmax_x, double rmax_y, doub
         return {dumpstep, first_step};
     }
 
-    TimePropReturnInfo AdaptiveDirectKrylovArmadillo(arma::sp_cx_mat &L, arma::cx_vec &rho0, arma::cx_vec &drhodt, double dumpstep, double time, PropParam PropParams, HamiltonainTimeDepFuncArma GetTDH)
-    {
-
-        auto ArnoldiIteration = [=](const arma::sp_cx_mat&L, const arma::cx_vec& rho, int m_max) {
-            const int N = rho.n_rows;
-            
-            ArnoldiResult result;
-            result.V.set_size(m_max);
-            result.Hessian = arma::sp_cx_mat(m_max,m_max);
-            
-            result.Beta = arma::norm(rho,2);
-            arma::cx_vec rhoi = rho / result.Beta;
-            result.V(0) = rhoi;
-
-            arma::cx_vec AV(N);
-            std::complex<double> h_next = 0.0;
-            int m = m_max;
-            for(int j = 0; j < m_max; j++)
-            {
-                AV = L * result.V(j);
-                for(int i = 0; i <= j; i++)
-                {
-                    std::complex<double> h_ij = arma::cdot(result.V(i), AV);
-                    result.Hessian(i,j) = h_ij;
-                    arma::cx_vec temp = h_ij * result.V(i);
-                    AV -= temp;
-                }
-
-                h_next = arma::norm(AV,2);
-
-                if(j == m_max - 1) {
-                    result.h_res = h_next;
-                    break;
-                }
-
-                if(std::abs(h_next) < 1e-14)
-                {
-                    result.h_res = std::complex<double>(0.0, 0.0);
-                    m = j + 1;
-                    result.Hessian = result.Hessian.submat(0,0,m-1,m-1);
-                    result.V.set_size(m);
-                    break;
-                }
-
-                result.V(j+1) = AV / h_next;
-                result.Hessian(j+1,j) = h_next;
-            }
-
-            return result;
-        };
-
-        struct StepReturnStruct
-        {
-            arma::cx_vec rho_new;
-            double err;
-        };
-
-        auto MagnusExpansion2ndOrder = [&](const arma::sp_cx_mat& L, double h) {
-            arma::sp_cx_mat At = GetTDH(PropParams.CurrentTime, L);
-            arma::sp_cx_mat Atpto2 = GetTDH(PropParams.CurrentTime + h/2.0, L);
-
-            arma::sp_cx_mat Omega = (h/2.0) * (Atpto2 * At - At * Atpto2);
-            return Omega;
-        };
-
-        auto step = [&](const arma::sp_cx_mat& L, const arma::cx_vec& rho, double h, int m_krylov)  {
-
-            ArnoldiResult ar;
-            if(GetTDH != nullptr)
-            {
-                ar = ArnoldiIteration(MagnusExpansion2ndOrder(L,h), rho, m_krylov);
-            }
-            else
-            {
-                ar = ArnoldiIteration(L, rho, m_krylov);
-            }
-            int m = ar.Hessian.n_rows;
-            arma::sp_cx_mat Hm = h * ar.Hessian;
-            
-            arma::cx_mat Exponent = arma::expmat(arma::conv_to<arma::cx_mat>::from(Hm));
-            arma::cx_vec e1(m,arma::fill::zeros);
-            e1(0) = std::complex<double>(1.0, 0.0);
-            arma::cx_vec w = Exponent * e1;
-
-            arma::cx_vec rho_new(rho.n_rows, arma::fill::zeros);
-            for(int j = 0; j < m; j++)
-            {
-                arma::cx_vec temp = ar.Beta * w(j) * ar.V(j);
-                rho_new += temp;
-            }
-
-            std::complex<double> error_val = Exponent(m-1,0);
-            double err = std::abs(ar.Beta * ar.h_res * error_val);
-
-            StepReturnStruct return_struct;
-            return_struct.rho_new = rho_new;
-            return_struct.err = err;
-
-            return return_struct;
-        };
-
-        bool keep_step = false;
-        bool first_attempt = true;
-        while(!keep_step)
-        {
-            auto KrylovStep = step(L,rho0,dumpstep,PropParams.max_krylov_iterations);
-
-            double ynorm = arma::norm(KrylovStep.rho_new,2);
-            double tol = PropParams.atol + PropParams.rtol * ynorm;
-            double R = KrylovStep.err / tol;
-
-            auto Adjusth = [&](double R, double safety, double f1, double f2, double h) {
-                return h * std::min(f2, std::max(f1, safety * std::pow(R, -1.0/5.0)));
-            };
-
-            dumpstep = Adjusth(R, PropParams.safety, PropParams.f1, PropParams.f2, dumpstep);
-            if(R <= PropParams.reject_limit)
-            {
-                drhodt = KrylovStep.rho_new;
-                keep_step = true;
-            }
-
-            if(dumpstep < PropParams.min && R > PropParams.reject_limit)
-            {
-                PropParams.min = dumpstep;
-            }
-            if(dumpstep > PropParams.max)
-            {
-                dumpstep = PropParams.max;
-            }
-            if(R >= PropParams.reject_limit)
-            {
-                first_attempt = false;
-            }
-        }
-
-        return {dumpstep, first_attempt};
-
-    }
+    //TimePropReturnInfo AdaptiveDirectKrylovArmadillo(arma::sp_cx_mat &L, arma::cx_vec &rho0, arma::cx_vec &drhodt, double dumpstep, double time, PropParam PropParams, HamiltonainTimeDepFuncArma GetTDH)
+    //{
+//
+    //    auto ArnoldiIteration = [=](const arma::sp_cx_mat&L, const arma::cx_vec& rho, int m_max) {
+    //        const int N = rho.n_rows;
+    //        
+    //        ArnoldiResult result;
+    //        result.V.set_size(m_max);
+    //        result.Hessian = arma::sp_cx_mat(m_max,m_max);
+    //        
+    //        result.Beta = arma::norm(rho,2);
+    //        arma::cx_vec rhoi = rho / result.Beta;
+    //        result.V(0) = rhoi;
+//
+    //        arma::cx_vec AV(N);
+    //        std::complex<double> h_next = 0.0;
+    //        int m = m_max;
+    //        for(int j = 0; j < m_max; j++)
+    //        {
+    //            AV = L * result.V(j);
+    //            for(int i = 0; i <= j; i++)
+    //            {
+    //                std::complex<double> h_ij = arma::cdot(result.V(i), AV);
+    //                result.Hessian(i,j) = h_ij;
+    //                arma::cx_vec temp = h_ij * result.V(i);
+    //                AV -= temp;
+    //            }
+//
+    //            h_next = arma::norm(AV,2);
+//
+    //            if(j == m_max - 1) {
+    //                result.h_res = h_next;
+    //                break;
+    //            }
+//
+    //            if(std::abs(h_next) < 1e-14)
+    //            {
+    //                result.h_res = std::complex<double>(0.0, 0.0);
+    //                m = j + 1;
+    //                result.Hessian = result.Hessian.submat(0,0,m-1,m-1);
+    //                result.V.set_size(m);
+    //                break;
+    //            }
+//
+    //            result.V(j+1) = AV / h_next;
+    //            result.Hessian(j+1,j) = h_next;
+    //        }
+//
+    //        return result;
+    //    };
+//
+    //    struct StepReturnStruct
+    //    {
+    //        arma::cx_vec rho_new;
+    //        double err;
+    //    };
+//
+    //    auto MagnusExpansion2ndOrder = [&](const arma::sp_cx_mat& L, double h) {
+    //        arma::sp_cx_mat At = GetTDH(PropParams.CurrentTime, L);
+    //        arma::sp_cx_mat Atpto2 = GetTDH(PropParams.CurrentTime + h/2.0, L);
+//
+    //        arma::sp_cx_mat Omega = (h/2.0) * (Atpto2 * At - At * Atpto2);
+    //        return Omega;
+    //    };
+//
+    //    auto step = [&](const arma::sp_cx_mat& L, const arma::cx_vec& rho, double h, int m_krylov)  {
+//
+    //        ArnoldiResult ar;
+    //        if(GetTDH != nullptr)
+    //        {
+    //            ar = ArnoldiIteration(MagnusExpansion2ndOrder(L,h), rho, m_krylov);
+    //        }
+    //        else
+    //        {
+    //            ar = ArnoldiIteration(L, rho, m_krylov);
+    //        }
+    //        int m = ar.Hessian.n_rows;
+    //        arma::sp_cx_mat Hm = h * ar.Hessian;
+    //        
+    //        arma::cx_mat Exponent = arma::expmat(arma::conv_to<arma::cx_mat>::from(Hm));
+    //        arma::cx_vec e1(m,arma::fill::zeros);
+    //        e1(0) = std::complex<double>(1.0, 0.0);
+    //        arma::cx_vec w = Exponent * e1;
+//
+    //        arma::cx_vec rho_new(rho.n_rows, arma::fill::zeros);
+    //        for(int j = 0; j < m; j++)
+    //        {
+    //            arma::cx_vec temp = ar.Beta * w(j) * ar.V(j);
+    //            rho_new += temp;
+    //        }
+//
+    //        std::complex<double> error_val = Exponent(m-1,0);
+    //        double err = std::abs(ar.Beta * ar.h_res * error_val);
+//
+    //        StepReturnStruct return_struct;
+    //        return_struct.rho_new = rho_new;
+    //        return_struct.err = err;
+//
+    //        return return_struct;
+    //    };
+//
+    //    bool keep_step = false;
+    //    bool first_attempt = true;
+    //    while(!keep_step)
+    //    {
+    //        auto KrylovStep = step(L,rho0,dumpstep,PropParams.max_krylov_iterations);
+//
+    //        double ynorm = arma::norm(KrylovStep.rho_new,2);
+    //        double tol = PropParams.atol + PropParams.rtol * ynorm;
+    //        double R = KrylovStep.err / tol;
+//
+    //        auto Adjusth = [&](double R, double safety, double f1, double f2, double h) {
+    //            return h * std::min(f2, std::max(f1, safety * std::pow(R, -1.0/5.0)));
+    //        };
+//
+    //        dumpstep = Adjusth(R, PropParams.safety, PropParams.f1, PropParams.f2, dumpstep);
+    //        if(R <= PropParams.reject_limit)
+    //        {
+    //            drhodt = KrylovStep.rho_new;
+    //            keep_step = true;
+    //        }
+//
+    //        if(dumpstep < PropParams.min && R > PropParams.reject_limit)
+    //        {
+    //            PropParams.min = dumpstep;
+    //        }
+    //        if(dumpstep > PropParams.max)
+    //        {
+    //            dumpstep = PropParams.max;
+    //        }
+    //        if(R >= PropParams.reject_limit)
+    //        {
+    //            first_attempt = false;
+    //        }
+    //    }
+//
+    //    return {dumpstep, first_attempt};
+//
+    //}
 
     unsigned int GetNumThreads()
     {

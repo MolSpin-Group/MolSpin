@@ -14,6 +14,7 @@
 // #include <Eigen/Sparse>
 // #include <Eigen/Core>
 #include "SpinAPIfwd.h"
+#include "SpinSpace.h"
 #include <utility>
 
 namespace RunSection
@@ -76,29 +77,29 @@ namespace RunSection
     typedef arma::cx_vec (*RungeKuttaFuncArma)(double t, arma::sp_cx_mat &, arma::cx_vec &, arma::cx_vec);
     typedef arma::sp_cx_mat (*HamiltonainTimeDepFuncArma)(double t, const arma::sp_cx_mat &);
     
-    struct PropParam
-    {
-        double atol = 1e-8;
-        double rtol = 1e-10;
-        double min = 1e-6;
-        double max = 1e6;
-        double safety = 0.8;
-        double f1 = 0.1;
-        double f2 = 5.0;
-
-        int max_krylov_iterations = 30;
-        int reject_limit = 2;
-
-        double CurrentTime = 0.0;
-    };
+    //struct PropParam
+    //{
+    //    double atol = 1e-8;
+    //    double rtol = 1e-10;
+    //    double min = 1e-6;
+    //    double max = 1e6;
+    //    double safety = 0.8;
+    //    double f1 = 0.1;
+    //    double f2 = 5.0;
+//
+    //    int max_krylov_iterations = 30;
+    //    int reject_limit = 2;
+//
+    //    double CurrentTime = 0.0;
+    //};
 
     double EstimateStiffnessArmadillo(arma::sp_cx_mat &L);
 
-    struct TimePropReturnInfo
-    {
-        double timestep;
-        bool step_accepted;
-    };
+    //struct TimePropReturnInfo
+    //{
+    //    double timestep;
+    //    bool step_accepted;
+    //};
     
     /// Runge-Kutta-Fehlberg method (4th and 5th order) with adaptive time step control
     ///     @param L: Liouvillian superoperator (sparse complex matrix)
@@ -111,9 +112,9 @@ namespace RunSection
     ///     @param MaxTimeStep: Maximum allowed time step (double) - Optional, default = 1e6
     ///     @param time: Current time (double) - Optional, default = 0
     ///     @return New time step (double)
-    TimePropReturnInfo RungeKutta45Armadillo(arma::sp_cx_mat &, arma::cx_vec &, arma::cx_vec &, double, RungeKuttaFuncArma, double time = 0, PropParam PropParams = PropParam());
+    SpinAPI::SpinSpace::TimePropReturnInfo RungeKutta45Armadillo(arma::sp_cx_mat &, arma::cx_vec &, arma::cx_vec &, double, RungeKuttaFuncArma, double time = 0, SpinAPI::SpinSpace::PropParam PropParams = SpinAPI::SpinSpace::PropParam());
 
-    TimePropReturnInfo AdaptiveDirectKrylovArmadillo(arma::sp_cx_mat &L, arma::cx_vec &rho0, arma::cx_vec &drhodt, double dumpstep, double time = 0, PropParam PropParams = PropParam(), HamiltonainTimeDepFuncArma GetTDH = nullptr);
+    //TimePropReturnInfo AdaptiveDirectKrylovArmadillo(arma::sp_cx_mat &L, arma::cx_vec &rho0, arma::cx_vec &drhodt, double dumpstep, double time = 0, PropParam PropParams = PropParam(), HamiltonainTimeDepFuncArma GetTDH = nullptr);
 // endregion TimeEvo 
     unsigned int GetNumThreads();
 
