@@ -734,6 +734,10 @@ namespace RunSection
 				std::vector<std::vector<double>> ExptValues;
 				prop_param.TimePrefactor = -arma::cx_double(0.0, 1.0);
 				prop_param.UsePrefactor = true;
+				
+				//should stop it going too wild 
+				prop_param.f2 = 1.5;
+				prop_param.safety = 0.5;
 
 				// Include the recombination operator K
 				H = H - arma::cx_double(0.0, 1.0) * K;
