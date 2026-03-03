@@ -403,8 +403,6 @@ namespace RunSection
 			int krylovsize = 0;
 			this->Properties()->Get("krylovsize", krylovsize);
 
-			double krylovtol = 0;
-			this->Properties()->Get("krylovtol", krylovtol);
 			if (propmethod == "autoexpm")
 			{
 				this->Log() << "Autoexpm is chosen as the propagation method." << std::endl;
@@ -432,32 +430,12 @@ namespace RunSection
 				if (krylovsize > 0)
 				{
 					this->Log() << "Krylov basis size is chosen as " << krylovsize << "." << std::endl;
-					if (krylovtol > 0)
-					{
-						this->Log() << "Tolerance for krylov propagation is chosen as " << krylovtol << "." << std::endl;
-					}
-					else
-					{
-						std::cout << "# ERROR: undefined tolerance for krylov subspace propagation! Using the default of 1e-16." << std::endl;
-						this->Log() << "Undefined tolerance for the krylov subspace. Using the default of 1e-16." << std::endl;
-						krylovtol = 1e-16;
-					}
 				}
 				else
 				{
 					std::cout << "# ERROR: undefined size of the krylov subspace! Using the default size of 16." << std::endl;
 					this->Log() << "Undefined size of the krylov subspace. Using the default size of 16." << std::endl;
 					krylovsize = 16;
-					if (krylovtol > 0)
-					{
-						this->Log() << "Tolerance for krylov propagation is chosen as " << krylovtol << "." << std::endl;
-					}
-					else
-					{
-						std::cout << "# ERROR: undefined tolerance for krylov subspace propagation! Using the default of 1e-16." << std::endl;
-						this->Log() << "Undefined tolerance for the krylov subspace. Using the default of 1e-16." << std::endl;
-						krylovtol = 1e-16;
-					}
 				}
 			}
 			else
