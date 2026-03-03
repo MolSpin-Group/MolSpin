@@ -722,7 +722,7 @@ namespace RunSection
 					}
 				}
 			}
-			if(propmethod == "krylov")
+			else if(propmethod == "krylov")
 			{
 				arma::sp_cx_mat dK(InitialStateVector.n_rows * Z, InitialStateVector.n_rows * Z);
 				arma::sp_cx_mat dH(InitialStateVector.n_rows * Z, InitialStateVector.n_rows * Z);
@@ -815,7 +815,7 @@ namespace RunSection
 						this->timestep = t;
 						prop_state = r.result;
 					}
-					prop_param.SetTimePoints = TimePoints;
+					prop_param.SetTimePoints = TimeSteps;
 					prop_param.UseSetTimePoints = true;
 					prop_param.ResetTrajectory();
 					B.col(itr) = prop_state;

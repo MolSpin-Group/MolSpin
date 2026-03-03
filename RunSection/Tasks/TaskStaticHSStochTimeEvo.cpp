@@ -569,7 +569,7 @@ namespace RunSection
 						this->timestep = t;
 						prop_state = r.result;
 					}
-					prop_param.SetTimePoints = TimePoints;
+					prop_param.SetTimePoints = TimeSteps;
 					prop_param.UseSetTimePoints = true;
 					prop_param.ResetTrajectory();
 					B.col(itr) = prop_state;
