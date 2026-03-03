@@ -376,7 +376,7 @@ MCSpherePoint* CalculateMCSpherePoints(int n, double rmax_x, double rmax_y, doub
             auto [RK4, RK5] = RungeKutta45(L, rho0, dumpstep, func);
 
             double relative_error = 0.0;
-            auto[atol, rtol, min_step, max_step, safety, f1, f2,t1,t2,ct] = params;
+            auto[atol, rtol, min_step, max_step, safety, f1, f2,t1,t2,ct, i1, i2, i3, i4, i5] = params;
             double change = 0;
             {
                 VecType diff = RK5 - RK4;

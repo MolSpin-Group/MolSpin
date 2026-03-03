@@ -426,7 +426,7 @@ namespace RunSection
 			RollingYield.push_back(0.0);
 		}
 
-		PropParam params;
+		SpinAPI::SpinSpace::PropParam params;
 		params.atol = 1e-8;
 		params.rtol = 1e-10;
 		params.min = MinTimeStep;
@@ -459,7 +459,7 @@ namespace RunSection
 				//rho0 = ConvertEigenToArmadillo(rho0Eigen).col(0);
 
 				
-				auto[t,a] = RungeKutta45Armadillo(L, rho0, rho0, this->timestep, ComputeRhoDot, 0.0, params);
+				auto[t,a, i1] = RungeKutta45Armadillo(L, rho0, rho0, this->timestep, ComputeRhoDot, 0.0, params);
 				this->timestep = t;
 			}
 
