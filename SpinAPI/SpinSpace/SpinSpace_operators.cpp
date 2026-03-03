@@ -1323,13 +1323,23 @@ namespace SpinAPI
 		}
 	}
 
-    SpinSpace::TimePropReturnInfo SpinSpace::TimeAdapativeKrylovRoutine(const arma::sp_cx_mat &H, const arma::cx_colvec &b, double dt, int kryDim, int HilbSize, PropParam &propParam, bool general)
+    SpinSpace::TimePropReturnInfo SpinSpace::TimeAdapativeKrylovRoutine(const arma::sp_cx_mat &H, const arma::cx_colvec &b, arma::cx_double dt, int kryDim, int HilbSize, PropParam &propParam, bool general)
     {
         bool keepstep = false;
 		bool firstattempt = true;
-		double dumpstep = 0.0;
 
 		TimePropReturnInfo ReturnInfo;
+
+		if (propParam.UseSetTimePoints)
+		{
+			dt = propParam.GetNextTimePoint();
+		}
+		if(propParam.UsePrefactor)
+		{
+			dt = propParam.TimePrefactor * dt;
+		}
+
+		double dumpstep = std::abs(dt.real());
 
 		auto Adjusth = [&](double R, double safety, double f1, double f2, double h) {
                 return h * std::min(f2, std::max(f1, safety * std::pow(R, -1.0/5.0)));
@@ -1339,11 +1349,19 @@ namespace SpinAPI
 		{
 			auto KyrlovResult = (general ? KrylovExpmGeneral(H, b, dt, kryDim, HilbSize) : KrylovExpmSymm(H, b, dt, kryDim, HilbSize));
 
+			if(propParam.UseSetTimePoints)
+			{
+				ReturnInfo.result = KyrlovResult.result;
+				ReturnInfo.step_accepted = true;
+				ReturnInfo.timestep = dumpstep;
+				return ReturnInfo;
+			}
+
 			double ynorm = arma::norm(KyrlovResult.result,2);
 			double tol = propParam.atol + propParam.rtol * ynorm;
 			double R = KyrlovResult.error_estimate / tol;
 
-			dumpstep = Adjusth(R, propParam.safety, propParam.f1, propParam.f2, dt);
+			dumpstep = Adjusth(R, propParam.safety, propParam.f1, propParam.f2, dumpstep);
 
 			if(R <= propParam.reject_limit)
             {
@@ -1375,12 +1393,12 @@ namespace SpinAPI
 		return ReturnInfo;
     }
 
-    SpinSpace::TimePropReturnInfo SpinSpace::TimeAdaptiveKrylovGeneral(const arma::sp_cx_mat &H, const arma::cx_colvec &b, double dt, int kryDim, int HilbSize, PropParam &propParam)
+    SpinSpace::TimePropReturnInfo SpinSpace::TimeAdaptiveKrylovGeneral(const arma::sp_cx_mat &H, const arma::cx_colvec &b, arma::cx_double dt, int kryDim, int HilbSize, PropParam &propParam)
     {
 		return TimeAdapativeKrylovRoutine(H, b, dt, kryDim, HilbSize, propParam, true);
 	}
 
-	SpinSpace::TimePropReturnInfo SpinSpace::TimeAdaptiveKrylovSymm(const arma::sp_cx_mat &H, const arma::cx_colvec &b, double dt, int kryDim, int HilbSize, PropParam &propParam)
+	SpinSpace::TimePropReturnInfo SpinSpace::TimeAdaptiveKrylovSymm(const arma::sp_cx_mat &H, const arma::cx_colvec &b, arma::cx_double dt, int kryDim, int HilbSize, PropParam &propParam)
 	{
 		return TimeAdapativeKrylovRoutine(H, b, dt, kryDim, HilbSize, propParam, false);
 	}

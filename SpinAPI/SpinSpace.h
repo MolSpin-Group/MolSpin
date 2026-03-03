@@ -289,6 +289,29 @@ namespace SpinAPI
         	int reject_limit = 2;
 
         	double CurrentTime = 0.0;
+			std::vector<double> SetTimePoints;
+			int CurrentTrajectoryStep = 0;
+			bool UsePrefactor = false;
+			bool UseSetTimePoints = false;
+			arma::cx_double TimePrefactor = arma::cx_double(0.0, -1.0);
+
+			double GetNextTimePoint() {
+				if (CurrentTrajectoryStep < SetTimePoints.size())
+				{
+					double nextTimePoint = SetTimePoints[CurrentTrajectoryStep];
+					CurrentTrajectoryStep++;
+					return nextTimePoint;
+				}
+				else
+				{
+					CurrentTrajectoryStep = 0; // Reset trajectory step if we exceed the number of time points
+					return std::numeric_limits<double>::infinity(); // Return infinity to indicate no more time
+				}
+			}
+
+			void ResetTrajectory() {
+				CurrentTrajectoryStep = 0;
+			}
     	};
     	struct TimePropReturnInfo
     	{
@@ -298,9 +321,9 @@ namespace SpinAPI
 		};
 
 
-		TimePropReturnInfo TimeAdapativeKrylovRoutine(const arma::sp_cx_mat &H, const arma::cx_colvec &b, double dt, int kryDim, int HilbSize, PropParam &propParam, bool general);
-		TimePropReturnInfo TimeAdaptiveKrylovGeneral(const arma::sp_cx_mat &H, const arma::cx_colvec &b, double dt, int kryDim, int HilbSize, PropParam &propParam);
-		TimePropReturnInfo TimeAdaptiveKrylovSymm(const arma::sp_cx_mat &H, const arma::cx_colvec &b, double dt, int kryDim, int HilbSize, PropParam &propParam);
+		TimePropReturnInfo TimeAdapativeKrylovRoutine(const arma::sp_cx_mat &H, const arma::cx_colvec &b, arma::cx_double dt, int kryDim, int HilbSize, PropParam &propParam, bool general);
+		TimePropReturnInfo TimeAdaptiveKrylovGeneral(const arma::sp_cx_mat &H, const arma::cx_colvec &b, arma::cx_double dt, int kryDim, int HilbSize, PropParam &propParam);
+		TimePropReturnInfo TimeAdaptiveKrylovSymm(const arma::sp_cx_mat &H, const arma::cx_colvec &b, arma::cx_double dt, int kryDim, int HilbSize, PropParam &propParam);
 
 		// ------------------------------------------------
 		// Hamiltonian representations in the space (SpinSpace_hamiltonians.cpp)
