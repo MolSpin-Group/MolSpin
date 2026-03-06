@@ -433,6 +433,7 @@ namespace RunSection
 			double timestep;
 			this->Properties()->Get("timestep", timestep);
 			dt = timestep;
+			this->timestep = dt;
 			if (dt > std::pow(2, -53))
 			{
 				this->Log() << "Time step is chosen as " << dt << " ns." << std::endl;
@@ -730,8 +731,16 @@ namespace RunSection
 				for(int itr = 0; itr < mc_samples; itr++)
 				{
 					arma::cx_vec prop_state = B.col(itr);
-					this->timestep = InitialTimeStep;
+					if(itr == 0)
+					{
+						this->timestep = InitialTimeStep;
+					}
+					else
+					{
+						this->timestep = prop_param.GetNextTimePoint();
+					}
 					CurrentTime = 0;
+					int step = 0;
 					this->Log() << "Starting time evolution with timestep: " << this->timestep << ", total time: " << this->totaltime << ", minimum timestep: " << prop_param.min << ", maximum timestep: " << prop_param.max << std::endl;
 					while (CurrentTime <= this->totaltime)
 					{
@@ -743,7 +752,7 @@ namespace RunSection
 						if(itr == 0)
 						{
 							TimePoints.push_back(CurrentTime);
-							TimeSteps.push_back(this->timestep);
+							//TimeSteps.push_back(this->timestep);
 						}
 						space.SetTime(CurrentTime);
 						SpinAPI::SpinSpace::TimePropReturnInfo r;
@@ -751,9 +760,16 @@ namespace RunSection
 						int idx = 0;
 						for(auto o = transitions.cbegin(); o != transitions.cend(); o++)
 						{
-							double rate = (*o)->Rate();
 							double expected_value = std::abs(arma::cdot(prop_state, Operators[idx] * prop_state));
-							ExptValuesVec.back()[idx] += (rate * expected_value) / mc_samples;
+							if(time_dependent_transitions)
+							{
+								double rate = (*o)->Rate();
+								ExptValuesVec[step][idx] += (rate * expected_value) / mc_samples;
+							}
+							else
+							{
+								ExptValuesVec[step][idx] += (std::exp(-kmin * CurrentTime) * expected_value) / mc_samples;
+							}
 							idx++;
 						}
 
@@ -797,25 +813,58 @@ namespace RunSection
 						double t = r.timestep;
 						bool a = r.step_accepted;
 
-						CurrentTime += (a == true) ? this->timestep : t;
+						if(itr == 0)
+						{
+							TimeSteps.push_back(r.timestep_used);
+						}
+
+						if(itr == 0)
+						{
+							CurrentTime += (a == true) ? this->timestep : r.timestep_used;
+						}
+						else
+						{
+							CurrentTime += r.timestep_used;
+						}
 						this->timestep = t;
 						prop_state = r.result;
+						step++;
+					}
+					if(itr == 0)
+					{
+						TimePoints.push_back(CurrentTime);
+						ExptValuesVec.push_back(std::vector<double>(num_transitions, 0.0));
 					}
 					prop_param.SetTimePoints = TimeSteps;
 					prop_param.UseSetTimePoints = true;
 					prop_param.ResetTrajectory();
 					B.col(itr) = prop_state;
-					this->timestep = InitialTimeStep;
 
-					time = arma::vec(TimePoints);
-					std::vector<double> ExptValuesVecFlat;
-					for(auto &v : ExptValuesVec)
+					int idx = 0;
+					for(auto o = transitions.cbegin(); o != transitions.cend(); o++)
 					{
-						ExptValuesVecFlat.insert(ExptValuesVecFlat.end(), v.begin(), v.end());
-						v.clear();
+						double expected_value = std::abs(arma::cdot(prop_state, Operators[idx] * prop_state));
+						if(time_dependent_transitions)
+						{
+							double rate = (*o)->Rate();
+							ExptValuesVec[step][idx] += (rate * expected_value) / mc_samples;
+						}
+						else
+						{
+							ExptValuesVec[step][idx] += (std::exp(-kmin * CurrentTime) * expected_value) / mc_samples;
+						}
+						idx++;
 					}
-					ExptValues = arma::mat(ExptValuesVecFlat.data(), time.size(), num_transitions);
 				}
+				time = arma::vec(TimePoints);
+				std::vector<double> ExptValuesVecFlat;
+				for(auto &v : ExptValuesVec)
+				{
+					ExptValuesVecFlat.insert(ExptValuesVecFlat.end(), v.begin(), v.end());
+					v.clear();
+				}
+				ExptValues = arma::mat(ExptValuesVecFlat.data(), time.size(), num_transitions);
+				this->timestep = InitialTimeStep;
 			}
 
 			ans = arma::trapz(time, ExptValues);

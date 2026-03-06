@@ -774,8 +774,16 @@ namespace RunSection
 						int idx = 0;
 						for(auto o = transitions.cbegin(); o != transitions.cend(); o++)
 						{
-							double expected_value = std::exp(-kmin * CurrentTime) * std::abs(arma::cdot(prop_state, Operators[idx] * prop_state));
-							ExptValues[step][idx] += expected_value / mc_samples;
+							double expected_value = std::abs(arma::cdot(prop_state, Operators[idx] * prop_state));
+							if(time_dependent_transitions)
+							{
+								double rate = (*o)->Rate();
+								ExptValues[step][idx] += (rate * expected_value) / mc_samples;
+							}
+							else
+							{
+								ExptValues[step][idx] += (std::exp(-kmin * CurrentTime) * expected_value) / mc_samples;
+							}
 							idx++;
 						}
 
@@ -849,8 +857,16 @@ namespace RunSection
 					int idx = 0;
 					for(auto o = transitions.cbegin(); o != transitions.cend(); o++)
 					{
-						double expected_value = std::exp(-kmin * CurrentTime) * std::abs(arma::cdot(prop_state, Operators[idx] * prop_state));
-						ExptValues[step][idx] += expected_value / mc_samples;
+						double expected_value = std::abs(arma::cdot(prop_state, Operators[idx] * prop_state));
+						if(time_dependent_transitions)
+						{
+							double rate = (*o)->Rate();
+							ExptValues[step][idx] += (rate * expected_value) / mc_samples;
+						}
+						else
+						{
+							ExptValues[step][idx] += (std::exp(-kmin * CurrentTime) * expected_value) / mc_samples;
+						}
 						idx++;
 					}
 				}
