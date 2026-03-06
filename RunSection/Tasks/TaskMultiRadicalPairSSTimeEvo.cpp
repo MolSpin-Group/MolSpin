@@ -459,7 +459,7 @@ namespace RunSection
 				//rho0 = ConvertEigenToArmadillo(rho0Eigen).col(0);
 
 				
-				auto[t,a, i1] = RungeKutta45Armadillo(L, rho0, rho0, this->timestep, ComputeRhoDot, 0.0, params);
+				auto[t,a, i1,i2] = RungeKutta45Armadillo(L, rho0, rho0, this->timestep, ComputeRhoDot, 0.0, params);
 				this->timestep = t;
 			}
 

@@ -316,6 +316,7 @@ namespace SpinAPI
     	struct TimePropReturnInfo
     	{
         	double timestep;
+			double timestep_used;
 			bool step_accepted;
 			arma::cx_colvec result;
 		};

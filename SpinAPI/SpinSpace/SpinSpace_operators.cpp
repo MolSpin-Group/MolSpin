@@ -1330,16 +1330,16 @@ namespace SpinAPI
 
 		TimePropReturnInfo ReturnInfo;
 
-		if (propParam.UseSetTimePoints)
-		{
-			dt = propParam.GetNextTimePoint();
-		}
+		//if (propParam.UseSetTimePoints)
+		//{
+		//	dt = propParam.GetNextTimePoint();
+		//}
 		if(propParam.UsePrefactor)
 		{
 			dt = propParam.TimePrefactor * dt;
 		}
 
-		double dumpstep = std::abs(dt.real());
+		double dumpstep = std::abs(dt);
 
 		auto Adjusth = [&](double R, double safety, double f1, double f2, double h) {
                 return h * std::min(f2, std::max(f1, safety * std::pow(R, -1.0/5.0)));
@@ -1353,7 +1353,8 @@ namespace SpinAPI
 			{
 				ReturnInfo.result = KyrlovResult.result;
 				ReturnInfo.step_accepted = true;
-				ReturnInfo.timestep = dumpstep;
+				ReturnInfo.timestep = propParam.GetNextTimePoint();
+				ReturnInfo.timestep_used = (dt / propParam.TimePrefactor).real();
 				return ReturnInfo;
 			}
 
@@ -1366,6 +1367,7 @@ namespace SpinAPI
 			if(R <= propParam.reject_limit)
             {
                 ReturnInfo.result = KyrlovResult.result;
+				ReturnInfo.timestep_used = (dt / propParam.TimePrefactor).real();
 				keepstep = true;
             }
 
@@ -1385,6 +1387,8 @@ namespace SpinAPI
             {
                 firstattempt = false;
             }
+
+			dt = dumpstep * propParam.TimePrefactor;
 
 		}
 
