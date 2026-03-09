@@ -1308,7 +1308,15 @@ namespace SpinAPI
 	void SpinSpace::ArnoldiProcess(const arma::sp_cx_mat &H, const arma::cx_colvec &b, arma::cx_mat &KryBasis, arma::cx_mat &Hessen, int KryDim, double &h_mplusone_m, arma::cx_double dt)
 	{
 		// Perform the Arnoldi process for KryDim iterations
-		int startIter = krylov_cache.StartDim;
+		int startIter;
+		if(dt == std::abs(0.0))
+		{
+			startIter = 0;
+		}
+		else
+		{
+			startIter = krylov_cache.StartDim;
+		}
 		double beta = arma::norm(b);
 		int actual = startIter;  // track how many columns we end up with
 		
@@ -1342,7 +1350,7 @@ namespace SpinAPI
 			KryBasis.col(it1 + 1) = z / Hessen(it1 + 1, it1);
 			actual = it1 + 2;
 
-			if(krylov_cache.KrylovDimTol > 0.0)
+			if(krylov_cache.KrylovDimTol > 0.0 && dt != std::abs(0.0))
 			{
 				arma::cx_mat Hessen_trunc = Hessen.submat(0,0,it1,it1);
 				arma::cx_mat expH = arma::expmat(Hessen_trunc * dt);
@@ -1358,9 +1366,17 @@ namespace SpinAPI
 	}
 
 	// Compute the Lanczos process for the given sparse complex symmetric matrix H, complex column vector b, and integer KryDim.
-	void SpinSpace::LanczosProcess(const arma::sp_cx_mat &H, const arma::cx_colvec &b, arma::cx_mat &KryBasis, arma::cx_mat &Hessen, int KryDim, double &h_mplusone_m, arma::cx_double)
+	void SpinSpace::LanczosProcess(const arma::sp_cx_mat &H, const arma::cx_colvec &b, arma::cx_mat &KryBasis, arma::cx_mat &Hessen, int KryDim, double &h_mplusone_m, arma::cx_double dt)
 	{
-		int startIter = krylov_cache.StartDim;
+		int startIter;
+		if(dt == std::abs(0.0))
+		{
+			startIter = 0;
+		}
+		else
+		{
+			startIter = krylov_cache.StartDim;
+		}
 		double beta = arma::norm(b);
 		int actual = startIter;  // track how many columns we end up with
 		// Perform the Lanczos process for KryDim iterations, optionally starting from startIter
