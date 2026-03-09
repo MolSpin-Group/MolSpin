@@ -329,6 +329,7 @@ namespace SpinAPI
 			arma::cx_mat KryBasis;
 			bool UseCachedHessen = false;
 			std::size_t HamiltonianHash = 0;
+			int StartDim = 0;
 		};
 
 

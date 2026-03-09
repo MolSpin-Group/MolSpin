@@ -1215,6 +1215,7 @@ namespace SpinAPI
 			KryBasis.cols(0, restoreTo-1) = krylov_cache.KryBasis.cols(0, restoreTo-1);
 			startIter = restoreTo;  // pick up where we left off
 		}
+		krylov_cache.StartDim = startIter;  // store where we started for potential reuse in next call
 
 		double h_mplusone_m;
 
@@ -1275,6 +1276,7 @@ namespace SpinAPI
 			KryBasis.cols(0, restoreTo-1) = krylov_cache.KryBasis.cols(0, restoreTo-1);
 			startIter = restoreTo;  // pick up where we left off
 		}
+		krylov_cache.StartDim = startIter;  // store where we started for potential reuse in next call
 
 		double h_mplusone_m;
 		// Compute upper Hessenberg matrix and krylov basis using Lanczos process
@@ -1421,6 +1423,7 @@ namespace SpinAPI
 		bool firstattempt = true;
 
 		TimePropReturnInfo ReturnInfo;
+		
 
 		//if (propParam.UseSetTimePoints)
 		//{
