@@ -1190,7 +1190,7 @@ namespace SpinAPI
 			std::size_t hash = 0;
 			for (auto val : H)
 			{
-				hash ^= std::hash<std::double>()(val.real()) ^ std::hash<std::double>()(val.imag());
+				hash ^= std::hash<double>()(val.real()) ^ std::hash<double>()(val.imag());
 			}
 			return hash;
 		};
@@ -1229,7 +1229,7 @@ namespace SpinAPI
 		arma::cx_vec w = Exponent * e1;
 
 		std::complex<double> error_val = Exponent(KryDim - 1, 0);
-        double e//rr = std::abs(beta * h_mplusone_m * error_val);
+        double err = std::abs(beta * h_mplusone_m * error_val);
 
         SpinSpace::return_struct step;
         step.result = norm(b) * KryBasis * arma::expmat(Hessen * dt) * e1;
@@ -1250,7 +1250,7 @@ namespace SpinAPI
 			std::size_t hash = 0;
 			for (auto val : H)
 			{
-				hash ^= std::hash<std::double>()(val.real()) ^ std::hash<std::double>()(val.imag());
+				hash ^= std::hash<double>()(val.real()) ^ std::hash<double>()(val.imag());
 			}
 			return hash;
 		};
