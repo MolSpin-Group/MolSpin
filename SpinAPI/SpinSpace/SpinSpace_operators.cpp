@@ -1180,22 +1180,46 @@ namespace SpinAPI
 		return ans;
 	}
 
+	static SpinSpace::TimeAdaptiveKrylovCache krylov_cache;
+
 	// Returns the action of the matrix exponential of sparse general complex matrix H onto complex column vector b, with krylov subspave dimension of KryDim.
 	SpinSpace::return_struct SpinSpace::KrylovExpmGeneral(const arma::sp_cx_mat &H, const arma::cx_colvec &b, const arma::cx_double dt, int KryDim, int HilbSize)
 	{
-		// Initialize Krylov basis and upper Hessenberg matrix
-		arma::cx_mat Hessen; // Upper Hessenberg matrix
-		Hessen.zeros(KryDim, KryDim);
+		// Compute hash of the Hamiltonian to detect changes
+		auto ComputeHhash = [](const arma::sp_cx_mat &H) {
+			std::size_t hash = 0;
+			for (auto val : H)
+			{
+				hash ^= std::hash<std::double>()(val.real()) ^ std::hash<std::double>()(val.imag());
+			}
+			return hash;
+		};
 
+		std::size_t hamiltonianHash = ComputeHhash(H);
+		arma::cx_mat Hessen(KryDim, KryDim, arma::fill::zeros); // Upper Hessenberg matrix
 		arma::cx_mat KryBasis(HilbSize, KryDim, arma::fill::zeros); // Orthogonal krylov subspace
 
+		// Initialize basis from input vector
 		double beta = norm(b);
 		KryBasis.col(0) = b / beta;
+
+		// Check if cache is valid (same Hamiltonian) and can be reused
+		int startIter = 0;  // start from scratch by default
+		if(krylov_cache.KrylovDim > 0 && krylov_cache.HamiltonianHash == hamiltonianHash && krylov_cache.UseCachedHessen)
+		{
+			// Cache is valid: restore cached Hessenberg and basis
+			int cachedDim = krylov_cache.Hessen.n_rows;
+			int restoreTo = std::min(cachedDim, KryDim);
+			
+			Hessen.submat(0, 0, restoreTo-1, restoreTo-1) = krylov_cache.Hessen.submat(0, 0, restoreTo-1, restoreTo-1);
+			KryBasis.cols(0, restoreTo-1) = krylov_cache.KryBasis.cols(0, restoreTo-1);
+			startIter = restoreTo;  // pick up where we left off
+		}
 
 		double h_mplusone_m;
 
 		// Compute upper Hessenberg matrix and krylov basis using Arnoldi process
-		ArnoldiProcess(H, b, KryBasis, Hessen, KryDim, h_mplusone_m);
+		ArnoldiProcess(H, b, KryBasis, Hessen, KryDim, h_mplusone_m, dt);
 
 		arma::cx_colvec e1;
 		e1.zeros(KryDim);
@@ -1205,31 +1229,56 @@ namespace SpinAPI
 		arma::cx_vec w = Exponent * e1;
 
 		std::complex<double> error_val = Exponent(KryDim - 1, 0);
-        double err = std::abs(beta * h_mplusone_m * error_val);
+        double e//rr = std::abs(beta * h_mplusone_m * error_val);
 
         SpinSpace::return_struct step;
-        //step.result = norm(b) * KryBasis * arma::expmat(Hessen * dt) * e1;
+        step.result = norm(b) * KryBasis * arma::expmat(Hessen * dt) * e1;
 		step.result = beta * KryBasis * w;
         step.error_estimate = err;
 
-		// Compute the matrix exponential action
+		//assume we want to cache the Hessenberg and Krylov basis for potential reuse
+		krylov_cache.HamiltonianHash = hamiltonianHash;
+		krylov_cache.Hessen = Hessen;
+		krylov_cache.KryBasis = KryBasis;
 		return step;
 	}
 	// Returns the action of the matrix exponential of sparse symmetric complex matrix H onto complex column vector b, with krylov subspave dimension of KryDim.
 	SpinSpace::return_struct SpinSpace::KrylovExpmSymm(const arma::sp_cx_mat &H, const arma::cx_colvec &b, const arma::cx_double dt, int KryDim, int HilbSize)
 	{
-		// Initialize Krylov basis and upper Hessenberg matrix
-		arma::cx_mat Hessen; // Upper Hessenberg matrix
-		Hessen.zeros(KryDim, KryDim);
+		// Compute hash of the Hamiltonian to detect changes
+		auto ComputeHhash = [](const arma::sp_cx_mat &H) {
+			std::size_t hash = 0;
+			for (auto val : H)
+			{
+				hash ^= std::hash<std::double>()(val.real()) ^ std::hash<std::double>()(val.imag());
+			}
+			return hash;
+		};
 
+		std::size_t hamiltonianHash = ComputeHhash(H);
+		arma::cx_mat Hessen(KryDim, KryDim, arma::fill::zeros); // Upper Hessenberg matrix
 		arma::cx_mat KryBasis(HilbSize, KryDim, arma::fill::zeros); // Orthogonal krylov subspace
 
+		// Initialize basis from input vector
 		double beta = norm(b);
 		KryBasis.col(0) = b / beta;
 
+		// Check if cache is valid (same Hamiltonian) and can be reused
+		int startIter = 0;  // start from scratch by default
+		if(krylov_cache.KrylovDim > 0 && krylov_cache.HamiltonianHash == hamiltonianHash && krylov_cache.UseCachedHessen)
+		{
+			// Cache is valid: restore cached Hessenberg and basis
+			int cachedDim = krylov_cache.Hessen.n_rows;
+			int restoreTo = std::min(cachedDim, KryDim);
+			
+			Hessen.submat(0, 0, restoreTo-1, restoreTo-1) = krylov_cache.Hessen.submat(0, 0, restoreTo-1, restoreTo-1);
+			KryBasis.cols(0, restoreTo-1) = krylov_cache.KryBasis.cols(0, restoreTo-1);
+			startIter = restoreTo;  // pick up where we left off
+		}
+
 		double h_mplusone_m;
 		// Compute upper Hessenberg matrix and krylov basis using Lanczos process
-		LanczosProcess(H, b, KryBasis, Hessen, KryDim, h_mplusone_m);
+		LanczosProcess(H, b, KryBasis, Hessen, KryDim, h_mplusone_m, dt);
 
 		arma::cx_colvec e1;
 		e1.zeros(KryDim);
@@ -1246,15 +1295,22 @@ namespace SpinAPI
 		step.result = beta * KryBasis * w;
         step.error_estimate = err;
 
-		// Compute the matrix exponential action
+		//assume we want to cache the Hessenberg and Krylov basis for potential reuse
+		krylov_cache.HamiltonianHash = hamiltonianHash;
+		krylov_cache.Hessen = Hessen;
+		krylov_cache.KryBasis = KryBasis;
 		return step;
 	}
 
 	// Compute the Arnoldi process for the given sparse complex general matrix H, complex column vector b, and integer KryDim.
-	void SpinSpace::ArnoldiProcess(const arma::sp_cx_mat &H, const arma::cx_colvec &b, arma::cx_mat &KryBasis, arma::cx_mat &Hessen, int KryDim, double &h_mplusone_m)
+	void SpinSpace::ArnoldiProcess(const arma::sp_cx_mat &H, const arma::cx_colvec &b, arma::cx_mat &KryBasis, arma::cx_mat &Hessen, int KryDim, double &h_mplusone_m, arma::cx_double dt)
 	{
 		// Perform the Arnoldi process for KryDim iterations
-		for (int it1 = 0; it1 < KryDim; it1++)
+		int startIter = krylov_cache.StartDim;
+		double beta = arma::norm(b);
+		int actual = startIter;  // track how many columns we end up with
+		
+		for (int it1 = startIter; it1 < KryDim; it1++)
 		{
 			// Compute the matrix-vector product.
 			arma::cx_colvec z = H * KryBasis.col(it1);
@@ -1270,6 +1326,7 @@ namespace SpinAPI
 			if (KryDim - 1 == it1)
 			{
 				h_mplusone_m = norm(z);
+				actual = it1 + 1;
 				break;
 			}
 			Hessen(it1 + 1, it1) = norm(z);
@@ -1277,17 +1334,35 @@ namespace SpinAPI
 			{
 				h_mplusone_m = 0.0;
 				std::cout << "Stopped in Arnoldi Process" << std::endl;
+				actual = it1 + 1;
 				break;
 			}
 			KryBasis.col(it1 + 1) = z / Hessen(it1 + 1, it1);
+			actual = it1 + 2;
+
+			if(krylov_cache.KrylovDimTol > 0.0)
+			{
+				arma::cx_mat Hessen_trunc = Hessen.submat(0,0,it1,it1);
+				arma::cx_mat expH = arma::expmat(Hessen_trunc * dt);
+				std::complex<double> error_val = expH(it1, 0);
+				double err = std::abs(beta * h_mplusone_m * error_val);
+				if (err < krylov_cache.KrylovDimTol)
+				{
+					break;
+				}
+			}
 		}
+		krylov_cache.KrylovDim = actual;
 	}
 
 	// Compute the Lanczos process for the given sparse complex symmetric matrix H, complex column vector b, and integer KryDim.
-	void SpinSpace::LanczosProcess(const arma::sp_cx_mat &H, const arma::cx_colvec &b, arma::cx_mat &KryBasis, arma::cx_mat &Hessen, int KryDim, double &h_mplusone_m)
+	void SpinSpace::LanczosProcess(const arma::sp_cx_mat &H, const arma::cx_colvec &b, arma::cx_mat &KryBasis, arma::cx_mat &Hessen, int KryDim, double &h_mplusone_m, arma::cx_double)
 	{
-		// Perform the Lanczos process for KryDim iterations.
-		for (int it1 = 0; it1 < KryDim; it1++)
+		int startIter = krylov_cache.StartDim;
+		double beta = arma::norm(b);
+		int actual = startIter;  // track how many columns we end up with
+		// Perform the Lanczos process for KryDim iterations, optionally starting from startIter
+		for (int it1 = startIter; it1 < KryDim; it1++)
 		{
 			// Compute the matrix-vector product.
 			arma::cx_colvec z = H * KryBasis.col(it1);
@@ -1310,6 +1385,7 @@ namespace SpinAPI
 			if (KryDim - 1 == it1)
 			{
 				h_mplusone_m = norm(z);
+				actual = it1 + 1;
 				break;
 			}
 			Hessen(it1 + 1, it1) = norm(z);
@@ -1317,10 +1393,26 @@ namespace SpinAPI
 			{
 				h_mplusone_m = 0.0;
 				std::cout << "Stopped in Lanczos Process" << std::endl;
+				actual = it1 + 1;
 				break;
 			}
 			KryBasis.col(it1 + 1) = z / Hessen(it1 + 1, it1);
+
+			actual = it1 + 2;
+
+			if(krylov_cache.KrylovDimTol > 0.0)
+			{
+				arma::cx_mat Hessen_trunc = Hessen.submat(0,0,it1,it1);
+				arma::cx_mat expH = arma::expmat(Hessen_trunc * dt);
+				std::complex<double> error_val = expH(it1, 0);
+				double err = std::abs(beta * h_mplusone_m * error_val);
+				if (err < krylov_cache.KrylovDimTol)
+				{
+					break;
+				}
+			}
 		}
+		krylov_cache.KrylovDim = actual;
 	}
 
     SpinSpace::TimePropReturnInfo SpinSpace::TimeAdapativeKrylovRoutine(const arma::sp_cx_mat &H, const arma::cx_colvec &b, arma::cx_double dt, int kryDim, int HilbSize, PropParam &propParam, bool general)
@@ -1347,7 +1439,10 @@ namespace SpinAPI
 
 		while (!keepstep)
 		{
+
+			int trialDim = krylov_cache.KrylovDim > 0 ? krylov_cache.KrylovDim : kryDim;
 			auto KyrlovResult = (general ? KrylovExpmGeneral(H, b, dt, kryDim, HilbSize) : KrylovExpmSymm(H, b, dt, kryDim, HilbSize));
+			krylov_cache.UseCachedHessen = true;
 
 			if(propParam.UseSetTimePoints)
 			{
@@ -1385,6 +1480,10 @@ namespace SpinAPI
             }
             if(R >= propParam.reject_limit)
             {
+                // Step rejected: invalidate cache so next attempt rebuilds the Krylov basis
+                // This allows expanding the subspace dimension to achieve better accuracy
+                krylov_cache.UseCachedHessen = false;
+                krylov_cache.KrylovDim = 0;
                 firstattempt = false;
             }
 

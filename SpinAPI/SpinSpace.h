@@ -268,8 +268,8 @@ namespace SpinAPI
 		double normAmEst(const arma::sp_cx_mat &H, double m, std::mt19937 &generator);																			 // Used in SelectTaylorDegree to normalize
 		return_struct KrylovExpmGeneral(const arma::sp_cx_mat &H, const arma::cx_colvec &b, const arma::cx_double dt, int KryDim, int HilbSize);				 // Krylov subspace method
 		return_struct KrylovExpmSymm(const arma::sp_cx_mat &H, const arma::cx_colvec &b, const arma::cx_double dt, int KryDim, int HilbSize);					 // Krylov subspace method for symmetric decay
-		void ArnoldiProcess(const arma::sp_cx_mat &H, const arma::cx_colvec &b, arma::cx_mat &KryBasis, arma::cx_mat &Hessen, int KryDim, double &h_mplusone_m); // Arnoldi process for propagation using Krylov subsspace
-		void LanczosProcess(const arma::sp_cx_mat &H, const arma::cx_colvec &b, arma::cx_mat &KryBasis, arma::cx_mat &Hessen, int KryDim, double &h_mplusone_m); // Lanczos process for propagation using Krylov subsspace
+		void ArnoldiProcess(const arma::sp_cx_mat &H, const arma::cx_colvec &b, arma::cx_mat &KryBasis, arma::cx_mat &Hessen, int KryDim, double &h_mplusone_m, arma::cx_double dt); // Arnoldi process for propagation using Krylov subsspace
+		void LanczosProcess(const arma::sp_cx_mat &H, const arma::cx_colvec &b, arma::cx_mat &KryBasis, arma::cx_mat &Hessen, int KryDim, double &h_mplusone_m, arma::cx_double dt); // Lanczos process for propagation using Krylov subsspace
 
 		//-----------------------------------------------
 		// Time Adaptive Versions of the KyrlovPropogation Methods
@@ -319,6 +319,16 @@ namespace SpinAPI
 			double timestep_used;
 			bool step_accepted;
 			arma::cx_colvec result;
+		};
+
+		struct TimeAdaptiveKrylovCache
+		{
+			int KrylovDim = 0;
+			double KrylovDimTol = 0.0;
+			arma::cx_mat Hessen;
+			arma::cx_mat KryBasis;
+			bool UseCachedHessen = false;
+			std::size_t HamiltonianHash = 0;
 		};
 
 
