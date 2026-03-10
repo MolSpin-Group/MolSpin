@@ -524,8 +524,10 @@ namespace RunSection
 				std::vector<std::vector<double>> ExptValues;
 				prop_param.TimePrefactor = -arma::cx_double(0.0, 1.0);
 				prop_param.UsePrefactor = true;
+				bool reset = true;
 				for(int itr = 0; itr < mc_samples; itr++)
 				{
+					reset = true;
 					arma::cx_vec prop_state = B.col(itr);
 					if(itr == 0)
 					{
@@ -563,11 +565,11 @@ namespace RunSection
 
 						if(symmetric)
 						{
-							r = space.TimeAdaptiveKrylovSymm(H, prop_state, this->timestep, krylovsize, InitialStateVector.n_rows * Z, prop_param);
+							r = space.TimeAdaptiveKrylovSymm(H, prop_state, this->timestep, krylovsize, InitialStateVector.n_rows * Z, prop_param, reset);
 						}
 						else
 						{
-							r = space.TimeAdaptiveKrylovGeneral(H, prop_state, this->timestep, krylovsize, InitialStateVector.n_rows * Z, prop_param);
+							r = space.TimeAdaptiveKrylovGeneral(H, prop_state, this->timestep, krylovsize, InitialStateVector.n_rows * Z, prop_param, reset);
 						}
 
 						double t = r.timestep;
@@ -589,6 +591,7 @@ namespace RunSection
 						this->timestep = t;
 						prop_state = r.result;
 						step++;
+						reset = false;
 					}
 					if(itr == 0)
 					{

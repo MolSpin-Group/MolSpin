@@ -43,12 +43,14 @@ namespace RunSection
 		// Loop through all SpinSystems to obtain SpinSpace objects
 		auto systems = this->SpinSystems();
 		std::vector<std::pair<std::shared_ptr<SpinAPI::SpinSystem>, std::shared_ptr<SpinAPI::SpinSpace>>> spaces;
+		//unsigned int dimensions = 0;
 		for (auto i = systems.cbegin(); i != systems.cend(); i++)
 		{
 			// Create a SpinSpace for the spin system
 			auto space = std::make_shared<SpinAPI::SpinSpace>(*(*i));
 			space->UseSuperoperatorSpace(false);
 			space->SetTime(0.0);
+			//dimensions += space->SpaceDimensions();
 			spaces.push_back(std::pair<std::shared_ptr<SpinAPI::SpinSystem>, std::shared_ptr<SpinAPI::SpinSpace>>(*i, space));
 		}
 
