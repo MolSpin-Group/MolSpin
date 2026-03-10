@@ -333,6 +333,30 @@ namespace RunSection
 		return params;
     }
 
+    std::string BasicTask::PropogatorToString(Propagator prop)
+    {
+		std::string str;
+		switch (prop)
+		{
+		case Propagator::Default:
+			str = "Default";
+			break;
+		case Propagator::exp:
+			str = "exp";
+			break;
+		case Propagator::RK4:
+			str = "RK4";
+			break;
+		case Propagator::RK45:
+			str = "RK45";
+			break;
+		case Propagator::Krylov:
+			str = "Krylov";
+			break;
+		}
+		return str;
+    }
+
     void BasicTask::GetSamples(std::vector<arma::sp_cx_mat>& H, arma::sp_cx_mat& A, std::vector<SCData>& ori, std::vector<std::vector<double>>& SampleWeights, std::vector<std::vector<std::vector<double>>>& AllWeights)
     {
 		std::vector<SampleCombination> Combinations; 

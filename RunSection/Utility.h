@@ -19,6 +19,10 @@
 
 namespace RunSection
 {
+//region interpolation
+    arma::cx_vec CubicSplineInterpolation(std::vector<double>& x, std::vector<arma::cx_vec> y);
+//endregion interpolation
+
 // region FibSphere
     typedef std::pair<float, float> FibSpherePoint;
     FibSpherePoint* CalculateFibPoints(int n);

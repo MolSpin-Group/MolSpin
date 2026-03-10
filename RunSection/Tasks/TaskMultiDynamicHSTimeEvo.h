@@ -11,6 +11,7 @@
 
 #include "SpinSpace.h"
 #include "BasicTask.h"
+#include "Utility.h"
 
 namespace RunSection
 {
@@ -21,6 +22,7 @@ namespace RunSection
 		double totaltime;
 		unsigned int outputstride;
 
+	private:
 		// Method to obtain creation operators
 		void GetCreationOperators(const std::vector<std::pair<std::shared_ptr<SpinAPI::SpinSystem>, std::shared_ptr<SpinAPI::SpinSpace>>> &,
 								  std::vector<arma::sp_cx_mat> &, const std::vector<arma::cx_mat> &);

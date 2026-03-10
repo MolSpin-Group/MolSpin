@@ -90,6 +90,7 @@ namespace RunSection
 		virtual void DetermineBestPropagator(arma::sp_cx_mat& L); //Method to choose the best propagator based on the stiffness of the Liouvillian
 		virtual void CheckPropagator(arma::sp_cx_mat& L, double initial_t); //if the propagator has been defined, check if it's suitable for the given system
 		virtual SpinAPI::SpinSpace::PropParam GetTimeAdaptiveProperties(double);
+		std::string PropogatorToString(Propagator prop);
 
 		// Allow access to settings, properties, spin systems, etc. for derived classes
 		std::shared_ptr<const Settings> RunSettings() const;

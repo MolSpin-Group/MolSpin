@@ -130,28 +130,161 @@ namespace RunSection
 			timedependentTransitions |= i->second->HasTimedependentTransitions();
 		}
 
+		//Determine best propagator based on the stiffness of the system
+		if(this->prop == Propagator::Default)
+		{
+			std::vector<Propagator> suitableProps;
+			for (int i = 0; i < spaces.size(); i++)
+			{
+				this->DetermineBestPropagator(H[i] + K[i]);
+				suitableProps.push_back(this->prop);
+			}
+			//choose most suitable propagator among all systems (if they differ, choose the one that is best for the stiffest system)
+			suitableProps = std::sort(suitableProps.begin(), suitableProps.end(), [](Propagator a, Propagator b) { return static_cast<int>(a) < static_cast<int>(b); });
+			std::vector<int> gaps = {};
+			int gap = 0;
+			int currentProp = static_cast<int>(suitableProps[0]);
+			for(auto p = suitableProps.cbegin(); p != suitableProps.cend(); p++)
+			{
+				if(static_cast<int>(*p) != currentProp)
+				{
+					gaps.push_back(gap);
+					gap = 0;
+					currentProp = static_cast<int>(*p);
+				}
+				gap++;
+			}
+			gaps.push_back(gap);
+			int maxGap = 0;
+			int maxGapIndex = 0;
+			int totalGap = 0;
+			for(unsigned int i = 0; i < gaps.size(); i++)
+			{
+				if(gaps[i] > maxGap)
+				{
+					maxGap = gaps[i];
+					maxGapIndex = i;
+				}
+			}
+			for(unsigned int i = 0; i < maxGapIndex; i++)
+			{
+				totalGap += gaps[i];
+			}
+			this->prop = suitableProps[totalGap];
+			this->Log() << "Selected propagator: " << PropagatorToString(this->prop) << std::endl;
+		}
+
 		// ---------------------------------------------------------------------------------------------------
 		// Perform the calculation
 		// ---------------------------------------------------------------------------------------------------
 		this->Log() << "Ready to perform calculation." << std::endl;
 		this->OutputResults(spaces, rho, 0); // Write initial state results
-		unsigned int steps = static_cast<unsigned int>(std::abs(this->totaltime / this->timestep));
-		for (unsigned int n = 0; n < steps; n++)
+		//unsigned int steps = static_cast<unsigned int>(std::abs(this->totaltime / this->timestep));
+		SpinAPI::SpinSpace::PropParam propParam = this->GetTimeAdaptiveProperties(this->timestep);
+		double currentTime = 0.0;
+		double TotalTime = this->totaltime;
+
+		double dw = 0.9;
+
+		propParam.f2 = 1.5;
+		propParam.f1 = 0.5;
+		propParam.safety = 0.5;
+
+		std::vector<double> LocalTime;
+		std::vector<SpinAPI::SpinSpace::PropParam> LocalPropParams;
+		std::vector<std::vector<double>> LocalTimeSteps;
+		std::vector<std::vector<arma::cx_mat>> InterpolationStates;
+
+		//run quick propogation just to check the initial timestep is suitable, if not reduce it until it is
+		if(this->prop == Propagator::Krylov)
+		{
+			double minumum = std::numeric_limits<double>::max();
+			for(unsigned int i = 0; i < spaces.size(); i++)
+			{
+				LocalTime.push_back(0.0);
+				LocalPropParams.push_back(propParam);
+				InterpolationStates.push_back({rho[i]});
+				arma::sp_cx_mat H = H[i] + K[i] + dH[i] + dK[i];
+				//auto r = spaces[i].second->TimeAdaptiveKrylovGeneral(H, rho[i], this->timestep, 30, H.n_rows, propParam, true);
+				//forgotten that rho is a matrix not a vector
+				if(r.step_accepted == false)
+				{
+					this->Log() << "Initial timestep of " << this->timestep << " is too large for the Krylov propagator";
+					this->Log() << ", accepted timestep was: " << r.timestep_used << std::endl;
+				}
+				if(r.timestep_used < minumum)
+				{
+					minumum = r.timestep_used;
+				}
+			}
+			this->timestep = minumum;
+			this->Log() << "Using initial timestep of " << this->timestep << " for the Krylov propagator." << std::endl;
+			for(unsigned int i = 0; i < spaces.size(); i++)
+			{
+				LocalTimeSteps.push_back({this->timestep});
+			}
+		}
+
+		auto minTimeStep = [](std::vector<double> timesteps) {
+			std::sort(timesteps.begin(), timesteps.end());
+			return timesteps[0];
+		};
+
+		int step = 0;
+		while(currentTime < TotalTime)
+		//for (unsigned int n = 0; n < steps; n++)
 		{
 			// Obtain creation operators
-			this->GetCreationOperators(spaces, C, rho);
+			//this->GetCreationOperators(spaces, C, rho);
+//
+			//// Propagate
+			//// this->AdvanceStep_AsyncLeapfrog(spaces, H, dH, K, dK, C, rho);
+			//this->AdvanceStep_RK4(spaces, H, dH, K, dK, C, rho);
+//
+			//// Print results
+			//if (n % this->outputstride == 0)
+			//	this->OutputResults(spaces, rho, n + 1);
+//
+			//// Update time-dependent interactions or reaction operators
+			//if ((timedependentInteractions || timedependentTransitions) && n < steps - 1)
+			//	this->UpdateTimeDependences(spaces, dH, dK, n + 1);
 
-			// Propagate
-			// this->AdvanceStep_AsyncLeapfrog(spaces, H, dH, K, dK, C, rho);
-			this->AdvanceStep_RK4(spaces, H, dH, K, dK, C, rho);
+			//Plan - propogate each system independently, each with there own adaptive timestep and then interpolate after each step 
+			//The global max timestep should be capped so that each system is guaranteed to all be in a given global window at the end of each step, 
+			//the size of the window is determined by the smallest timestep, e.g. if the current time is 1.0 and the smallest timstep is 0.5 then the middle of the window is 1.5 and the max is 1.95 (90% of the timestep), likewise the minimum is 1.05
+			//this ensures that all systems are within one timestep of each at the end of the step 
 
-			// Print results
-			if (n % this->outputstride == 0)
-				this->OutputResults(spaces, rho, n + 1);
+			//we have to assume the first timestep used is good 
+			this->timestep = minTimeStep(LocalTimeSteps);
+			double midpoint = currentTime + this->timestep;
+			double maxTime = midpoint + dw/2.0 * this->timestep;
+			double minTime = midpoint - dw/2.0 * this->timestep;
+			std::array<double,3> timeWindow = {minTime, midpoint, maxTime};
+			for(int i = 0; i < spaces.size(); i++)
+			{
+				double ctime = currentTime;
+				double max = timeWindow[2] - ctime;
+				double min = timeWindow[0] - ctime;
+				double maxGrowth = max / LocalTimeSteps[step][i];
+				double minGrowth = min / LocalTimeSteps[step][i];
+				LocalPropParams[i].f2 = std::min(propParam.f2, maxGrowth);
+				LocalPropParams[i].f1 = std::max(propParam.f1, minGrowth);
 
-			// Update time-dependent interactions or reaction operators
-			if ((timedependentInteractions || timedependentTransitions) && n < steps - 1)
-				this->UpdateTimeDependences(spaces, dH, dK, n + 1);
+				arma::sp_cx_mat H = H[i] + K[i] + dH[i] + dK[i];
+				arma::cx_vec prop_state = rho[i];
+				auto r = spaces[i].second->TimeAdaptiveKrylovGeneral(H, prop_state, LocalTimeSteps[step][i], 30, H.n_rows, LocalPropParams[i], true);
+				//forgotten that rho is a matrix not a vector
+				InterpolationStates[i].push_back(r.result);
+				LocalTimeSteps[step][i].push_back(r.timestep_used);
+				LocalTime[i] += r.timestep_used;
+			}
+			//get minimum LocalTime and set that to current time, then interpolate all states back to that time
+			double minLocalTime = timeWindow[2] + 1.0;
+			for (int i = 0; i < LocalTime.size(); i++)
+			{
+				minLocalTime = std::min(minLocalTime, LocalTime[i]);
+			}
+			currentTime = minLocalTime;
 		}
 		// ---------------------------------------------------------------------------------------------------
 
@@ -361,6 +494,8 @@ namespace RunSection
 				return false;
 			}
 		}
+
+		this->prop = Propagator::Default;
 
 		// Get totaltime
 		if (this->Properties()->Get("totaltime", inputTotaltime))

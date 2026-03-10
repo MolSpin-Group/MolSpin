@@ -25,6 +25,11 @@ namespace RunSection
         std::complex<double> h_res;
     };
 
+    arma::cx_vec CubicSplineInterpolation(std::vector<double> &x, std::vector<arma::cx_vec> y)
+    {
+        return arma::cx_vec();
+    }
+
     FibSpherePoint *CalculateFibPoints(int n)
     {
         FibSpherePoint* TempPointArray = (FibSpherePoint*)malloc(n * sizeof(FibSpherePoint));
