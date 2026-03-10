@@ -272,7 +272,7 @@ namespace RunSection
 
 				arma::sp_cx_mat H = H[i] + K[i] + dH[i] + dK[i];
 				arma::cx_vec prop_state = rho[i];
-				auto r = spaces[i].second->TimeAdaptiveKrylovGeneral(H, prop_state, LocalTimeSteps[step][i], 30, H.n_rows, LocalPropParams[i], true);
+				//auto r = spaces[i].second->TimeAdaptiveKrylovGeneral(H, prop_state, LocalTimeSteps[step][i], 30, H.n_rows, LocalPropParams[i], true);
 				//forgotten that rho is a matrix not a vector
 				InterpolationStates[i].push_back(r.result);
 				LocalTimeSteps[step][i].push_back(r.timestep_used);

@@ -1408,10 +1408,10 @@ namespace SpinAPI
 		TimePropReturnInfo ReturnInfo;
 		krylov_cache.KrylovDimTol = propParam.atol;
 
-		//if (propParam.UseSetTimePoints)
-		//{
-		//	dt = propParam.GetNextTimePoint();
-		//}
+		if (propParam.UseSetTimePoints)
+		{
+			dt = propParam.GetNextTimePoint();
+		}
 		if(propParam.UsePrefactor)
 		{
 			dt = propParam.TimePrefactor * dt;
@@ -1489,7 +1489,30 @@ namespace SpinAPI
 		return TimeAdapativeKrylovRoutine(H, b, dt, kryDim, HilbSize, propParam, true, reset);
 	}
 
-	SpinSpace::TimePropReturnInfo SpinSpace::TimeAdaptiveKrylovSymm(const arma::sp_cx_mat &H, const arma::cx_colvec &b, arma::cx_double dt, int kryDim, int HilbSize, PropParam &propParam, bool reset)
+	//slighty hacky way to get it to work on matricies;
+    TimePropReturnInfo SpinSpace::TimeAdaptiveKrylovGeneral(const arma::sp_cx_mat &H, const arma::cx_mat &b, arma::cx_double dt, int kryDim, int HilbSize, PropParam &propParam, bool reset)
+    {
+		TimePropReturnInfo ReturnInfo;
+		ReturnInfo.result_mat = arma::cx_mat(b.n_rows, b.n_cols);
+		//do first column to get the timestep, then apply that timestep to the rest of the columns
+		auto firstcol = TimeAdapativeKrylovRoutine(H, b.col(0), dt, kryDim, HilbSize, propParam, reset);
+		ReturnInfo = firstcol;
+		ReturnInfo.result_mat.col(0) = firstcol.result;
+		dt = firstcol.timestep_used;
+		auto propParamCopy = propParam;
+		propParamCopy.UseSetTimePoints = true;
+		propParamCopy.SetTimePoints({dt});
+		for(int i = 1; i < b.n_cols; i++)
+		{
+			auto colresult = TimeAdapativeKrylovRoutine(H, b.col(i), dt, kryDim, HilbSize, propParamCopy, true);
+			ReturnInfo.result_mat.col(i) = colresult.result;
+			propParamCopy.ResetTrajectory();
+		}
+
+		return ReturnInfo;
+    }
+
+    SpinSpace::TimePropReturnInfo SpinSpace::TimeAdaptiveKrylovSymm(const arma::sp_cx_mat &H, const arma::cx_colvec &b, arma::cx_double dt, int kryDim, int HilbSize, PropParam &propParam, bool reset)
 	{
 		return TimeAdapativeKrylovRoutine(H, b, dt, kryDim, HilbSize, propParam, false, reset);
 	}
