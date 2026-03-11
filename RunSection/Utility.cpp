@@ -25,9 +25,13 @@ namespace RunSection
         std::complex<double> h_res;
     };
 
-    arma::cx_vec CubicSplineInterpolation(std::vector<double> &x, std::vector<arma::cx_vec> y)
+    arma::cx_mat CubicSplineInterpolation(Buffer<arma::cx_mat>& buff, double T)
     {
-        return arma::cx_vec();
+        arma::vec timeList = buff.time();
+        MatrixSpline ms;
+        ms.build(timeList, buff.rhoPoints);
+        arma::cx_mat rho_Tk = ms.Eval(T);
+        return rho_Tk;
     }
 
     FibSpherePoint *CalculateFibPoints(int n)

@@ -213,17 +213,17 @@ namespace RunSection
 				LocalPropParams.push_back(propParam);
 				InterpolationStates.push_back({rho[i]});
 				arma::cx_mat H = H[i] + K[i] + dH[i] + dK[i];
-				//auto r = spaces[i].second->TimeAdaptiveKrylovGeneral(H, rho[i], this->timestep, 30, H.n_rows, propParam, true);
+				auto r = spaces[i].second->TimeAdaptiveKrylovGeneral(H, rho[i], this->timestep, 30, H.n_rows, propParam, true);
 				//forgotten that rho is a matrix not a vector
-				//if(r.step_accepted == false)
-				//{
-				//	this->Log() << "Initial timestep of " << this->timestep << " is too large for the Krylov propagator";
-				//	this->Log() << ", accepted timestep was: " << r.timestep_used << std::endl;
-				//}
-				//if(r.timestep_used < minumum)
-				//{
-				//	minumum = r.timestep_used;
-				//}
+				if(r.step_accepted == false)
+				{
+					this->Log() << "Initial timestep of " << this->timestep << " is too large for the Krylov propagator";
+					this->Log() << ", accepted timestep was: " << r.timestep_used << std::endl;
+				}
+				if(r.timestep_used < minumum)
+				{
+					minumum = r.timestep_used;
+				}
 			}
 			this->timestep = minumum;
 			this->Log() << "Using initial timestep of " << this->timestep << " for the Krylov propagator." << std::endl;
@@ -280,11 +280,10 @@ namespace RunSection
 
 				arma::cx_mat H = H[i] + K[i] + dH[i] + dK[i];
 				arma::cx_vec prop_state = rho[i];
-				//auto r = spaces[i].second->TimeAdaptiveKrylovGeneral(H, prop_state, LocalTimeSteps[step][i], 30, H.n_rows, LocalPropParams[i], true);
-				//forgotten that rho is a matrix not a vector
-				//InterpolationStates[i].push_back(r.result);
-				//LocalTimeSteps[step][i].push_back(r.timestep_used);
-				//LocalTime[i] += r.timestep_used;
+				auto r = spaces[i].second->TimeAdaptiveKrylovGeneral(H, prop_state, LocalTimeSteps[step][i], 30, H.n_rows, LocalPropParams[i], true);
+				InterpolationStates[i].push_back(r.result);
+				LocalTimeSteps[step][i].push_back(r.timestep_used);
+				LocalTime[i] += r.timestep_used;
 			}
 			//get minimum LocalTime and set that to current time, then interpolate all states back to that time
 			double minLocalTime = timeWindow[2] + 1.0;

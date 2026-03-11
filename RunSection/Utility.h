@@ -15,12 +15,13 @@
 // #include <Eigen/Core>
 #include "SpinAPIfwd.h"
 #include "SpinSpace.h"
+#include "CubicSpline.h"
 #include <utility>
 
 namespace RunSection
 {
 //region interpolation
-    arma::cx_vec CubicSplineInterpolation(std::vector<double>& x, std::vector<arma::cx_vec> y);
+    arma::cx_mat CubicSplineInterpolation(Buffer<arma::cx_mat>& buff, double T);
 //endregion interpolation
 
 // region FibSphere
@@ -180,7 +181,7 @@ namespace RunSection
     std::vector<int> LUDecomposition(arma::sp_cx_mat &K);
     arma::cx_vec LUSolve(arma::sp_cx_mat &K, std::vector<int> &P, arma::cx_vec &b); //LU decomposition and solve
 
-// endregion SparseMatrixSolvers
+    // endregion SparseMatrixSolvers
 }
 
 #endif
