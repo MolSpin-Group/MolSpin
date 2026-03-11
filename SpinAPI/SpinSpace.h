@@ -261,6 +261,17 @@ namespace SpinAPI
 			}
 		};
 
+		struct return_structMat
+		{
+			arma::cx_mat result;
+			double error_estimate;
+
+			operator arma::cx_mat()
+			{
+				return result;
+			}
+		};
+
 		arma::cx_colvec SUZstate(const int &spinmult, std::mt19937 &generator);																					 // returns stochastically determined SU(Z) state
 		arma::cx_colvec CoherentState(std::vector<SpinAPI::system_ptr>::const_iterator i, std::mt19937 &generator);												 // returns stochastically determined coherent state
 		arma::cx_mat HighamProp(arma::sp_cx_mat &H, arma::cx_mat &B, const std::complex<double> t, const std::string precision, arma::mat &M);					 // Propagation method using: https://doi.org/10.1137/100788860
@@ -270,6 +281,9 @@ namespace SpinAPI
 		return_struct KrylovExpmSymm(const arma::sp_cx_mat &H, const arma::cx_colvec &b, const arma::cx_double dt, int KryDim, int HilbSize);					 // Krylov subspace method for symmetric decay
 		bool ArnoldiProcess(const arma::sp_cx_mat &H, const arma::cx_colvec &b, arma::cx_mat &KryBasis, arma::cx_mat &Hessen, int KryDim, double &h_mplusone_m, arma::cx_double dt = arma::cx_double(0.0, 0.0)); // Arnoldi process for propagation using Krylov subsspace
 		bool LanczosProcess(const arma::sp_cx_mat &H, const arma::cx_colvec &b, arma::cx_mat &KryBasis, arma::cx_mat &Hessen, int KryDim, double &h_mplusone_m, arma::cx_double dt = arma::cx_double(0.0, 0.0)); // Lanczos process for propagation using Krylov subsspace
+		
+		return_structMat KrylovExpmGeneral(const arma::sp_cx_mat &H, const arma::cx_mat &b, const arma::cx_double dt, int KryDim, int HilbSize);
+		bool ArnoldiProcess(const arma::sp_cx_mat &H, const arma::cx_mat &b, arma::cx_mat &KryBasis, arma::cx_mat &Hessen, int KryDim, double &h_mplusone_m, int p, double beta, arma::cx_double dt = arma::cx_double(0.0, 0.0));
 
 		//-----------------------------------------------
 		// Time Adaptive Versions of the KyrlovPropogation Methods
@@ -313,13 +327,21 @@ namespace SpinAPI
 				CurrentTrajectoryStep = 0;
 			}
     	};
-    	struct TimePropReturnInfo
+    	
+		struct TimePropReturnInfo
     	{
         	double timestep;
 			double timestep_used;
 			bool step_accepted;
 			arma::cx_colvec result;
-			arma::cx_mat result_mat;
+		};
+
+		struct TimePropReturnInfoMat
+    	{
+        	double timestep;
+			double timestep_used;
+			bool step_accepted;
+			arma::cx_mat result;
 		};
 
 		struct TimeAdaptiveKrylovCache
@@ -333,6 +355,9 @@ namespace SpinAPI
 		TimePropReturnInfo TimeAdaptiveKrylovGeneral(const arma::sp_cx_mat &H, const arma::cx_colvec &b, arma::cx_double dt, int kryDim, int HilbSize, PropParam &propParam, bool reset = true);
 		TimePropReturnInfo TimeAdaptiveKrylovGeneral(const arma::sp_cx_mat &H, const arma::cx_mat &b, arma::cx_double dt, int kryDim, int HilbSize, PropParam &propParam, bool reset = true);
 		TimePropReturnInfo TimeAdaptiveKrylovSymm(const arma::sp_cx_mat &H, const arma::cx_colvec &b, arma::cx_double dt, int kryDim, int HilbSize, PropParam &propParam, bool reset = true);
+
+		TimePropReturnInfoMat TimeAdapativeKrylovRoutine(const arma::sp_cx_mat &H, const arma::cx_mat &b, arma::cx_double dt, int kryDim, int HilbSize, PropParam &propParam, bool general, bool reset = true);
+		TimePropReturnInfoMat TimeAdaptiveKrylovGeneral(const arma::sp_cx_mat &H, const arma::cx_mat &b, arma::cx_double dt, int kryDim, int HilbSize, PropParam &propParam, bool reset = true);
 
 		// ------------------------------------------------
 		// Hamiltonian representations in the space (SpinSpace_hamiltonians.cpp)
