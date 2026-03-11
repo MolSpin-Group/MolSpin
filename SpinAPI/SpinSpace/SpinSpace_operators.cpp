@@ -1320,7 +1320,7 @@ namespace SpinAPI
 			KryBasis.col(it1 + 1) = z / Hessen(it1 + 1, it1);
 			actual = it1 + 1;
 
-			if(krylov_cache.KrylovDimTol > 0.0 && dt != std::abs(0.0))
+			if(krylov_cache.KrylovDimTol > 0.0 && std::abs(dt) != 0.0)
 			{
 				arma::cx_mat Hessen_trunc = Hessen.submat(0,0,it1,it1);
 				arma::cx_mat expH = arma::expmat(Hessen_trunc * dt);
@@ -1431,7 +1431,7 @@ namespace SpinAPI
 		if(KryDim > krylov_cache.KrylovDim)
 		{
 			KryDim = krylov_cache.KrylovDim;
-			Hessen.resize(KryDim * p; KryDim * p);
+			Hessen.resize(KryDim * p, KryDim * p);
 			KryBasis.resize(HilbSize, KryDim * p);
 		}
 
@@ -1441,7 +1441,7 @@ namespace SpinAPI
 		arma::cx_mat Exponent = arma::expmat(Hessen * dt);
 		arma::cx_mat W = Exponent * e1;
 
-		arma::cx_mat error_mat = expH.submat((KryDim-1) * p, 0, (KryDim-1)*p - 1, p-1);
+		arma::cx_mat error_mat = Exponent.submat((KryDim-1) * p, 0, (KryDim-1)*p - 1, p-1);
 		double err = beta * h_mplusone_m * arma::norm(error_mat, "fro");
 
 		SpinSpace::return_structMat step;
@@ -1501,7 +1501,7 @@ namespace SpinAPI
 			KryBasis.cols((it1+1)*p, (it1 + 2)*p -2) = Z / znorm;
 			actual = it1 + 1;
 			
-			if(krylov_cache.KrylovDimTol > 0.0 && dt != std::abs(0.0,0.0))
+			if(krylov_cache.KrylovDimTol > 0.0 && std::abs(dt) != 0.0)
 			{
 				int temp = (it1 + 1) * p - 1;
 				arma::cx_mat Hessen_trunc = Hessen.submat(0,0,temp, temp);
@@ -1637,22 +1637,22 @@ namespace SpinAPI
 		
 			if(propParam.UseSetTimePoints)
 			{
-				ReturnInfo.result = KyrlovResult.result;
+				ReturnInfo.result = KrylovResult.result;
 				ReturnInfo.step_accepted = true;
 				ReturnInfo.timestep = propParam.GetNextTimePoint();
 				ReturnInfo.timestep_used = (dt / propParam.TimePrefactor).real();
 				return ReturnInfo;
 			}
 
-			double ynorm = arma::norm(KyrlovResult.result,"fro");
+			double ynorm = arma::norm(KrylovResult.result,"fro");
 			double tol = propParam.atol + propParam.rtol * ynorm;
-			double R = KyrlovResult.error_estimate / tol;
+			double R = KrylovResult.error_estimate / tol;
 
 			dumpstep = Adjusth(R, propParam.safety, propParam.f1, propParam.f2, dumpstep);
 
 			if(R <= propParam.reject_limit)
             {
-                ReturnInfo.result = KyrlovResult.result;
+                ReturnInfo.result = KrylovResult.result;
 				ReturnInfo.timestep_used = (dt / propParam.TimePrefactor).real();
 				keepstep = true;
             }
@@ -1685,7 +1685,7 @@ namespace SpinAPI
 		return ReturnInfo;
     }
 
-    TimePropReturnInfoMat SpinSpace::TimeAdaptiveKrylovGeneral(const arma::sp_cx_mat &H, const arma::cx_mat &b, arma::cx_double dt, int kryDim, int HilbSize, PropParam &propParam, bool reset)
+    SpinSpace::TimePropReturnInfoMat SpinSpace::TimeAdaptiveKrylovGeneral(const arma::sp_cx_mat &H, const arma::cx_mat &b, arma::cx_double dt, int kryDim, int HilbSize, PropParam &propParam, bool reset)
     {
         return TimeAdapativeKrylovRoutine(H,b,dt,kryDim,HilbSize, propParam,true,reset);
     }

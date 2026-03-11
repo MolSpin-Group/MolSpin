@@ -281,6 +281,12 @@ namespace RunSection
 		propogator_cached = true;
 	}
 
+    void BasicTask::DetermineBestPropagator(arma::cx_mat &L)
+    {
+		arma::sp_cx_mat Lsp = arma::conv_to<arma::sp_cx_mat>::from(L);
+		DetermineBestPropagator(Lsp);
+    }
+
     void BasicTask::CheckPropagator(arma::sp_cx_mat& L, double initial_t)
     {
 		if(propogator_cached)

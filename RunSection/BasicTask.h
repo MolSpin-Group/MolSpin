@@ -88,6 +88,7 @@ namespace RunSection
 		bool propogator_cached;
 		virtual void SelectPropagator(std::string str); //Method to choose the Propagator for timeevo tasks
 		virtual void DetermineBestPropagator(arma::sp_cx_mat& L); //Method to choose the best propagator based on the stiffness of the Liouvillian
+		virtual void DetermineBestPropagator(arma::cx_mat& L);
 		virtual void CheckPropagator(arma::sp_cx_mat& L, double initial_t); //if the propagator has been defined, check if it's suitable for the given system
 		virtual SpinAPI::SpinSpace::PropParam GetTimeAdaptiveProperties(double);
 		std::string PropogatorToString(Propagator prop);
