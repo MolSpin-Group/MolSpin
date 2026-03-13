@@ -1441,7 +1441,7 @@ namespace SpinAPI
 		arma::cx_mat Exponent = arma::expmat(Hessen * dt);
 		arma::cx_mat W = Exponent * e1;
 
-		arma::cx_mat error_mat = Exponent.submat((KryDim-1) * p, 0, (KryDim-1)*p - 1, p-1);
+		arma::cx_mat error_mat = Exponent.submat((KryDim-1) * p, 0, (KryDim)*p - 1, p-1);
 		double err = beta * h_mplusone_m * arma::norm(error_mat, "fro");
 
 		SpinSpace::return_structMat step;
@@ -1464,11 +1464,13 @@ namespace SpinAPI
 			arma::cx_mat Vj = KryBasis.cols(j_start, j_end);
 			arma::cx_mat Z = H * Vj;
 
+			double zn = arma::norm(Z, "fro");
+
 			//Gran-Schmidt process
-			for(int it2 = 0; it2 < it1; it2++)
+			for(int it2 = 0; it2 <= it1; it2++)
 			{
 				unsigned int k_start = it2 * p;
-				unsigned int k_end = it2 + p -1;
+				unsigned int k_end = k_start + p -1;
 				
 				arma::cx_mat Vk = KryBasis.cols(k_start, k_end);
 				
@@ -1489,11 +1491,11 @@ namespace SpinAPI
 			//j_end + 1 = (it1 + 1) * p
 			Hessen.submat(j_end + 1, j_start, ((it1 + 2)*p)-1, j_end) = znorm * arma::eye<arma::cx_mat>(p,p);
 
-			if(znorm < 1e-14)
+			if(znorm == 0.0)
 			{
 				h_mplusone_m = 0.0;
 				//std::cout << "Stopped in Arnoldi Process" << std::endl;
-				pass = false;
+				//pass = false;
 				actual = it1 + 1;
 				break;
 			}
@@ -1625,6 +1627,37 @@ namespace SpinAPI
                 return h * std::min(f2, std::max(f1, safety * std::pow(R, -1.0/5.0)));
             };
 
+		//given that b is hermitian positive
+		arma::vec w;
+		arma::cx_mat V;
+		arma::eig_sym(w,V,b);
+
+
+		arma::uvec idx = arma::sort_index(w, "descend");
+		w = w(idx);
+		V = V.cols(idx);
+
+		arma::uword p = 0;
+		double eps = 1e-8;
+		double cumaltiveweight = 0.0;
+		for(unsigned int i = 0; i < w.n_elem; i++)
+		{
+			cumaltiveweight += w(i);
+			p++;
+			if(cumaltiveweight >= 1 - eps) {break;}
+		}
+
+		arma::cx_mat B(HilbSize, p, arma::fill::zeros);
+
+		for (arma::uword k = 0; k < p; ++k) {
+    		B.col(k) = std::sqrt(w(k)) * V.col(k);
+		}
+		
+		dt = std::complex<double>(0.0,-1.0) * dt;
+
+		arma::cx_mat test = (H * b - b * H);
+		double norm = arma::norm(test, "fro");
+
 		while (!keepstep)
 		{
 			int trialDim = krylov_cache.KrylovDim > 0 ? krylov_cache.KrylovDim : kryDim;
@@ -1633,7 +1666,7 @@ namespace SpinAPI
 				trialDim = kryDim;
 			}
 
-			auto KrylovResult = KrylovExpmGeneral(H,b,dt,trialDim,HilbSize);
+			auto KrylovResult = KrylovExpmGeneral(H,B,dt,trialDim,HilbSize);
 		
 			if(propParam.UseSetTimePoints)
 			{
@@ -1652,7 +1685,7 @@ namespace SpinAPI
 
 			if(R <= propParam.reject_limit)
             {
-                ReturnInfo.result = KrylovResult.result;
+                ReturnInfo.result = KrylovResult.result * KrylovResult.result.t();
 				ReturnInfo.timestep_used = (dt / propParam.TimePrefactor).real();
 				keepstep = true;
             }
@@ -1685,9 +1718,10 @@ namespace SpinAPI
 		return ReturnInfo;
     }
 
-    SpinSpace::TimePropReturnInfoMat SpinSpace::TimeAdaptiveKrylovGeneral(const arma::sp_cx_mat &H, const arma::cx_mat &b, arma::cx_double dt, int kryDim, int HilbSize, PropParam &propParam, bool reset)
+    SpinSpace::TimePropReturnInfoMat SpinSpace::TimeAdaptiveKrylovGeneral(const arma::cx_mat &H, const arma::cx_mat &b, arma::cx_double dt, int kryDim, int HilbSize, PropParam &propParam, bool reset)
     {
-        return TimeAdapativeKrylovRoutine(H,b,dt,kryDim,HilbSize, propParam,true,reset);
+		arma::sp_cx_mat Hsparse = arma::conv_to<arma::sp_cx_mat>::from(H);
+        return TimeAdapativeKrylovRoutine(Hsparse,b,dt,kryDim,HilbSize, propParam,true,reset);
     }
 
     SpinSpace::TimePropReturnInfo SpinSpace::TimeAdaptiveKrylovGeneral(const arma::sp_cx_mat &H, const arma::cx_colvec &b, arma::cx_double dt, int kryDim, int HilbSize, PropParam &propParam, bool reset)

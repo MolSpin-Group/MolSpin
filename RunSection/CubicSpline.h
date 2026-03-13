@@ -22,62 +22,78 @@ namespace RunSection
         vector = 1,
         matrix = 2
     };
+
     template<typename t>
-        class Buffer 
-        {
-        public:
-            ValType type;
-            std::vector<t> rhoPoints;
-        private:
-            int max;
-            std::vector<double> timePoints;
-        public:
-            Buffer(int n, ValType ty)
-                :max(n), type(ty)
-            {}
-            void push(double time, t element) {
-                timePoints.push_back(time);
-                rhoPoints.push_back(t);
-                if((int)timePoints.size() > max)
-                {
-                    timePoints.erase(timePoints.begin());
-                    rhoPoints.erase(rhoPoints.begin());
-                }
+    class Buffer 
+    {
+    public:
+        ValType type;
+        std::vector<t> rhoPoints;
+    private:
+        int max;
+        std::vector<std::complex<double>> timePoints;
+    public:
+        Buffer(int n, ValType ty)
+            :max(n), type(ty)
+        {}
+
+        void push(double time, t element) {
+            timePoints.push_back(std::complex<double>(time));
+            rhoPoints.push_back(element);
+            if((int)timePoints.size() > max)
+            {
+                timePoints.erase(timePoints.begin());
+                rhoPoints.erase(rhoPoints.begin());
             }
-            int size() const {return (int)timePoints.size()}
-            arma::vec time() {
-                arma::vec tvec(size());
-                for(int i = 0; i < size(); i++)
-                {
-                    tvec(i) = timePoints[i];
-                }
-                return tvec;
-            }
-        };
-
-        class ScalerSpline
-        {
-        public:
-            arma::vec timePoints;
-            arma::cx_vec y;
-            arma::cx_vec m;
-
-            void Build(const arma::vec& t, const arma::cx_vec& yPoints);
-            arma::cx_double Eval(double T) const;
-        private:
-            arma::cx_double EvalFull(double T) const;
-            arma::cx_double Eval2points(double T) const;
-        };
-
-        class MatrixSpline
-        {
-        public:
-            std::vector<ScalerSpline> splines;
-            int dim;
-
-            void build(const arma::cx_vec t, const std::vector<arma::cx_mat>& rho_hist);
-            arma::cx_mat Eval(double T) const;
         }
+
+        void replace(double time, t element) {
+            timePoints.pop_back();
+            this->push(time, element);
+        }
+
+        int size() const {return (int)timePoints.size();}
+
+        arma::cx_vec time() {
+            arma::cx_vec tvec(size());
+            for(int i = 0; i < size(); i++)
+            {
+                tvec(i) = timePoints[i];
+            }
+            return tvec;
+        }
+    };
+
+    class ScalerSpline
+    {
+    public:
+        arma::cx_vec timePoints;
+        arma::cx_vec y;
+        arma::cx_vec m;
+        void Build(const arma::cx_vec& t, const arma::cx_vec& yPoints);
+        arma::cx_double Eval(double T);
+    private:
+        arma::cx_double EvalFull(double T);
+        arma::cx_double Eval2points(double T);
+    };
+
+    class MatrixSpline
+    {
+    public:
+        std::vector<ScalerSpline> splines;
+        int dim;
+        void build(const arma::cx_vec t, const std::vector<arma::cx_mat>& rho_hist);
+        arma::cx_mat Eval(double T);
+    };
+
+    class VectorSpline
+    {
+    public:
+        std::vector<ScalerSpline> splines;
+        int dim;
+        void build(const arma::cx_vec t, const std::vector<arma::cx_vec>& rho_hist);
+        arma::cx_vec Eval(double T);
+    };
 
 }
 #endif

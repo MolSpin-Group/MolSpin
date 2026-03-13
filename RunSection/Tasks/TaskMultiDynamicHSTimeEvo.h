@@ -43,11 +43,11 @@ namespace RunSection
 								   const arma::sp_cx_mat &C, const arma::cx_mat &rho);
 
 		// Method to obtain the results from the current state
-		void OutputResults(const std::vector<std::pair<std::shared_ptr<SpinAPI::SpinSystem>, std::shared_ptr<SpinAPI::SpinSpace>>> &, const std::vector<arma::cx_mat> &, const unsigned int);
+		void OutputResults(const std::vector<std::pair<std::shared_ptr<SpinAPI::SpinSystem>, std::shared_ptr<SpinAPI::SpinSpace>>> &, const std::vector<arma::cx_mat> &, const double);
 
 		// Method to update time-dependent interactions or reactions
 		void UpdateTimeDependences(const std::vector<std::pair<std::shared_ptr<SpinAPI::SpinSystem>, std::shared_ptr<SpinAPI::SpinSpace>>> &,
-								   std::vector<arma::sp_cx_mat> &, std::vector<arma::sp_cx_mat> &, unsigned int);
+								   std::vector<arma::sp_cx_mat> &, std::vector<arma::sp_cx_mat> &, const double);
 
 		// Write header for the output file
 		void WriteHeader(std::ostream &);

@@ -27,7 +27,7 @@ namespace RunSection
 
     arma::cx_mat CubicSplineInterpolation(Buffer<arma::cx_mat>& buff, double T)
     {
-        arma::vec timeList = buff.time();
+        arma::cx_vec timeList = buff.time();
         MatrixSpline ms;
         ms.build(timeList, buff.rhoPoints);
         arma::cx_mat rho_Tk = ms.Eval(T);

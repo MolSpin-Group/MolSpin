@@ -250,7 +250,8 @@ Run
 {
     Task TE
     {
-        type       = MultiStaticSS-timeevolution;
+        //type       = MultiStaticSS-timeevolution;
+        type = MultiDynamicHS-timeevolution;
         logfile    = "NV_centre_N14_GSLAC.log";
         datafile   = "NV_centre_N14_GSLAC.dat";
         ReactionOperator = Haberkorn;
@@ -270,7 +271,8 @@ Settings
 {
     Settings general
 	{
-		steps = 2000;
+		//steps = 2000;
+        steps = 1;
 	}
 
     Output fieldstrength

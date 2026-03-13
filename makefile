@@ -40,7 +40,7 @@ DEP_MSDPARSER = $(PATH_MSDPARSER)/MSDParser.h
 # --------------------------------------------------------------------------
 # RunSection module
 PATH_RUNSECTION = ./RunSection
-OBJS_RUNSECTION = $(PATH_RUNSECTION)/RunSection.o $(PATH_RUNSECTION)/BasicTask.o $(PATH_RUNSECTION)/Action.o $(PATH_RUNSECTION)/Settings.o $(PATH_RUNSECTION)/OutputHandler.o $(PATH_RUNSECTION)/Utility.o
+OBJS_RUNSECTION = $(PATH_RUNSECTION)/RunSection.o $(PATH_RUNSECTION)/BasicTask.o $(PATH_RUNSECTION)/Action.o $(PATH_RUNSECTION)/Settings.o $(PATH_RUNSECTION)/OutputHandler.o $(PATH_RUNSECTION)/Utility.o $(PATH_RUNSECTION)/CubicSpline.o
 DEP_RUNSECTION = $(PATH_RUNSECTION)/RunSection.h
 # ---
 # RunSection custom tasks

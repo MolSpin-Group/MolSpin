@@ -180,6 +180,7 @@ namespace RunSection
 			}
 			this->prop = suitableProps[totalGap];
 			this->Log() << "Selected propagator: " << PropogatorToString(this->prop) << std::endl;
+			this->propogator_cached = true;
 		}
 
 		// ---------------------------------------------------------------------------------------------------
@@ -201,7 +202,7 @@ namespace RunSection
 		std::vector<double> LocalTime;
 		std::vector<SpinAPI::SpinSpace::PropParam> LocalPropParams;
 		std::vector<std::vector<double>> LocalTimeSteps;
-		std::vector<std::vector<arma::cx_mat>> InterpolationStates;
+		std::vector<Buffer<arma::cx_mat>> HistoryBuffer;// = Buffer<arma::cx_mat>(5,ValType::matrix);
 
 		//run quick propogation just to check the initial timestep is suitable, if not reduce it until it is
 		if(this->prop == Propagator::Krylov)
@@ -211,9 +212,10 @@ namespace RunSection
 			{
 				LocalTime.push_back(0.0);
 				LocalPropParams.push_back(propParam);
-				InterpolationStates.push_back({rho[i]});
+				HistoryBuffer.push_back(Buffer<arma::cx_mat>(5,ValType::matrix));
+				HistoryBuffer[i].push(0.0, rho[i]);
 				arma::cx_mat H = H[i] + K[i] + dH[i] + dK[i];
-				auto r = spaces[i].second->TimeAdaptiveKrylovGeneral(H, rho[i], this->timestep, 30, H.n_rows, propParam, true);
+				auto r = spaces[i].second->TimeAdaptiveKrylovGeneral(H, rho[i], std::complex<double>(this->timestep), 30, H.n_rows, propParam, true);
 				//forgotten that rho is a matrix not a vector
 				if(r.step_accepted == false)
 				{
@@ -242,8 +244,8 @@ namespace RunSection
 		while(currentTime < TotalTime)
 		//for (unsigned int n = 0; n < steps; n++)
 		{
-			// Obtain creation operators
-			//this->GetCreationOperators(spaces, C, rho);
+			//Obtain creation operators
+			this->GetCreationOperators(spaces, C, rho);
 //
 			//// Propagate
 			//// this->AdvanceStep_AsyncLeapfrog(spaces, H, dH, K, dK, C, rho);
@@ -278,12 +280,16 @@ namespace RunSection
 				LocalPropParams[i].f2 = std::min(propParam.f2, maxGrowth);
 				LocalPropParams[i].f1 = std::max(propParam.f1, minGrowth);
 
-				arma::cx_mat H = H[i] + K[i] + dH[i] + dK[i];
-				arma::cx_vec prop_state = rho[i];
-				auto r = spaces[i].second->TimeAdaptiveKrylovGeneral(H, prop_state, LocalTimeSteps[step][i], 30, H.n_rows, LocalPropParams[i], true);
-				InterpolationStates[i].push_back(r.result);
-				LocalTimeSteps[step][i].push_back(r.timestep_used);
+				arma::cx_mat H = H[i] + K[i] + C[i];
+				if(timedependentInteractions)
+					H = H + dH[i];
+				if(timedependentTransitions)
+					H = H + dK[i];
+				arma::cx_mat prop_state = rho[i];
+				auto r = spaces[i].second->TimeAdaptiveKrylovGeneral(H, prop_state, std::complex<double>(LocalTimeSteps[i][step]), 30, H.n_rows, LocalPropParams[i], true);
+				LocalTimeSteps[i].push_back(r.timestep);
 				LocalTime[i] += r.timestep_used;
+				HistoryBuffer[i].push(LocalTime[i],r.result);
 			}
 			//get minimum LocalTime and set that to current time, then interpolate all states back to that time
 			double minLocalTime = timeWindow[2] + 1.0;
@@ -292,6 +298,21 @@ namespace RunSection
 				minLocalTime = std::min(minLocalTime, LocalTime[i]);
 			}
 			currentTime = minLocalTime;
+			for(int i = 0; i < spaces.size(); i++)
+			{
+				rho[i] = CubicSplineInterpolation(HistoryBuffer[i],currentTime);
+				HistoryBuffer[i].replace(currentTime,rho[i]);
+			}
+
+			// Print results
+			if (step % this->outputstride == 0)
+				this->OutputResults(spaces, rho, currentTime);
+
+			if ((timedependentInteractions || timedependentTransitions))
+				this->UpdateTimeDependences(spaces, dH, dK, currentTime);
+
+			step += 1;
+
 		}
 		// ---------------------------------------------------------------------------------------------------
 
@@ -401,12 +422,12 @@ namespace RunSection
 	// -----------------------------------------------------
 	// Writes the output for a timestep
 	void TaskMultiDynamicHSTimeEvo::OutputResults(const std::vector<std::pair<std::shared_ptr<SpinAPI::SpinSystem>, std::shared_ptr<SpinAPI::SpinSpace>>> &_spaces,
-												  const std::vector<arma::cx_mat> &_rho, const unsigned int _step)
+												  const std::vector<arma::cx_mat> &_rho, const double ctime)
 	{
 		// Obtain the results
 		arma::cx_mat PState;
 		this->Data() << this->RunSettings()->CurrentStep() << " ";
-		this->Data() << (static_cast<double>(_step) * this->timestep) << " ";
+		this->Data() << (ctime) << " ";
 		this->WriteStandardOutput(this->Data());
 		for (unsigned int i = 0; i < _spaces.size(); i++)
 		{
@@ -430,13 +451,13 @@ namespace RunSection
 	// -----------------------------------------------------
 	// Method to update time-dependent interactions and reactions
 	void TaskMultiDynamicHSTimeEvo::UpdateTimeDependences(const std::vector<std::pair<std::shared_ptr<SpinAPI::SpinSystem>, std::shared_ptr<SpinAPI::SpinSpace>>> &_spaces,
-														  std::vector<arma::sp_cx_mat> &_H, std::vector<arma::sp_cx_mat> &_K, unsigned int _step)
+														  std::vector<arma::sp_cx_mat> &_H, std::vector<arma::sp_cx_mat> &_K, const double ctime)
 	{
 		// Handle each spin space
 		for (unsigned int i = 0; i < _spaces.size(); i++)
 		{
 			// First update the time
-			_spaces[i].second->SetTime(static_cast<double>(_step) * this->timestep);
+			_spaces[i].second->SetTime(ctime);
 
 			// Do we need to update the interactions?
 			if (_spaces[i].second->HasTimedependentInteractions())
@@ -503,6 +524,7 @@ namespace RunSection
 		}
 
 		this->prop = Propagator::Default;
+		this->propogator_cached = false;
 
 		// Get totaltime
 		if (this->Properties()->Get("totaltime", inputTotaltime))
