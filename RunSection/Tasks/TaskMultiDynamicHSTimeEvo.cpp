@@ -245,7 +245,7 @@ namespace RunSection
 		//for (unsigned int n = 0; n < steps; n++)
 		{
 			//Obtain creation operators
-			this->GetCreationOperators(spaces, C, rho);
+			this->GetCreationOperators(spaces, C, rho); //this is a issue (as we have to work out how to propogate this without killing the system)
 //
 			//// Propagate
 			//// this->AdvanceStep_AsyncLeapfrog(spaces, H, dH, K, dK, C, rho);

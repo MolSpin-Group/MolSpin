@@ -481,6 +481,8 @@ namespace SpinAPI
 			_out = P;
 		}
 
+		std::cout << _out << std::endl;
+
 		return true;
 	}
 
