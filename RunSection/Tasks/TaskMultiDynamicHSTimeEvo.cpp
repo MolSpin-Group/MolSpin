@@ -108,8 +108,10 @@ namespace RunSection
 				this->Log() << "ERROR: Failed to obtain the Hamiltonian for spin system \"" << i->first->Name() << "\"!" << std::endl;
 				return false;
 			}
-			H.push_back(arma::cx_double(0.0, -1.0) * tmp_H);
-			dH.push_back(arma::cx_double(0.0, -1.0) * tmp_dH);
+			//H.push_back(arma::cx_double(0.0, -1.0) * tmp_H);
+			//dH.push_back(arma::cx_double(0.0, -1.0) * tmp_dH);
+			H.push_back(tmp_H);
+			dH.push_back(tmp_dH);
 
 			// Then get the reaction operators (decay part)
 			arma::cx_mat tmp_K;
@@ -136,7 +138,7 @@ namespace RunSection
 			std::vector<Propagator> suitableProps;
 			for (unsigned int i = 0; i < spaces.size(); i++)
 			{
-				arma::cx_mat HPK = H[i] + K[i];
+				arma::cx_mat HPK = std::complex(0.0, -1.0) * (H[i] + std::complex(0.0, 0.5) * K[i]);
 				this->DetermineBestPropagator(HPK);
 				suitableProps.push_back(this->prop);
 			}
@@ -214,24 +216,25 @@ namespace RunSection
 				LocalPropParams.push_back(propParam);
 				HistoryBuffer.push_back(Buffer<arma::cx_mat>(5,ValType::matrix));
 				HistoryBuffer[i].push(0.0, rho[i]);
-				arma::cx_mat H = H[i] + K[i] + dH[i] + dK[i];
-				auto r = spaces[i].second->TimeAdaptiveKrylovGeneral(H, rho[i], std::complex<double>(this->timestep), 30, H.n_rows, propParam, true);
-				//forgotten that rho is a matrix not a vector
-				if(r.step_accepted == false)
-				{
-					this->Log() << "Initial timestep of " << this->timestep << " is too large for the Krylov propagator";
-					this->Log() << ", accepted timestep was: " << r.timestep_used << std::endl;
-				}
-				if(r.timestep_used < minumum)
-				{
-					minumum = r.timestep_used;
-				}
+			//	arma::cx_mat H = H[i] + K[i] + dH[i] + dK[i];
+			//	auto r = spaces[i].second->TimeAdaptiveKrylovGeneral(H, rho[i], std::complex<double>(this->timestep), 30, H.n_rows, propParam, true);
+			//	//forgotten that rho is a matrix not a vector
+			//	if(r.step_accepted == false)
+			//	{
+			//		this->Log() << "Initial timestep of " << this->timestep << " is too large for the Krylov propagator";
+			//		this->Log() << ", accepted timestep was: " << r.timestep_used << std::endl;
+			//	}
+			//	if(r.timestep_used < minumum)
+			//	{
+			//		minumum = r.timestep_used;
+			//	}
 			}
-			this->timestep = minumum;
+			//this->timestep = minumum;
 			this->Log() << "Using initial timestep of " << this->timestep << " for the Krylov propagator." << std::endl;
+			LocalTimeSteps.push_back({});
 			for(unsigned int i = 0; i < spaces.size(); i++)
 			{
-				LocalTimeSteps.push_back({this->timestep});
+				LocalTimeSteps[0].push_back(this->timestep);
 			}
 		}
 
@@ -265,7 +268,8 @@ namespace RunSection
 			//this ensures that all systems are within one timestep of each at the end of the step 
 
 			//we have to assume the first timestep used is good 
-			this->timestep = minTimeStep(LocalTimeSteps[0]);
+			this->timestep = minTimeStep(LocalTimeSteps[step]);
+			LocalTimeSteps.push_back({});
 			double midpoint = currentTime + this->timestep;
 			double maxTime = midpoint + dw/2.0 * this->timestep;
 			double minTime = midpoint - dw/2.0 * this->timestep;
@@ -280,16 +284,99 @@ namespace RunSection
 				LocalPropParams[i].f2 = std::min(propParam.f2, maxGrowth);
 				LocalPropParams[i].f1 = std::max(propParam.f1, minGrowth);
 
-				arma::cx_mat H = H[i] + K[i] + C[i];
-				if(timedependentInteractions)
-					H = H + dH[i];
-				if(timedependentTransitions)
-					H = H + dK[i];
+				
+				arma::cx_mat H_eff, H_eff_conj;
+				{
+					arma::cx_mat H_base = H[i];
+					if(timedependentInteractions)
+					{
+						H_base = H_base + dH[i];
+					}
+					arma::cx_mat K_base = K[i];
+					if(timedependentTransitions)
+					{
+						K_base = K_base + dK[i];
+					}
+
+					H_eff = H_base + std::complex(0.0, 0.5) * K_base;
+					H_eff_conj = H_base + std::complex(0.0,-0.5) * K_base;
+				}
+
+				auto GeneratorFunc = [&](const arma::sp_cx_mat& H, const arma::cx_mat& V) {
+					arma::cx_mat Z;
+					Z = std::complex<double>(0.0,-1.0) * (H * V - V * H_eff_conj);
+					return Z;
+				};
 				arma::cx_mat prop_state = rho[i];
-				auto r = spaces[i].second->TimeAdaptiveKrylovGeneral(H, prop_state, std::complex<double>(LocalTimeSteps[i][step]), 30, H.n_rows, LocalPropParams[i], true);
-				LocalTimeSteps[i].push_back(r.timestep);
-				LocalTime[i] += r.timestep_used;
-				HistoryBuffer[i].push(LocalTime[i],r.result);
+
+				//ETD2RK - a second order RK method with kyrlov
+				{
+					auto r = spaces[i].second->TimeAdaptiveKrylovGeneral(H_eff, prop_state, std::complex<double>(LocalTimeSteps[step][i]), 30, H_eff.n_rows, LocalPropParams[i], true, GeneratorFunc);
+					//midpoint predictor
+					this->GetCreationOperators(spaces, C[i], prop_state, i);
+					int p = r.result.n_cols;
+					int krydim = r.krybasis.n_cols / p;
+					arma::cx_mat p1;
+					{
+						arma::sp_cx_mat Csp = C[i];
+						arma::cx_mat C = arma::conv_to<arma::cx_mat>::from(Csp);
+						arma::cx_mat b1 = spaces[i].second->project_block(C,r.krybasis,krydim,p);
+						arma::cx_mat y1 = r.phi1 * b1;
+						p1 = spaces[i].second->reconstruct_block(y1,r.krybasis,krydim,p);
+					}
+					std::cout << r.result << std::endl;
+					arma::cx_mat midpoint_mat = r.result + LocalTimeSteps[step][i] * p1;
+					std::cout << midpoint_mat << std::endl;
+					arma::sp_cx_mat C_copy = C[i];
+					this->GetCreationOperators(spaces, C[i], midpoint_mat*midpoint_mat.t(), i);
+					{
+						arma::sp_cx_mat Csp = C[i]-C_copy;
+						arma::cx_mat C = arma::conv_to<arma::cx_mat>::from(Csp);
+						arma::cx_mat b1 = spaces[i].second->project_block(C,r.krybasis,krydim,p);
+						arma::cx_mat y1 = r.phi2 * b1;
+						p1 = spaces[i].second->reconstruct_block(y1,r.krybasis,krydim,p);
+					}
+					prop_state = midpoint_mat + LocalTimeSteps[step][i] * p1;
+					std::cout << prop_state << std::endl;
+					arma::cx_mat err_mat = prop_state - midpoint_mat;
+					std::cout << err_mat << std::endl;
+					double err = arma::norm(err_mat, "fro");
+					//err = err + 1.0;
+
+					prop_state = prop_state * prop_state.t();
+
+					LocalTimeSteps[step+1].push_back(r.timestep);
+					LocalTime[i] += r.timestep_used;
+					HistoryBuffer[i].push(LocalTime[i],prop_state);
+				}
+
+
+				//leapfrog procedure 
+				{
+					//full timestep
+					//arma::cx_mat prop_state_full = prop_state;
+					//prop_state_full = prop_state + (LocalTimeSteps[step][i] / 2.0) * C[i];
+					//auto r = spaces[i].second->TimeAdaptiveKrylovGeneral(H_eff, prop_state_full, std::complex<double>(LocalTimeSteps[step][i]), 30, H_eff.n_rows, LocalPropParams[i], true, GeneratorFunc);
+					//prop_state_full += r.result;
+					//this->GetCreationOperators(spaces, C[i], prop_state_full, i);
+					//prop_state_full += (LocalTimeSteps[step][i] / 2.0) * C[i];
+
+					////half timestep
+					//arma::cx_mat prop_state_half = prop_state;
+					//prop_state_half = prop_state + (LocalTimeSteps[step][i] / 4.0) * C[i];
+					//auto r2 = spaces[i].second->TimeAdaptiveKrylovGeneral(H_eff, prop_state_half, std::complex<double>(LocalTimeSteps[step][i]), 30, H_eff.n_rows, LocalPropParams[i], true, GeneratorFunc);
+					//prop_state_half += r2.result;
+					//this->GetCreationOperators(spaces, C[i], prop_state_half, i);
+					//prop_state_half += (LocalTimeSteps[step][i] / 4.0) * C[i];
+					//this->GetCreationOperators(spaces, C[i], prop_state_half, i);
+					//prop_state_half += (LocalTimeSteps[step][i] / 4.0) * C[i];
+					//r2 = spaces[i].second->TimeAdaptiveKrylovGeneral(H_eff, prop_state_half, std::complex<double>(LocalTimeSteps[step][i]), 30, H_eff.n_rows, LocalPropParams[i], true, GeneratorFunc);
+
+				}
+				//auto r = spaces[i].second->TimeAdaptiveKrylovGeneral(H_eff, prop_state, std::complex<double>(LocalTimeSteps[step][i]), 30, H_eff.n_rows, LocalPropParams[i], true, GeneratorFunc);
+				//LocalTimeSteps[step+1].push_back(r.timestep);
+				//LocalTime[i] += r.timestep_used;
+				//HistoryBuffer[i].push(LocalTime[i],r.result);
 			}
 			//get minimum LocalTime and set that to current time, then interpolate all states back to that time
 			double minLocalTime = timeWindow[2] + 1.0;
@@ -300,7 +387,10 @@ namespace RunSection
 			currentTime = minLocalTime;
 			for(int i = 0; i < spaces.size(); i++)
 			{
-				rho[i] = CubicSplineInterpolation(HistoryBuffer[i],currentTime);
+				if(LocalTime[i] == currentTime)
+					rho[i] = HistoryBuffer[i].rhoPoints.back();
+				else
+					rho[i] = CubicSplineInterpolation(HistoryBuffer[i],currentTime);
 				HistoryBuffer[i].replace(currentTime,rho[i]);
 			}
 
@@ -379,7 +469,53 @@ namespace RunSection
 		}
 	}
 
-	// -----------------------------------------------------
+    void TaskMultiDynamicHSTimeEvo::GetCreationOperators(const std::vector<std::pair<std::shared_ptr<SpinAPI::SpinSystem>, std::shared_ptr<SpinAPI::SpinSpace>>> &spaces, arma::sp_cx_mat &C, const arma::cx_mat &rho, int i)
+    {
+		C = arma::sp_cx_mat(spaces[i].second->SpaceDimensions(), spaces[i].second->SpaceDimensions());
+
+		// Loop through all transitions in each spin system
+		for (auto j = spaces[i].first->transitions_cbegin(); j != spaces[i].first->transitions_cend(); j++)
+		{
+			// If the transition has a target spin system
+			if ((*j)->Target() != nullptr && (*j)->TargetState() != nullptr)
+			{
+				// Find the index of the target system
+				auto target = spaces.size();
+				for (unsigned int n = 0; n < spaces.size(); n++)
+				{
+					if (spaces[n].first == (*j)->Target())
+					{
+						target = n;
+						break;
+					}
+				}
+				// Check that the target system was found
+				if (target >= spaces.size())
+				{
+					this->Log() << "ERROR: Failed to properly generate creation operators." << std::endl;
+					return;
+				}
+				// Get the creation rate
+				arma::cx_mat P;
+				if (!spaces[i].second->GetState((*j)->SourceState(), P))
+				{
+					this->Log() << "Failed to obtain projection matrix onto source state of transition \"" << (*j)->Name() << "\"." << std::endl;
+					continue;
+				}
+				double cRate = std::abs(arma::trace(P * rho));
+				// Generate the creation operator
+				arma::sp_cx_mat sP;
+				if (!spaces[target].second->ReactionTargetOperator((*j), cRate, sP))
+				{
+					this->Log() << "Failed to obtain reaction operator for target state of transition \"" << (*j)->Name() << "\"." << std::endl;
+					continue;
+				}
+				C += sP;
+			}
+		}
+    }
+
+    // -----------------------------------------------------
 	// The timestep function
 	void TaskMultiDynamicHSTimeEvo::AdvanceStep_AsyncLeapfrog(const std::vector<std::pair<std::shared_ptr<SpinAPI::SpinSystem>, std::shared_ptr<SpinAPI::SpinSpace>>> &_spaces,
 															  const std::vector<arma::cx_mat> &_H, const std::vector<arma::sp_cx_mat> &_dH,

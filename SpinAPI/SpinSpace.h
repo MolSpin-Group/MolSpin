@@ -25,6 +25,7 @@
 
 #include <vector>
 #include <memory>
+#include <functional>
 #include <armadillo>
 #include "SpinAPIDefines.h"
 #include "SpinAPIfwd.h"
@@ -265,8 +266,9 @@ namespace SpinAPI
 		struct return_structMat
 		{
 			arma::cx_mat result;
-			arma::cx_mat PropMat;
-			arma::cx_mat KryBasis;
+			arma::cx_mat phi1;
+			arma::cx_mat phi2;
+			arma::cx_mat krybasis;
 			double error_estimate;
 
 			operator arma::cx_mat()
@@ -275,18 +277,24 @@ namespace SpinAPI
 			}
 		};
 
+		typedef std::function<arma::cx_mat(const arma::sp_cx_mat&, const arma::cx_mat)> GeneratorFunctionMat;
+		typedef std::function<arma::cx_vec(const arma::sp_cx_mat&, const arma::cx_vec)> GeneratorFunctionVec;
+		
+		arma::cx_mat reconstruct_block(const arma::cx_mat& C, const arma::cx_mat& KryBasis, int m, int p);
+		arma::cx_mat project_block(const arma::cx_mat& X, const arma::cx_mat& KryBasis, int m, int p);
+
 		arma::cx_colvec SUZstate(const int &spinmult, std::mt19937 &generator);																					 // returns stochastically determined SU(Z) state
 		arma::cx_colvec CoherentState(std::vector<SpinAPI::system_ptr>::const_iterator i, std::mt19937 &generator);												 // returns stochastically determined coherent state
 		arma::cx_mat HighamProp(arma::sp_cx_mat &H, arma::cx_mat &B, const std::complex<double> t, const std::string precision, arma::mat &M);					 // Propagation method using: https://doi.org/10.1137/100788860
 		arma::mat SelectTaylorDegree(const arma::sp_cx_mat &H, const std::string precision, const int lengthB);													 // Precision of Taylor series used for HighamProp
 		double normAmEst(const arma::sp_cx_mat &H, double m, std::mt19937 &generator);																			 // Used in SelectTaylorDegree to normalize
-		return_struct KrylovExpmGeneral(const arma::sp_cx_mat &H, const arma::cx_colvec &b, const arma::cx_double dt, int KryDim, int HilbSize, bool NEval = false);				 // Krylov subspace method
+		return_struct KrylovExpmGeneral(const arma::sp_cx_mat &H, const arma::cx_colvec &b, const arma::cx_double dt, int KryDim, int HilbSize, bool NEval = false, GeneratorFunctionVec generator = nullptr);				 // Krylov subspace method
 		return_struct KrylovExpmSymm(const arma::sp_cx_mat &H, const arma::cx_colvec &b, const arma::cx_double dt, int KryDim, int HilbSize, bool NEval = false);					 // Krylov subspace method for symmetric decay
-		bool ArnoldiProcess(const arma::sp_cx_mat &H, const arma::cx_colvec &b, arma::cx_mat &KryBasis, arma::cx_mat &Hessen, int KryDim, double &h_mplusone_m, arma::cx_double dt = arma::cx_double(0.0, 0.0)); // Arnoldi process for propagation using Krylov subsspace
+		bool ArnoldiProcess(const arma::sp_cx_mat &H, const arma::cx_colvec &b, arma::cx_mat &KryBasis, arma::cx_mat &Hessen, int KryDim, double &h_mplusone_m, arma::cx_double dt = arma::cx_double(0.0, 0.0), GeneratorFunctionVec generator = nullptr); // Arnoldi process for propagation using Krylov subsspace
 		bool LanczosProcess(const arma::sp_cx_mat &H, const arma::cx_colvec &b, arma::cx_mat &KryBasis, arma::cx_mat &Hessen, int KryDim, double &h_mplusone_m, arma::cx_double dt = arma::cx_double(0.0, 0.0)); // Lanczos process for propagation using Krylov subsspace
 		
-		return_structMat KrylovExpmGeneral(const arma::sp_cx_mat &H, const arma::cx_mat &b, const arma::cx_double dt, int KryDim, int HilbSize, bool NEval = false);
-		bool ArnoldiProcess(const arma::sp_cx_mat &H, const arma::cx_mat &b, arma::cx_mat &KryBasis, arma::cx_mat &Hessen, int KryDim, double &h_mplusone_m, int p, double beta, arma::cx_double dt = arma::cx_double(0.0, 0.0));
+		return_structMat KrylovExpmGeneral(const arma::sp_cx_mat &H, const arma::cx_mat &b, const arma::cx_double dt, int KryDim, int HilbSize, GeneratorFunctionMat gen, bool NEval = false);
+		bool ArnoldiProcess(const arma::sp_cx_mat &H, const arma::cx_mat &b, arma::cx_mat &KryBasis, arma::cx_mat &Hessen, int KryDim, arma::cx_mat &h_mplusone_m, int p, double beta, GeneratorFunctionMat generator, arma::cx_double dt = arma::cx_double(0.0, 0.0));
 
 		//-----------------------------------------------
 		// Time Adaptive Versions of the KyrlovPropogation Methods
@@ -348,6 +356,10 @@ namespace SpinAPI
 			double timestep_used;
 			bool step_accepted;
 			arma::cx_mat result;
+
+			arma::cx_mat phi1;
+			arma::cx_mat phi2;
+			arma::cx_mat krybasis;
 		};
 
 		struct TimeAdaptiveKrylovCache
@@ -356,14 +368,14 @@ namespace SpinAPI
 			double KrylovDimTol = 0.0;
 		};
 
-		double SpinSpace::Adjusth(double R, double safety, double f1, double f2, double h);
+		double Adjusth(double R, double safety, double f1, double f2, double h);
 
 		TimePropReturnInfo TimeAdapativeKrylovRoutine(const arma::sp_cx_mat &H, const arma::cx_colvec &b, arma::cx_double dt, int kryDim, int HilbSize, PropParam &propParam, bool general, bool reset = true);
 		TimePropReturnInfo TimeAdaptiveKrylovGeneral(const arma::sp_cx_mat &H, const arma::cx_colvec &b, arma::cx_double dt, int kryDim, int HilbSize, PropParam &propParam, bool reset = true);
 		TimePropReturnInfo TimeAdaptiveKrylovSymm(const arma::sp_cx_mat &H, const arma::cx_colvec &b, arma::cx_double dt, int kryDim, int HilbSize, PropParam &propParam, bool reset = true);
 
-		TimePropReturnInfoMat TimeAdapativeKrylovRoutine(const std::vector<arma::sp_cx_mat> &H, const arma::cx_mat &b, arma::cx_double dt, int kryDim, int HilbSize, PropParam &propParam, bool general, bool reset = true);
-		TimePropReturnInfoMat TimeAdaptiveKrylovGeneral(const std::vector<arma::cx_mat> &H, const arma::cx_mat &b, arma::cx_double dt, int kryDim, int HilbSize, PropParam &propParam, bool reset = true);
+		TimePropReturnInfoMat TimeAdapativeKrylovRoutine(const arma::sp_cx_mat &H, const arma::cx_mat &b, arma::cx_double dt, int kryDim, int HilbSize, PropParam &propParam, bool general, GeneratorFunctionVec gen, bool reset = true);
+		TimePropReturnInfoMat TimeAdaptiveKrylovGeneral(const arma::cx_mat &H, const arma::cx_mat &b, arma::cx_double dt, int kryDim, int HilbSize, PropParam &propParam, bool reset = true, GeneratorFunctionVec gen = nullptr);
 
 		// ------------------------------------------------
 		// Hamiltonian representations in the space (SpinSpace_hamiltonians.cpp)

@@ -26,6 +26,8 @@ namespace RunSection
 		// Method to obtain creation operators
 		void GetCreationOperators(const std::vector<std::pair<std::shared_ptr<SpinAPI::SpinSystem>, std::shared_ptr<SpinAPI::SpinSpace>>> &,
 								  std::vector<arma::sp_cx_mat> &, const std::vector<arma::cx_mat> &);
+		void GetCreationOperators(const std::vector<std::pair<std::shared_ptr<SpinAPI::SpinSystem>, std::shared_ptr<SpinAPI::SpinSpace>>> &,
+								  arma::sp_cx_mat &, const arma::cx_mat &, int i);
 
 		// Timestep function
 		void AdvanceStep_AsyncLeapfrog(const std::vector<std::pair<std::shared_ptr<SpinAPI::SpinSystem>, std::shared_ptr<SpinAPI::SpinSpace>>> &,

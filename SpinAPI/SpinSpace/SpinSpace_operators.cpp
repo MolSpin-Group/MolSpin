@@ -1183,7 +1183,7 @@ namespace SpinAPI
 	static SpinSpace::TimeAdaptiveKrylovCache krylov_cache;
 
 	// Returns the action of the matrix exponential of sparse general complex matrix H onto complex column vector b, with krylov subspave dimension of KryDim.
-	SpinSpace::return_struct SpinSpace::KrylovExpmGeneral(const arma::sp_cx_mat &H, const arma::cx_colvec &b, const arma::cx_double dt, int KryDim, int HilbSize, bool neval)
+	SpinSpace::return_struct SpinSpace::KrylovExpmGeneral(const arma::sp_cx_mat &H, const arma::cx_colvec &b, const arma::cx_double dt, int KryDim, int HilbSize, bool neval, GeneratorFunctionVec gen)
 	{
 		arma::cx_mat Hessen(KryDim, KryDim, arma::fill::zeros); // Upper Hessenberg matrix
 		arma::cx_mat KryBasis(HilbSize, KryDim, arma::fill::zeros); // Orthogonal krylov subspace
@@ -1280,7 +1280,7 @@ namespace SpinAPI
 	}
 
 	// Compute the Arnoldi process for the given sparse complex general matrix H, complex column vector b, and integer KryDim.
-	bool SpinSpace::ArnoldiProcess(const arma::sp_cx_mat &H, const arma::cx_colvec &b, arma::cx_mat &KryBasis, arma::cx_mat &Hessen, int KryDim, double &h_mplusone_m, arma::cx_double dt)
+	bool SpinSpace::ArnoldiProcess(const arma::sp_cx_mat &H, const arma::cx_colvec &b, arma::cx_mat &KryBasis, arma::cx_mat &Hessen, int KryDim, double &h_mplusone_m, arma::cx_double dt, GeneratorFunctionVec gen)
 	{
 		// Perform the Arnoldi process for KryDim iterations
 		bool pass = true;
@@ -1400,7 +1400,17 @@ namespace SpinAPI
 		return pass;
 	}
 
-    SpinSpace::return_structMat SpinSpace::KrylovExpmGeneral(const arma::sp_cx_mat &H, const arma::cx_mat &b, const arma::cx_double dt, int KryDim, int HilbSize, bool neval)
+	arma::cx_mat SpinSpace::reconstruct_block(const arma::cx_mat& C, const arma::cx_mat& KryBasis, int m, int p) 
+	{
+		return KryBasis.cols(0,m*p-1) * C;
+	}
+
+	arma::cx_mat SpinSpace::project_block(const arma::cx_mat& X, const arma::cx_mat& KryBasis, int m, int p)
+	{
+		return KryBasis.cols(0,m*p -1).t() * X;
+	}
+
+    SpinSpace::return_structMat SpinSpace::KrylovExpmGeneral(const arma::sp_cx_mat &H, const arma::cx_mat &b, const arma::cx_double dt, int KryDim, int HilbSize, GeneratorFunctionMat gen, bool neval)
     {
         const unsigned int p = b.n_cols;
 		arma::cx_mat Hessen(KryDim * p, KryDim * p, arma::fill::zeros);
@@ -1415,11 +1425,11 @@ namespace SpinAPI
 		double beta = arma::norm(b,"fro");
 
 		//arnoldi process
-		double h_mplusone_m;
+		arma::cx_mat h_mplusone_m;
 		bool pass = false;
 		while(!pass)
 		{
-			pass = ArnoldiProcess(H,b,KryBasis,Hessen,KryDim,h_mplusone_m,p,beta,dt);
+			pass = ArnoldiProcess(H,b,KryBasis,Hessen,KryDim,h_mplusone_m,p,beta,gen,dt);
 			if(!pass)
 			{
 				KryDim = KryDim + 1;
@@ -1428,37 +1438,47 @@ namespace SpinAPI
 			}
 		}
 
-		if(KryDim > krylov_cache.KrylovDim)
-		{
-			KryDim = krylov_cache.KrylovDim;
-			Hessen.resize(KryDim * p, KryDim * p);
-			KryBasis.resize(HilbSize, KryDim * p);
-		}
+		KryDim = krylov_cache.KrylovDim;
+		int k = KryDim * p;
+		Hessen = Hessen.submat(0,0,k-1,k-1);
+		KryBasis = KryBasis.cols(0,k-1);
 
-		arma::cx_mat e1(KryDim * p, p, arma::fill::zeros);
-		e1.submat(0,0,p-1,p-1) = arma::eye<arma::cx_mat>(p,p);
+		arma::cx_mat AugHes = arma::cx_mat(3*k, 3*k, arma::fill::zeros);
+		AugHes(arma::span(0,k-1), arma::span(0,k-1)) = Hessen * dt;
+		AugHes(arma::span(0,k-1), arma::span(k,(2*k)-1)) = arma::eye<arma::cx_mat>(k,k);
+		AugHes(arma::span(k,(2*k)-1), arma::span(2*k,(3*k)-1)) = arma::eye<arma::cx_mat>(k,k);
 
-		arma::cx_mat Exponent = arma::expmat(Hessen * dt);
-		arma::cx_mat W = Exponent * e1;
+		arma::cx_mat e1(k, p, arma::fill::zeros);
+		e1.rows(0,p-1) = R;
 
-		arma::cx_mat error_mat = Exponent.submat((KryDim-1) * p, 0, (KryDim)*p - 1, p-1);
-		double err = beta * h_mplusone_m * arma::norm(error_mat, "fro");
+		//arma::cx_mat temp = Hessen * dt;
+		arma::cx_mat Exponent = arma::expmat(AugHes);
+		arma::cx_mat expH = Exponent.submat(0,0,k-1,k-1);
+		arma::cx_mat phi1 = Exponent.submat(0,k,k-1,(2*k)-1);
+		arma::cx_mat phi2 = Exponent.submat(0,2*k,k-1,(3*k)-1);
+
+		arma::cx_mat W = expH * e1;
+
+		arma::cx_mat error_mat = expH.submat((KryDim-1) * p, 0, (KryDim)*p - 1, p-1);
+		//double err = beta * h_mplusone_m * arma::norm(error_mat, "fro");
 
 		SpinSpace::return_structMat step;
-		step.error_estimate = err;
+		//step.error_estimate = err;
+		
+		step.phi1 = phi1;
+		step.phi2 = phi2;
 		
 		if(!neval)
-			step.result = KryBasis * W;
+			step.result = reconstruct_block(W,KryBasis,KryDim,p);
 		else
 			step.result = b;
 
-		step.PropMat = Exponent;
-		step.KryBasis = KryBasis;
+		step.krybasis = KryBasis;
 
 		return step;
     }
 
-    bool SpinSpace::ArnoldiProcess(const arma::sp_cx_mat &H, const arma::cx_mat &b, arma::cx_mat &KryBasis, arma::cx_mat &Hessen, int KryDim, double &h_mplusone_m, int p, double beta, arma::cx_double dt)
+    bool SpinSpace::ArnoldiProcess(const arma::sp_cx_mat &H, const arma::cx_mat &b, arma::cx_mat &KryBasis, arma::cx_mat &Hessen, int KryDim, arma::cx_mat &h_mplusone_m, int p, double beta, GeneratorFunctionMat generator, arma::cx_double dt)
     {
         bool pass = true;
 		int actual = 0;
@@ -1469,8 +1489,11 @@ namespace SpinAPI
 			unsigned int j_end = j_start + p -1;
 
 			arma::cx_mat Vj = KryBasis.cols(j_start, j_end);
-			arma::cx_mat Z = H * Vj; //change this to allow a function
-
+			arma::cx_mat Z;// = H * Vj; //change this to allow a function
+			if(generator != nullptr)
+				Z = generator(H, Vj);
+			else
+				Z = H * Vj;
 			double zn = arma::norm(Z, "fro");
 
 			//Gran-Schmidt process
@@ -1486,37 +1509,40 @@ namespace SpinAPI
 				Z = Z - (Vk * temp);
 			}
 
-			double znorm = arma::norm(Z, "fro");
+			arma::cx_mat Q,R;
+			arma::qr_econ(Q,R,Z);
 
 			if(KryDim - 1 == it1)
 			{
-				h_mplusone_m = znorm;
+				h_mplusone_m = R;
 				actual = it1 + 1;
 				break;
 			}
 
 			//j_end + 1 = (it1 + 1) * p
-			Hessen.submat(j_end + 1, j_start, ((it1 + 2)*p)-1, j_end) = znorm * arma::eye<arma::cx_mat>(p,p);
+			Hessen.submat(j_end + 1, j_start, ((it1 + 2)*p)-1, j_end) = R;
 
-			if(znorm == 0.0)
+			if(arma::norm(R,"fro") < 1e-14)
 			{
-				h_mplusone_m = 0.0;
+				h_mplusone_m = arma::cx_mat(R.n_rows, R.n_cols, arma::fill::zeros);
 				//std::cout << "Stopped in Arnoldi Process" << std::endl;
 				//pass = false;
 				actual = it1 + 1;
 				break;
 			}
 
-			KryBasis.cols((it1+1)*p, (it1 + 2)*p -2) = Z / znorm;
+			KryBasis.cols((it1+1)*p, (it1 + 2)*p -1) = Q;
 			actual = it1 + 1;
 			
 			if(krylov_cache.KrylovDimTol > 0.0 && std::abs(dt) != 0.0)
 			{
-				int temp = (it1 + 1) * p - 1;
-				arma::cx_mat Hessen_trunc = Hessen.submat(0,0,temp, temp);
-				arma::cx_mat expH = arma::expmat(Hessen_trunc * dt);
-				arma::cx_mat error_mat = expH.submat(it1 * p, 0, temp, p-1);
-				double err = std::abs(beta * znorm * arma::norm(error_mat, "fro"));
+				int temp = (it1 + 1) * p;
+				arma::cx_mat Hessen_trunc = Hessen.submat(0,0,temp + p -1, temp-1);
+				arma::cx_mat squareH = arma::zeros<arma::cx_mat>(temp + p, temp + p);
+    			squareH.submat(0, 0, temp + p - 1, temp - 1) = Hessen_trunc * dt;
+				arma::cx_mat expH = arma::expmat(squareH);
+				arma::cx_mat error_mat = expH.submat(temp, 0, temp + p -1, p-1);
+				double err = std::abs(beta * arma::norm(error_mat, "fro"));
 				if(err < krylov_cache.KrylovDimTol)
 				{
 					break;
@@ -1611,7 +1637,7 @@ namespace SpinAPI
 		return ReturnInfo;
     }
 
-	SpinSpace::TimePropReturnInfoMat SpinSpace::TimeAdapativeKrylovRoutine(const std::vector<arma::sp_cx_mat> &H, const arma::cx_mat &b, arma::cx_double dt, int kryDim, int HilbSize, PropParam &propParam, bool general, bool reset)
+	SpinSpace::TimePropReturnInfoMat SpinSpace::TimeAdapativeKrylovRoutine(const arma::sp_cx_mat &H, const arma::cx_mat &b, arma::cx_double dt, int kryDim, int HilbSize, PropParam &propParam, bool general, GeneratorFunctionVec gen, bool reset)
     {
     	bool keepstep = false;
 		bool firstattempt = true;
@@ -1677,17 +1703,20 @@ namespace SpinAPI
 				trialDim = kryDim;
 			}
 
-			auto KrylovResult = KrylovExpmGeneral(H[0],B,dt,trialDim,HilbSize, propParam.dont_evaluate);
-			if(H.size() == 2)
+			std::vector<SpinSpace::return_struct> KrylovResults;
+			//auto KrylovResult = KrylovExpmGeneral(H,B,dt,trialDim,HilbSize,gen,propParam.dont_evaluate); //I think we scrap this and just do it for the indiviudal vectors 
+			for(int i = 0; i < p; i++)
 			{
-				auto KrylovResult2 =  KrylovExpmGeneral(H[1],B,dt,trialDim,HilbSize, propParam.dont_evaluate);
-				KrylovResult.result = rho_new(KrylovResult.PropMat, KrylovResult2.PropMat, KrylovResult.KryBasis);
+				KrylovResults.push_back(KrylovExpmGeneral(H,B.col(i),trialDim,HilbSize,gen,propParam.dont_evaluate));
 			}
 
+			ReturnInfo.krybasis = KrylovResult.krybasis;
+			ReturnInfo.phi1 = KrylovResult.phi1;
+			ReturnInfo.phi2 = KrylovResult.phi2;
 
 			if(propParam.UseSetTimePoints)
 			{
-				ReturnInfo.result = KrylovResult.result;
+				ReturnInfo.result = KrylovResult.result;// * KrylovResult.result.t();
 				ReturnInfo.step_accepted = true;
 				ReturnInfo.timestep = propParam.GetNextTimePoint();
 				ReturnInfo.timestep_used = (dt / propParam.TimePrefactor).real();
@@ -1702,7 +1731,7 @@ namespace SpinAPI
 
 			if(R <= propParam.reject_limit)
             {
-                ReturnInfo.result = KrylovResult.result * KrylovResult.result.t();
+                ReturnInfo.result = KrylovResult.result;// * KrylovResult.result.t();
 				ReturnInfo.timestep_used = (dt / propParam.TimePrefactor).real();
 				keepstep = true;
             }
@@ -1735,15 +1764,11 @@ namespace SpinAPI
 		return ReturnInfo;
     }
 
-    SpinSpace::TimePropReturnInfoMat SpinSpace::TimeAdaptiveKrylovGeneral(const std::vector<arma::cx_mat> &H, const arma::cx_mat &b, arma::cx_double dt, int kryDim, int HilbSize, PropParam &propParam, bool reset)
+    SpinSpace::TimePropReturnInfoMat SpinSpace::TimeAdaptiveKrylovGeneral(const arma::cx_mat &H, const arma::cx_mat &b, arma::cx_double dt, int kryDim, int HilbSize, PropParam &propParam, bool reset, GeneratorFunctionVec gen)
     {
-		std::vector<arma::sp_cx_mat> Hsparse;
-		for(int i = 0; i < H.size(); i++)
-		{
-			arma::sp_cx_mat Hs = arma::conv_to<arma::sp_cx_mat>::from(H);
-			Hsparse.push_back(Hs);
-		}
-        return TimeAdapativeKrylovRoutine(Hsparse,b,dt,kryDim,HilbSize, propParam,true,reset);
+		arma::sp_cx_mat Hsparse;
+		Hsparse = arma::conv_to<arma::sp_cx_mat>::from(H);
+        return TimeAdapativeKrylovRoutine(Hsparse,b,dt,kryDim,HilbSize, propParam,true,gen,reset);
     }
 
     SpinSpace::TimePropReturnInfo SpinSpace::TimeAdaptiveKrylovGeneral(const arma::sp_cx_mat &H, const arma::cx_colvec &b, arma::cx_double dt, int kryDim, int HilbSize, PropParam &propParam, bool reset)
