@@ -1402,7 +1402,7 @@ namespace SpinAPI
 
 	arma::cx_mat SpinSpace::reconstruct_block(const arma::cx_mat& C, const arma::cx_mat& KryBasis, int m, int p) 
 	{
-		return KryBasis.cols(0,m*p-1) * C;
+		return KryBasis.cols(0,m*p-1) * C * KryBasis.cols(0,m*p-1).t();
 	}
 
 	arma::cx_mat SpinSpace::project_block(const arma::cx_mat& X, const arma::cx_mat& KryBasis, int m, int p)
@@ -1419,7 +1419,7 @@ namespace SpinAPI
 		//Initialize basis from input vector
 		arma::cx_mat Q;
 		arma::cx_mat R;
-		arma::qr(Q,R,b);
+		arma::qr_econ(Q,R,b);
 		KryBasis.cols(0,p-1) = Q;
 
 		double beta = arma::norm(b,"fro");
@@ -1445,11 +1445,12 @@ namespace SpinAPI
 
 		arma::cx_mat AugHes = arma::cx_mat(3*k, 3*k, arma::fill::zeros);
 		AugHes(arma::span(0,k-1), arma::span(0,k-1)) = Hessen * dt;
-		AugHes(arma::span(0,k-1), arma::span(k,(2*k)-1)) = arma::eye<arma::cx_mat>(k,k);
-		AugHes(arma::span(k,(2*k)-1), arma::span(2*k,(3*k)-1)) = arma::eye<arma::cx_mat>(k,k);
+		AugHes(arma::span(0,k-1), arma::span(k,(2*k)-1)) = dt * arma::eye<arma::cx_mat>(k,k);
+		AugHes(arma::span(k,(2*k)-1), arma::span(2*k,(3*k)-1)) = dt * arma::eye<arma::cx_mat>(k,k);
 
 		arma::cx_mat e1(k, p, arma::fill::zeros);
 		e1.rows(0,p-1) = R;
+		e1 = e1 * e1.t();
 
 		//arma::cx_mat temp = Hessen * dt;
 		arma::cx_mat Exponent = arma::expmat(AugHes);
@@ -1457,7 +1458,7 @@ namespace SpinAPI
 		arma::cx_mat phi1 = Exponent.submat(0,k,k-1,(2*k)-1);
 		arma::cx_mat phi2 = Exponent.submat(0,2*k,k-1,(3*k)-1);
 
-		arma::cx_mat W = expH * e1;
+		arma::cx_mat W = expH * e1 * expH.t();
 
 		arma::cx_mat error_mat = expH.submat((KryDim-1) * p, 0, (KryDim)*p - 1, p-1);
 		//double err = beta * h_mplusone_m * arma::norm(error_mat, "fro");
@@ -1486,7 +1487,7 @@ namespace SpinAPI
 		for(int it1 = 0; it1 < KryDim; it1++)
 		{
 			unsigned int j_start = it1 * p;
-			unsigned int j_end = j_start + p -1;
+			unsigned int j_end = (it1 + 1) * p -1;
 
 			arma::cx_mat Vj = KryBasis.cols(j_start, j_end);
 			arma::cx_mat Z;// = H * Vj; //change this to allow a function
@@ -1494,60 +1495,60 @@ namespace SpinAPI
 				Z = generator(H, Vj);
 			else
 				Z = H * Vj;
-			double zn = arma::norm(Z, "fro");
+			//double zn = arma::norm(Z, "fro");
 
 			//Gran-Schmidt process
 			for(int it2 = 0; it2 <= it1; it2++)
 			{
 				unsigned int k_start = it2 * p;
-				unsigned int k_end = k_start + p -1;
+				unsigned int k_end = (it2 + 1) * p - 1;
 				
 				arma::cx_mat Vk = KryBasis.cols(k_start, k_end);
 				
-				arma::cx_mat temp = Vk.t() * Z;
+				arma::cx_mat temp = arma::trans(arma::conj(Vk))* Z;
 				Hessen.submat(k_start, j_start, k_end, j_end) = temp;
 				Z = Z - (Vk * temp);
 			}
 
-			arma::cx_mat Q,R;
-			arma::qr_econ(Q,R,Z);
+			arma::cx_mat V_next,H_next;
+			arma::qr_econ(V_next,H_next,Z);
 
 			if(KryDim - 1 == it1)
 			{
-				h_mplusone_m = R;
+				h_mplusone_m = H_next;
 				actual = it1 + 1;
 				break;
 			}
 
 			//j_end + 1 = (it1 + 1) * p
-			Hessen.submat(j_end + 1, j_start, ((it1 + 2)*p)-1, j_end) = R;
+			Hessen.submat(j_end + 1, j_start, ((it1 + 2)*p)-1, j_end) = H_next;
 
-			if(arma::norm(R,"fro") < 1e-14)
+			if(arma::norm(H_next,"fro") < 1e-14)
 			{
-				h_mplusone_m = arma::cx_mat(R.n_rows, R.n_cols, arma::fill::zeros);
+				h_mplusone_m = arma::cx_mat(H_next.n_rows, H_next.n_cols, arma::fill::zeros);
 				//std::cout << "Stopped in Arnoldi Process" << std::endl;
 				//pass = false;
 				actual = it1 + 1;
 				break;
 			}
 
-			KryBasis.cols((it1+1)*p, (it1 + 2)*p -1) = Q;
+			KryBasis.cols((it1+1)*p, (it1 + 2)*p -1) = V_next;
 			actual = it1 + 1;
 			
-			if(krylov_cache.KrylovDimTol > 0.0 && std::abs(dt) != 0.0)
-			{
-				int temp = (it1 + 1) * p;
-				arma::cx_mat Hessen_trunc = Hessen.submat(0,0,temp + p -1, temp-1);
-				arma::cx_mat squareH = arma::zeros<arma::cx_mat>(temp + p, temp + p);
-    			squareH.submat(0, 0, temp + p - 1, temp - 1) = Hessen_trunc * dt;
-				arma::cx_mat expH = arma::expmat(squareH);
-				arma::cx_mat error_mat = expH.submat(temp, 0, temp + p -1, p-1);
-				double err = std::abs(beta * arma::norm(error_mat, "fro"));
-				if(err < krylov_cache.KrylovDimTol)
-				{
-					break;
-				}
-			}
+			//if(krylov_cache.KrylovDimTol > 0.0 && std::abs(dt) != 0.0)
+			//{
+			//	int temp = (it1 + 1) * p;
+			//	arma::cx_mat Hessen_trunc = Hessen.submat(0,0,temp + p -1, temp-1);
+			//	arma::cx_mat squareH = arma::zeros<arma::cx_mat>(temp + p, temp + p);
+    		//	squareH.submat(0, 0, temp + p - 1, temp - 1) = Hessen_trunc * dt;
+			//	arma::cx_mat expH = arma::expmat(squareH);
+			//	arma::cx_mat error_mat = expH.submat(temp, 0, temp + p -1, p-1);
+			//	double err = std::abs(beta * arma::norm(error_mat, "fro"));
+			//	if(err < krylov_cache.KrylovDimTol)
+			//	{
+			//		break;
+			//	}
+			//}
 		}
 		krylov_cache.KrylovDim = actual;
 		return pass;
@@ -1670,6 +1671,8 @@ namespace SpinAPI
 		w = w(idx);
 		V = V.cols(idx);
 
+		std::cout << w << std::endl;
+
 		arma::uword p = 0;
 		double eps = 1e-8;
 		double cumaltiveweight = 0.0;
@@ -1682,11 +1685,12 @@ namespace SpinAPI
 
 		arma::cx_mat B(HilbSize, p, arma::fill::zeros);
 
+
 		for (arma::uword k = 0; k < p; ++k) {
     		B.col(k) = std::sqrt(w(k)) * V.col(k);
 		}
-		
-		dt = std::complex<double>(0.0,-1.0) * dt;
+
+		//dt = std::complex<double>(0.0,-1.0) * dt;
 
 		arma::cx_mat test = (H * b - b * H);
 		double norm = arma::norm(test, "fro");
@@ -1703,13 +1707,13 @@ namespace SpinAPI
 				trialDim = kryDim;
 			}
 
-			std::vector<SpinSpace::return_struct> KrylovResults;
-			//auto KrylovResult = KrylovExpmGeneral(H,B,dt,trialDim,HilbSize,gen,propParam.dont_evaluate); //I think we scrap this and just do it for the indiviudal vectors 
-			for(int i = 0; i < p; i++)
-			{
-				KrylovResults.push_back(KrylovExpmGeneral(H,B.col(i),trialDim,HilbSize,gen,propParam.dont_evaluate));
-			}
-
+			//std::vector<SpinSpace::return_struct> KrylovResults;
+			auto KrylovResult = KrylovExpmGeneral(H,B,dt,trialDim,HilbSize,gen,propParam.dont_evaluate); //I think we scrap this and just do it for the indiviudal vectors 
+			//for(int i = 0; i < p; i++)
+			//{
+			//	KrylovResults.push_back(KrylovExpmGeneral(H,B.col(i),trialDim,HilbSize,gen,propParam.dont_evaluate));
+			//}
+//
 			ReturnInfo.krybasis = KrylovResult.krybasis;
 			ReturnInfo.phi1 = KrylovResult.phi1;
 			ReturnInfo.phi2 = KrylovResult.phi2;

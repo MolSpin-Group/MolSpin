@@ -200,6 +200,7 @@ namespace RunSection
 		propParam.f2 = 1.5;
 		propParam.f1 = 0.5;
 		propParam.safety = 0.5;
+		propParam.UsePrefactor = true;
 
 		std::vector<double> LocalTime;
 		std::vector<SpinAPI::SpinSpace::PropParam> LocalPropParams;
@@ -299,6 +300,7 @@ namespace RunSection
 					}
 
 					H_eff = H_base + std::complex(0.0, 0.5) * K_base;
+					//H_eff = std::complex(0.0, -1.0) * H_eff;
 					H_eff_conj = H_base + std::complex(0.0,-0.5) * K_base;
 				}
 
@@ -311,7 +313,18 @@ namespace RunSection
 
 				//ETD2RK - a second order RK method with kyrlov
 				{
-					auto r = spaces[i].second->TimeAdaptiveKrylovGeneral(H_eff, prop_state, std::complex<double>(LocalTimeSteps[step][i]), 30, H_eff.n_rows, LocalPropParams[i], true, GeneratorFunc);
+					auto r = spaces[i].second->TimeAdaptiveKrylovGeneral(H_eff, prop_state, std::complex<double>(LocalTimeSteps[step][i]), 30, H_eff.n_rows, LocalPropParams[i], true);//, GeneratorFunc);
+					{
+						arma::cx_mat test = r.result;// * r.result.t();
+						arma::cx_mat exp1 = arma::expmat(std::complex<double>(0.0,-1.0) * H_eff * std::complex<double>(LocalTimeSteps[step][i]));
+						///arma::cx_mat exp2 = arma::expmat(std::complex<double>(0.0,1.0) * H_eff_conj * std::complex<double>(LocalTimeSteps[step][i]));
+						arma::cx_mat test2 = exp1 * prop_state * exp1.t();
+						std::cout << test << std::endl;
+						std::cout << test2 << std::endl;
+						double err = arma::norm(test-test2,"fro");
+						double norm_test = arma::norm(test,"fro");
+						std::cout << err << " : " << (err/norm_test) << std::endl;
+					} 
 					//midpoint predictor
 					this->GetCreationOperators(spaces, C[i], prop_state, i);
 					int p = r.result.n_cols;
