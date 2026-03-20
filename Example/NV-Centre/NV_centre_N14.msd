@@ -262,8 +262,8 @@ Run
         TotalTime  = 5000;     // ns
         minimumtimestep = 0.001;
         maximumtimestep = 100;
-        atol = 1e-12;
-        rtol = 1e-8;
+        atol = 1e-8;
+        rtol = 1e-5;
     }
 }
 

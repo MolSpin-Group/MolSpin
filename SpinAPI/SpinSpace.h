@@ -323,6 +323,8 @@ namespace SpinAPI
 			bool UseSetTimePoints = false;
 			arma::cx_double TimePrefactor = arma::cx_double(0.0, -1.0);
 
+			bool normalise = true;
+
 			double GetNextTimePoint() {
 				if (CurrentTrajectoryStep < SetTimePoints.size())
 				{
@@ -350,6 +352,13 @@ namespace SpinAPI
 			arma::cx_colvec result;
 		};
 
+		
+		/// @brief Return struct from time-adaptive propogators
+		/// @param timestep - the proposed new timestep for the following step
+		/// @param timestep_used - the timestep actually used in that step (this may differ from the one provided)
+		/// @param step_accepted - if the step was accepted on the first try - not always populted
+		/// @param result - the result of the propogation (sometimes the density matrix but not always)
+		/// @param krybasis - not always the krybasis but occasially just a random matrix that needs to be returned
 		struct TimePropReturnInfoMat
     	{
         	double timestep;
@@ -359,6 +368,7 @@ namespace SpinAPI
 
 			arma::cx_mat phi1;
 			arma::cx_mat phi2;
+			arma::cx_mat phi3;
 			arma::cx_mat krybasis;
 		};
 
@@ -368,7 +378,7 @@ namespace SpinAPI
 			double KrylovDimTol = 0.0;
 		};
 
-		double Adjusth(double R, double safety, double f1, double f2, double h);
+		double Adjusth(double R, double safety, double f1, double f2, double h, int order = 4);
 
 		TimePropReturnInfo TimeAdapativeKrylovRoutine(const arma::sp_cx_mat &H, const arma::cx_colvec &b, arma::cx_double dt, int kryDim, int HilbSize, PropParam &propParam, bool general, bool reset = true);
 		TimePropReturnInfo TimeAdaptiveKrylovGeneral(const arma::sp_cx_mat &H, const arma::cx_colvec &b, arma::cx_double dt, int kryDim, int HilbSize, PropParam &propParam, bool reset = true);
@@ -376,6 +386,18 @@ namespace SpinAPI
 
 		TimePropReturnInfoMat TimeAdapativeKrylovRoutine(const arma::sp_cx_mat &H, const arma::cx_mat &b, arma::cx_double dt, int kryDim, int HilbSize, PropParam &propParam, bool general, GeneratorFunctionVec gen, bool reset = true);
 		TimePropReturnInfoMat TimeAdaptiveKrylovGeneral(const arma::cx_mat &H, const arma::cx_mat &b, arma::cx_double dt, int kryDim, int HilbSize, PropParam &propParam, bool reset = true, GeneratorFunctionVec gen = nullptr);
+
+		typedef std::function<void(std::vector<arma::sp_cx_mat>&, std::vector<arma::cx_mat>)> NonLinearTermEval;
+		struct CachedInfo {
+			arma::cx_mat expH;
+			arma::cx_mat phi1;
+			arma::cx_mat phi2;
+			arma::cx_mat phi3;
+
+			arma::cx_double prev_timestep;
+		};
+
+		std::vector<TimePropReturnInfoMat> ETD2RK_exponential(const std::vector<arma::cx_mat> &H, const std::vector<arma::cx_mat> &b, arma::cx_double dt, PropParam &prop, NonLinearTermEval NLfunc, std::vector<bool> reval = {true}, std::vector<CachedInfo> cache = {});
 
 		// ------------------------------------------------
 		// Hamiltonian representations in the space (SpinSpace_hamiltonians.cpp)

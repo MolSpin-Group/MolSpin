@@ -268,7 +268,7 @@ namespace RunSection
 		if(propogator_cached)
 			return;
 		double stiffness = EstimateStiffnessArmadillo(L);
-		if(stiffness > 10.0)
+		if(stiffness > 10.0) //need to change this as krylov isn't available everywhere
 		{
 			this->prop = Propagator::Krylov;
 			this->Log() << "The Liouvillian is stiff (stiffness = " << stiffness << "). Using the Krylov propagator." << std::endl;

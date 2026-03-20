@@ -479,9 +479,10 @@ namespace SpinAPI
 		else
 		{
 			_out = P;
+			//std::cout << _out << std::endl;
 		}
 
-		std::cout << _out << std::endl;
+		//std::cout << _out << std::endl;
 
 		return true;
 	}
