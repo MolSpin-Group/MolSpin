@@ -1,3 +1,4 @@
+#include "SpinSpace.h"
 /////////////////////////////////////////////////////////////////////////
 // SpinSpace class (SpinAPI Module)
 // ------------------
@@ -224,7 +225,7 @@ namespace SpinAPI
 	}
 
 	// Sets the dense matrix to the part of the total reaction operator that is independent of time or trajectory step
-	bool SpinSpace::StaticTotalReactionOperator(arma::cx_mat &_out, const ReactionOperatorType &_forcedReactionOperatorType) const
+	bool SpinSpace::StaticTotalReactionOperator(arma::cx_mat &_out, const ReactionOperatorType &_forcedReactionOperatorType, bool NoInterSystem) const
 	{
 		arma::cx_mat result = arma::zeros<arma::cx_mat>(this->SpaceDimensions(), this->SpaceDimensions());
 
@@ -240,6 +241,9 @@ namespace SpinAPI
 		{
 			// Skip any dynamic (time-dependent) transitions
 			if (!IsStatic(*(*i)))
+				continue;
+			
+			if(NoInterSystem && (*i)->Target() != nullptr)
 				continue;
 
 			// Attempt to get the matrix representing the reaction operator in the spin space
@@ -487,8 +491,138 @@ namespace SpinAPI
 		return true;
 	}
 
-	// -----------------------------------------------------
-	// Creation operators (non-member non-friend functions)
+    bool SpinSpace::ReactionSourceOperator(const transition_ptr &_transition, double _fraction, arma::cx_mat &_out) const
+    {
+        // Make sure that we have a valid transition object
+		if (_transition == nullptr || !_transition->IsValid())
+			return false;
+
+		// Get a Hilbert space projection operator onto the source state
+		arma::cx_mat P;
+		if (!this->GetState(_transition->SourceState(), P))
+			return false;
+
+		// Multiply by k
+		// NOTE: The _fraction parameter describes the amount of source state in the source system
+		P *= _transition->Rate() * _fraction;
+
+		// Check whether we need to convert to superspace
+		if (this->useSuperspace)
+		{
+			if (this->reactionOperators == ReactionOperatorType::Lindblad)
+			{
+				// ---------------- Lindblad form ----------------
+				// Get the first operator (P * . * conj(P))
+				arma::cx_mat PF;
+				if (!this->SuperoperatorFromOperators(P, P.t(), PF))
+					return false;
+
+				// Get the left-hand operator (conj(P)*P * .)
+				arma::cx_mat PL;
+				if (!this->SuperoperatorFromLeftOperator(P.t() * P, PL))
+					return false;
+
+				// Get the right-hand operator (. * conj(P)*P)
+				arma::cx_mat PR;
+				if (!this->SuperoperatorFromRightOperator(P.t() * P, PR))
+					return false;
+
+				// Set the total operator
+				_out = PF - 0.5 * (PL + PR);
+			}
+			else
+			{
+				// ---------------- Haberkorn form ----------------
+				// Get the left-hand operator (P * .)
+				arma::cx_mat PL;
+				if (!this->SuperoperatorFromLeftOperator(P, PL))
+					return false;
+
+				// Get the right-hand operator (. * P)
+				arma::cx_mat PR;
+				if (!this->SuperoperatorFromRightOperator(P, PR))
+					return false;
+
+				// Set the total operator
+				_out = (PL + PR);
+			}
+		}
+		else
+		{
+			_out = P;
+			//std::cout << _out << std::endl;
+		}
+
+		return true;
+    }
+
+    bool SpinSpace::ReactionSourceOperator(const transition_ptr &_transition, double _fraction, arma::sp_cx_mat &_out) const
+    {
+        // Make sure that we have a valid transition object
+		if (_transition == nullptr || !_transition->IsValid())
+			return false;
+
+		// Get a Hilbert space projection operator onto the source state
+		arma::sp_cx_mat P;
+		if (!this->GetState(_transition->SourceState(), P))
+			return false;
+
+		// Multiply by k
+		// NOTE: The _fraction parameter describes the amount of source state in the source system
+		P *= _transition->Rate() * _fraction;
+
+		// Check whether we need to convert to superspace
+		if (this->useSuperspace)
+		{
+			if (this->reactionOperators == ReactionOperatorType::Lindblad)
+			{
+				// ---------------- Lindblad form ----------------
+				// Get the first operator (P * . * conj(P))
+				arma::sp_cx_mat PF;
+				if (!this->SuperoperatorFromOperators(P, P.t(), PF))
+					return false;
+
+				// Get the left-hand operator (conj(P)*P * .)
+				arma::sp_cx_mat PL;
+				if (!this->SuperoperatorFromLeftOperator(P.t() * P, PL))
+					return false;
+
+				// Get the right-hand operator (. * conj(P)*P)
+				arma::sp_cx_mat PR;
+				if (!this->SuperoperatorFromRightOperator(P.t() * P, PR))
+					return false;
+
+				// Set the total operator
+				_out = PF - 0.5 * (PL + PR);
+			}
+			else
+			{
+				// ---------------- Haberkorn form ----------------
+				// Get the left-hand operator (P * .)
+				arma::sp_cx_mat PL;
+				if (!this->SuperoperatorFromLeftOperator(P, PL))
+					return false;
+
+				// Get the right-hand operator (. * P)
+				arma::sp_cx_mat PR;
+				if (!this->SuperoperatorFromRightOperator(P, PR))
+					return false;
+
+				// Set the total operator
+				_out = (PL + PR);
+			}
+		}
+		else
+		{
+			_out = P;
+			//std::cout << _out << std::endl;
+		}
+
+		return true;
+    }
+
+    // -----------------------------------------------------
+    // Creation operators (non-member non-friend functions)
 	// -----------------------------------------------------
 	// Provides a creation operator that allows transitions between two spin systems
 	bool CreationOperator(const transition_ptr &_transition, const SpinSpace &_sourceSpace, const SpinSpace &_targetSpace, arma::cx_mat &_out, bool _useSuperoperatorSpace)

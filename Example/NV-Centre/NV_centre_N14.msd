@@ -95,6 +95,7 @@ SpinSystem GS
     }
 
 //Transitions
+
     Transition T0UP{source = T0_U; targetsystem = ES; targetstate = T0_U; rate = 0.01;}
     Transition T0ZP{source = T0_Z; targetsystem = ES; targetstate = T0_Z; rate = 0.01;}
     Transition T0DP{source = T0_D; targetsystem = ES; targetstate = T0_D; rate = 0.01;}
@@ -252,8 +253,8 @@ Run
     {
         //type       = MultiStaticSS-timeevolution;
         type = MultiDynamicHS-timeevolution;
-        logfile    = "NV_centre_N14_GSLAC.log";
-        datafile   = "NV_centre_N14_GSLAC.dat";
+        logfile    = "NV_centre_N14_GSLAC-HS.log";
+        datafile   = "NV_centre_N14_GSLAC-HS.dat";
         ReactionOperator = Haberkorn;
         transitionyields = false;
         //propagator = RK45;
@@ -261,9 +262,11 @@ Run
         TimeStep   = 1;        // ns
         TotalTime  = 5000;     // ns
         minimumtimestep = 0.001;
-        maximumtimestep = 100;
-        atol = 1e-8;
+        maximumtimestep = 15;
+        atol = 1e-6;
         rtol = 1e-5;
+        //atol = 1e-12;
+        //rtol = 1e-12;
     }
 }
 

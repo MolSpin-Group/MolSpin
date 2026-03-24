@@ -62,6 +62,7 @@ namespace RunSection
 
 		// Now, create a matrix to hold the Liouvillian superoperator and the initial state
 		arma::sp_cx_mat L(dimensions, dimensions);
+		arma::sp_cx_mat dL(dimensions,dimensions);
 		arma::cx_vec rho0(dimensions);
 		unsigned int nextDimension = 0; // Keeps track of the dimension where the next spin space starts
 
@@ -107,13 +108,14 @@ namespace RunSection
 
 			// Next, get the Hamiltonian
 			arma::sp_cx_mat H;
-			if (!i->second->Hamiltonian(H))
+			if (!i->second->StaticHamiltonian(H));
 			{
 				this->Log() << "ERROR: Failed to obtain the superspace Hamiltonian for spin system \"" << i->first->Name() << "\"!" << std::endl;
 				return false;
 			}
 			SCData DataStruct = GetHamiltonian(H,i->second->SpaceDimensions());
 			L.submat(nextDimension, nextDimension, nextDimension + i->second->SpaceDimensions() - 1, nextDimension + i->second->SpaceDimensions() - 1) = arma::cx_double(0.0, -1.0) * DataStruct.H;
+			
 
 			// Then get the reaction operators
 			arma::sp_cx_mat K;
@@ -254,11 +256,11 @@ namespace RunSection
 			MaxTimeStep = InitialTimeStep * 1e4;
 		}
 
-		if (!this->Properties()->Get("absolutetolerance", MinTolerance) and (!this->Properties()->Get("absolute tolerance", MinTolerance) and !this->Properties()->Get("atol", MinTolerance)))
+		if (!this->Properties()->Get("absolutetolerance", MinTolerance) and !this->Properties()->Get("absolute tolerance", MinTolerance) and !this->Properties()->Get("atol", MinTolerance))
 		{
 			MinTolerance = 1e-8;
 		}
-		if (!this->Properties()->Get("relativetolerance", MaxTolerance) and (!this->Properties()->Get("relative tolerance", MaxTolerance) and !this->Properties()->Get("rtol", MinTolerance)))
+		if (!this->Properties()->Get("relativetolerance", MaxTolerance) and !this->Properties()->Get("relative tolerance", MaxTolerance) and !this->Properties()->Get("rtol", MinTolerance))
 		{
 			MaxTolerance = 1e-10;
 		}
@@ -268,9 +270,9 @@ namespace RunSection
 		params.rtol = MaxTolerance;
 		params.min = MinTimeStep;
 		params.max = MaxTimeStep;
-		params.safety = 0.8;
+		params.safety = 0.7;
 		params.f1 = 0.1;
-		params.f2 = 5.0;
+		params.f2 = 2.0;
 
 		//auto eigs = arma::eig_gen(arma::conv_to<arma::cx_mat>::from(L));
 		//double max_eig = 0.0;
@@ -290,11 +292,16 @@ namespace RunSection
 		
 
 		this->Log() << "Starting time evolution with timestep: " << this->timestep << ", total time: " << this->totaltime << ", minimum timestep: " << MinTimeStep << ", maximum timestep: " << MaxTimeStep << std::endl;
-		while (CurrentTime <= this->totaltime)
+		while (CurrentTime < this->totaltime)
 		{
 			// Propagate
 
 			SpinAPI::SpinSpace::TimePropReturnInfo r;
+
+			if(this->timestep + CurrentTime > this->totaltime)
+			{
+				this->timestep = this->totaltime - CurrentTime;
+			}
 
 			//this->timestep = RungeKutta45Armadillo(L, rho0, rho0, this->timestep, ComputeRhoDot,0.0,params);
 
@@ -305,17 +312,18 @@ namespace RunSection
 			else
 			{
 				//r = AdaptiveDirectKrylovArmadillo(L, rho0, rho0, this->timestep, CurrentTime, params, nullptr);
-				r = spaces[0].second->TimeAdaptiveKrylovGeneral(L, rho0, this->timestep, 30, L.n_rows, params);
+				r = spaces[0].second->TimeAdaptiveKrylovGeneral(L, rho0, std::complex<double>(this->timestep,0.0), 30, L.n_rows, params);
 			}
 
 			double t = r.timestep;
 			bool a = r.step_accepted;
 
 			this->Data() << this->RunSettings()->CurrentStep() << " ";
-			CurrentTime += (a == true) ? this->timestep : t;
+			CurrentTime += (a == true) ? this->timestep : r.timestep_used;
 			this->timestep = t;
 			this->Data() << CurrentTime << " ";
 			this->WriteStandardOutput(this->Data());
+			rho0 = r.result;
 
 			NoFail = SeperateSpinSystems(rho0, spaces, this->ProductYieldsOnly, (a == true) ? this->timestep : t);
 			if (!NoFail)

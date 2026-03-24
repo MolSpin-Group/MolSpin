@@ -309,20 +309,20 @@ namespace RunSection
     {
 		double MinTimeStep, MaxTimeStep = 0.0;
 		double MinTolerance, MaxTolerance = 0.0;
-		if (!this->Properties()->Get("minimumtimestep", MinTimeStep) and !this->Properties()->Get("minimum timestep", MinTimeStep))
+		if (!this->Properties()->Get("minimumtimestep", MinTimeStep) && !this->Properties()->Get("minimum timestep", MinTimeStep))
 		{
 			MinTimeStep = InitialTimeStep * 1e-3;
 		}
-		if (!this->Properties()->Get("maximumtimestep", MaxTimeStep) and !this->Properties()->Get("maximum timestep", MaxTimeStep))
+		if (!this->Properties()->Get("maximumtimestep", MaxTimeStep) && !this->Properties()->Get("maximum timestep", MaxTimeStep))
 		{
 			MaxTimeStep = InitialTimeStep * 1e4;
 		}
 
-		if (!this->Properties()->Get("absolutetolerance", MinTolerance) and (!this->Properties()->Get("absolute tolerance", MinTolerance) and !this->Properties()->Get("atol", MinTolerance)))
+		if (!this->Properties()->Get("absolutetolerance", MinTolerance) && !this->Properties()->Get("absolute tolerance", MinTolerance) && !this->Properties()->Get("atol", MinTolerance))
 		{
 			MinTolerance = 1e-8;
 		}
-		if (!this->Properties()->Get("relativetolerance", MaxTolerance) and (!this->Properties()->Get("relative tolerance", MaxTolerance) and !this->Properties()->Get("rtol", MinTolerance)))
+		if (!this->Properties()->Get("relativetolerance", MaxTolerance) && !this->Properties()->Get("relative tolerance", MaxTolerance) && !this->Properties()->Get("rtol", MinTolerance))
 		{
 			MaxTolerance = 1e-10;
 		}

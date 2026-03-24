@@ -116,7 +116,7 @@ namespace RunSection
 			// Then get the reaction operators (decay part)
 			arma::cx_mat tmp_K;
 			arma::sp_cx_mat tmp_dK = arma::sp_cx_mat(i->second->SpaceDimensions(), i->second->SpaceDimensions());
-			if (!i->second->StaticTotalReactionOperator(tmp_K) || (i->second->HasTimedependentTransitions() && !i->second->DynamicTotalReactionOperator(tmp_dK)))
+			if (!i->second->StaticTotalReactionOperator(tmp_K,SpinAPI::ReactionOperatorType::Haberkorn, true) || (i->second->HasTimedependentTransitions() && !i->second->DynamicTotalReactionOperator(tmp_dK)))
 			{
 				this->Log() << "ERROR: Failed to obtain matrix representation of the reaction operators for spin system \"" << i->first->Name() << "\"!" << std::endl;
 				return false;
@@ -263,7 +263,8 @@ namespace RunSection
 						reset[i] = true;
 					}
 
-					H_eff = H_base + std::complex(0.0, -1.0) * K_base;
+					//H_eff = H_base + std::complex(0.0, -1.0) * K_base;
+					H_eff = H_base;
 					//H_eff = std::complex(0.0, -1.0) * H_eff;
 					//H_eff_conj = H_base + std::complex(0.0,0.5) * K_base;
 				}
@@ -271,7 +272,12 @@ namespace RunSection
 				H_eff_vec.push_back(H_eff);
 
 				arma::cx_mat prop_state = rho[i];
-				std::cout << prop_state << std::endl;//= rho[i];
+				//std::cout << prop_state << std::endl;//= rho[i];
+			}
+
+			if(this->timestep + currentTime > this->totaltime)
+			{
+				this->timestep = this->totaltime - currentTime;
 			}
 
 			auto r = spaces[0].second->ETD2RK_exponential(H_eff_vec,rho,this->timestep,propParam,std::bind(TaskMultiDynamicHSTimeEvo::GetCreationOperators, spaces,std::placeholders::_1,std::placeholders::_2, this),reset, prop_cache);
@@ -385,6 +391,7 @@ namespace RunSection
 			//}
 
 			// Print results
+			//this->outputstride = 100;
 			if (step % this->outputstride == 0)
 				this->OutputResults(spaces, rho, currentTime);
 
@@ -447,6 +454,8 @@ namespace RunSection
 					double cRate = std::abs(arma::trace(P * _rho[i]));
 					if(cRate == 0) {continue;}
 
+					//std::cout << cRate << ",";
+
 					// Generate the creation operator
 					arma::sp_cx_mat sP;
 					if (!_spaces[target].second->ReactionTargetOperator((*j), cRate, sP))
@@ -454,10 +463,18 @@ namespace RunSection
 						t->Log() << "Failed to obtain reaction operator for target state of transition \"" << (*j)->Name() << "\"." << std::endl;
 						continue;
 					}
+					arma::sp_cx_mat sP2;
+					if (!_spaces[i].second->ReactionSourceOperator((*j), cRate, sP2))
+					{
+						t->Log() << "Failed to obtain reaction operator for source state of transition \"" << (*j)->Name() << "\"." << std::endl;
+						continue;
+					}
 					_C[target] += sP;
+					_C[i] -= sP2;
 				}
 			}
 		}
+		//std::cout << std::endl;
 	}
 
     //void TaskMultiDynamicHSTimeEvo::GetCreationOperators(const std::vector<std::pair<std::shared_ptr<SpinAPI::SpinSystem>, std::shared_ptr<SpinAPI::SpinSpace>>> & spaces,arma::sp_cx_mat & C, const std::vector<arma::cx_mat>& rho, int idx)

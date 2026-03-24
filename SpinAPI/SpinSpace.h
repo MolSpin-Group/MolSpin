@@ -429,7 +429,7 @@ namespace SpinAPI
 		bool ReactionOperator(const transition_ptr &, arma::sp_cx_mat &, const ReactionOperatorType &_forcedReactionOperatorType = ReactionOperatorType::Unspecified) const; // but by default the reaction operator type of the transition or the spinspace will be used.
 		bool TotalReactionOperator(arma::cx_mat &, const ReactionOperatorType &_forcedReactionOperatorType = ReactionOperatorType::Unspecified) const;						 // Total reaction operator (dense matrix)
 		bool TotalReactionOperator(arma::sp_cx_mat &, const ReactionOperatorType &_forcedReactionOperatorType = ReactionOperatorType::Unspecified) const;					 // Total reaction operator (sparse matrix)
-		bool StaticTotalReactionOperator(arma::cx_mat &, const ReactionOperatorType &_forcedReactionOperatorType = ReactionOperatorType::Unspecified) const;				 // Time-independent part of the total reaction operator (dense matrix)
+		bool StaticTotalReactionOperator(arma::cx_mat &, const ReactionOperatorType &_forcedReactionOperatorType = ReactionOperatorType::Unspecified, bool NoInterSystem = false) const;				 // Time-independent part of the total reaction operator (dense matrix)
 		bool StaticTotalReactionOperator(arma::sp_cx_mat &, const ReactionOperatorType &_forcedReactionOperatorType = ReactionOperatorType::Unspecified) const;				 // Time-independent part of the total reaction operator (sparse matrix)
 		bool DynamicTotalReactionOperator(arma::cx_mat &, const ReactionOperatorType &_forcedReactionOperatorType = ReactionOperatorType::Unspecified) const;				 // Time-dependent part of the total reaction operator (dense matrix)
 		bool DynamicTotalReactionOperator(arma::sp_cx_mat &, const ReactionOperatorType &_forcedReactionOperatorType = ReactionOperatorType::Unspecified) const;			 // Time-dependent part of the total reaction operator (sparse matrix)
@@ -438,6 +438,8 @@ namespace SpinAPI
 		// Methods to create reaction operators in the target spin system (i.e. for creation), where the 'double' describes the amount of source state in the source system
 		bool ReactionTargetOperator(const transition_ptr &, double, arma::cx_mat &) const;
 		bool ReactionTargetOperator(const transition_ptr &, double, arma::sp_cx_mat &) const;
+		bool ReactionSourceOperator(const transition_ptr &, double, arma::cx_mat &) const;
+		bool ReactionSourceOperator(const transition_ptr &, double, arma::sp_cx_mat &) const;
 
 		// ------------------------------------------------
 		// Relaxation operators (SpinSpace_relaxation.cpp)

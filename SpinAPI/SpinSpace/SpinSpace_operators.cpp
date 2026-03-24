@@ -1207,11 +1207,13 @@ namespace SpinAPI
 			}
 		}
 
-		if(KryDim > krylov_cache.KrylovDim)
+		if(KryDim != krylov_cache.KrylovDim)
 		{
 			KryDim = krylov_cache.KrylovDim;
-			Hessen.resize(KryDim, KryDim);
-			KryBasis.resize(HilbSize, KryDim);
+			//Hessen.resize(KryDim, KryDim);
+			Hessen = Hessen.submat(0,0,KryDim-1, KryDim-1);
+			KryBasis= KryBasis.submat(0,0,HilbSize-1, KryDim-1);
+		//	//KryBasis.resize(HilbSize, KryDim);
 		}
 
 		arma::cx_colvec e1;
@@ -1255,7 +1257,7 @@ namespace SpinAPI
 			}
 		}
 
-		if(KryDim > krylov_cache.KrylovDim)
+		if(KryDim != krylov_cache.KrylovDim)
 		{
 			KryDim = krylov_cache.KrylovDim;
 			Hessen.resize(KryDim, KryDim);
@@ -1309,6 +1311,7 @@ namespace SpinAPI
 				break;
 			}
 			Hessen(it1 + 1, it1) = znmorm;
+			h_mplusone_m = znmorm;
 			if (abs(Hessen(it1 + 1, it1)) < pow(10, -14))
 			{
 				h_mplusone_m = 0.0;
@@ -1322,7 +1325,7 @@ namespace SpinAPI
 
 			if(krylov_cache.KrylovDimTol > 0.0 && std::abs(dt) != 0.0)
 			{
-				arma::cx_mat Hessen_trunc = Hessen.submat(0,0,it1,it1);
+				arma::cx_mat Hessen_trunc = Hessen.submat(0,0,it1+1,it1+1);
 				arma::cx_mat expH = arma::expmat(Hessen_trunc * dt);
 				std::complex<double> error_val = expH(it1, 0);
 				double err = std::abs(beta * znmorm * error_val);
@@ -1580,6 +1583,10 @@ namespace SpinAPI
 		{
 			dt = propParam.TimePrefactor * dt;
 		}
+		else
+		{
+			propParam.TimePrefactor = 1.0;
+		}
 
 		double dumpstep = std::abs(dt);
 
@@ -1593,6 +1600,7 @@ namespace SpinAPI
 			}
 			auto KyrlovResult = (general ? KrylovExpmGeneral(H, b, dt, trialDim, HilbSize) : KrylovExpmSymm(H, b, dt, trialDim, HilbSize));
 
+			if(propParam.UseSetTimePoints)
 			{
 				ReturnInfo.result = KyrlovResult.result;
 				ReturnInfo.step_accepted = true;
@@ -1798,20 +1806,8 @@ namespace SpinAPI
 		std::vector<arma::cx_mat> phi1;
 		std::vector<arma::cx_mat> phi1_half;
 		std::vector<arma::cx_mat> phi2;
-		//std::vector<arma::cx_mat> phi3;
 		std::vector<arma::sp_cx_mat> N_a;
 		std::vector<arma::sp_cx_mat> N_b;
-		//std::vector<arma::sp_cx_mat> N_c;
-		//std::vector<arma::sp_cx_mat> N_d;
-		//struct coeff
-		//{
-		//	arma::cx_mat alpha;
-		//	arma::cx_mat alpha3;
-		//	arma::cx_mat beta;
-		//	arma::cx_mat beta3;
-		//	arma::cx_mat gamma;
-		//};
-		//std::vector<coeff> coeff_vec;
 		bool pass = false;
 		std::vector<TimePropReturnInfoMat> rinfo;
 		while(!pass) 
@@ -1827,36 +1823,39 @@ namespace SpinAPI
 
 				if(reval[i]) {
 					//arma::cx_mat M = arma::cx_mat(4*size, 4*size,arma::fill::zeros);
-					arma::cx_mat M = arma::cx_mat(3*size, 3*size,arma::fill::zeros);
+					arma::cx_mat Z = arma::cx_double(0.0, -1.0) * dt * H[i];
+					double n = arma::norm(Z);
 					arma::cx_mat eye = arma::cx_mat(size,size).eye();
-					M.submat(0,0,size-1, size-1) = arma::cx_double(0.0,-1.0) * dt * H[i];
-					M.submat(0, size, size - 1, 2*size -1) = dt * eye;
-					M.submat(size, 2*size, 2*size-1,3*size-1) = dt * eye;
-					//M.submat(2*size, 3*size, 3*size-1,4*size-1) = dt * eye;
+					if(n > 1e-2)
+					{
+						arma::cx_mat M = arma::cx_mat(3*size, 3*size,arma::fill::zeros);
+						M.submat(0,0,size-1, size-1) = Z;
+						M.submat(0, size, size - 1, 2*size -1) = dt * eye;
+						M.submat(size, 2*size, 2*size-1,3*size-1) = dt * eye;
+						//M.submat(2*size, 3*size, 3*size-1,4*size-1) = dt * eye;
 
-					arma::cx_mat expM = arma::expmat(M);
-					expH.push_back(expM.submat(0,0,size-1, size-1));
-					phi1.push_back(expM.submat(0, size, size - 1, 2*size -1));
-					phi2.push_back(expM.submat(0, 2*size, size-1,3*size-1));
-					//phi3.push_back(expM.submat(0,3*size, size-1,4*size-1));
+						arma::cx_mat expM = arma::expmat(M);
+						expH.push_back(expM.submat(0,0,size-1, size-1));
+						phi1.push_back(expM.submat(0, size, size - 1, 2*size -1));
+						phi2.push_back(expM.submat(0, 2*size, size-1,3*size-1));
+						//phi3.push_back(expM.submat(0,3*size, size-1,4*size-1));
+					}
+					else
+					{
+						expH.push_back(arma::expmat(Z));
+						arma::cx_mat z2 = Z*Z;
+						arma::cx_mat z3 = z2*Z;
+						arma::cx_mat z4 = z3*Z;
+
+						arma::cx_mat p1 = eye + (Z/2.0) + (z2/6.0) + (z3/24.0) + (z4/120.0);
+						arma::cx_mat p2 = (eye/2.0) + (Z/6.0) + (z2/24.0) + (z3/120.0) + (z4/720.0);
+						
+						phi1.push_back(dt*p1);
+						phi2.push_back((dt*dt)*p2);
+
+					}
+
 				}
-
-				//coeff c;
-				//c.alpha = phi1[i] - 3.0*phi2[i] + 4.0*phi3[i];
-				//c.beta = phi2[i] - 2.0*phi3[i];
-				//c.gamma = 4.0*phi3[i] - phi2[i];
-//
-				//c.alpha3 = phi1[i] - 2.0*phi2[i];
-				//c.beta3 = phi2[i];
-				//coeff_vec.push_back(c);
-
-				//arma::cx_mat M = arma::cx_mat(2*size, 2*size,arma::fill::zeros);
-				//arma::cx_mat eye = arma::cx_mat(size,size).eye();
-				//M.submat(0,0,size-1, size-1) = arma::cx_double(0.0,-0.5) * dt * H[i];
-				//M.submat(0, size, size - 1, 2*size -1) = 0.5*dt * eye;
-				//arma::cx_mat expM = arma::expmat(M);
-				//expH_half.push_back(expM.submat(0,0,size-1, size-1));
-				//phi1_half.push_back(expM.submat(0, size, size - 1, 2*size -1));
 
 				expH_conj.push_back(expH[i].t());
 				arma::sp_cx_mat N_ni = arma::sp_cx_mat(size,size);
@@ -1873,79 +1872,109 @@ namespace SpinAPI
 			//std::vector<arma::cx_mat> cn;
 			//NLfunc(N_n,b);
 			NLfunc(N_a, b);
+
 			for(unsigned int i = 0; i < sys; i++)
 			{
 				//arma::cx_mat ta = (dt/2.0) * phi1_half[i] * N_a[i] * expH_half[i].t();
 				//arma::cx_mat a_ni = expH_half[i] * b[i] * expH_half[i].t() + 0.5*(ta + ta.t());
 				//an.push_back(a_ni);
-				arma::cx_mat t1 = phi1[i] * N_a[i] * expH_conj[i];
-				arma::cx_mat a_ni = expH[i] * b[i] * expH_conj[i] + 0.5*(t1 + t1.t());
+				arma::cx_mat t1 = phi1[i] * N_a[i];// * expH_conj[i];
+				arma::cx_mat unitary = expH[i] * b[i] * expH_conj[i];
+				arma::cx_mat a_ni = unitary + 0.5*(t1+ t1.t());
 				an.push_back(a_ni);
+
+				//h_trace = arma::trace(unitary).real();
+				//std::cout << h_trace - arma::trace(b[i]).real() << std::endl;
+
+				//arma::cx_mat hermitian_error = H[i] - H[i].t();
+				//double err_norm = arma::norm(hermitian_error, "fro");
+				//std::cout << err_norm << std::endl;
+			}
+			//std::cout << 1-h_trace << std::endl;
+
+			
+			std::complex<double> an_total_trace = 0.0;
+			std::complex<double> trace_target = 1.0;
+			for(unsigned int i = 0; i < sys; i++) {an_total_trace += arma::trace(an[i]);}// trace_target += arma::trace(b[i]); }
+			std::complex<double> an_mismatch_factor = trace_target / an_total_trace;
+			for(unsigned int i = 0; i < sys; i++) {
+			    an[i] = an[i] * an_mismatch_factor;
+				an[i] = 0.5 * (an[i] + an[i].t());
 			}
 
-			//predictor step - b
-			//NLfunc(N_b, an);
-			//for(unsigned int i = 0; i < sys; i++)
-			//{
-			//	arma::cx_mat tb = (dt/2.0) * phi1_half[i] * N_b[i] * expH_half[i].t();
-			//	arma::cx_mat b_ni = expH_half[i] * b[i] * expH_half[i].t() + 0.5*(tb + tb.t());
-			//	bn.push_back(b_ni);
-			//}
-//
-			////full step - c
-			//NLfunc(N_c, bn);
-			//for(unsigned int i = 0; i < sys; i++)
-			//{
-			//	arma::sp_cx_mat fc = 2.0*N_c[i]-N_a[i];
-			//	arma::cx_mat tc = (dt/2.0) * phi1_half[i] * fc * expH_half[i].t();
-			//	arma::cx_mat c_ni = expH_half[i] * an[i] * expH_half[i].t() + 0.5*(tc + tc.t());
-			//	cn.push_back(c_ni);
-			//}
-
-			//NLfunc(N_d, an);
-			//std::vector<arma::cx_mat> rho_next;
-			//std::vector<arma::cx_mat> rho_3;
-			//for(unsigned int i = 0; i < sys; i++)
-			//{
-			//	arma::cx_mat nt= coeff_vec[i].alpha * N_a[i] + 2.0*coeff_vec[i].beta*(N_b[i] + N_c[i]) + coeff_vec[i].gamma * N_d[i];
-			//	arma::cx_mat tf = dt * nt * expH[i].t();
-			//	arma::cx_mat t3 = dt * (coeff_vec[i].alpha3 * N_a[i] + 2.0*coeff_vec[i].beta3*(N_b[i] + N_c[i]));
-			//	arma::cx_mat rho_next_i = expH[i] * b[i] * expH_conj[i] + 0.5*(tf + tf.t());
-			//	arma::cx_mat rho_3_i = expH[i] * b[i] * expH_conj[i] + 0.5*(t3 + t3.t());
-//
-			//	rho_next.push_back(rho_next_i);
-			//	rho_3.push_back(rho_3_i);
-			//}
 
 			//corrector step
-			NLfunc(N_b,an);
-			std::vector<arma::cx_mat> rho_next;
-			for(unsigned int i = 0; i < sys; i++)
+			std::vector<arma::cx_mat> rho_guess = an;
+			int max_iter = 100;
+			for(int itr = 0; itr < max_iter; itr++)
 			{
-				arma::sp_cx_mat delta_N = N_b[i] - N_a[i];
-				//std::cout << delta_N << std::endl;
-				arma::cx_mat t2 = (std::complex<double>(1.0,0.0)/dt) * (phi2[i] * delta_N * expH_conj[i]);
-				arma::cx_mat rho_next_i = an[i] + 0.5*(t2 + t2.t());
-				rho_next.push_back(rho_next_i);
+				std::vector<arma::cx_mat> rho_old = rho_guess;
+				NLfunc(N_b,rho_guess);
+				double max_diff = 0.0;
+				std::complex<double> in_out = 0.0;
+				for (unsigned int i = 0; i < sys; i++)
+				{
+					in_out += arma::trace(N_b[i]);
+				}
+				
+				//std::cout << in_out << std::endl;
+
+				std::complex<double> total_numerical_change = 0.0;
+				for(unsigned int i = 0; i < sys; i++)
+				{
+					arma::sp_cx_mat delta_N = N_b[i] - N_a[i];
+					arma::cx_mat t2 = (std::complex<double>(2.0,0.0)/dt) * (phi2[i] * delta_N);// * expH_conj[i]);
+					arma::cx_mat rho_next_i = an[i] + 0.5*(t2 + t2.t());
+					rho_guess[i] = rho_next_i;
+					total_numerical_change += arma::trace(rho_guess[i]);
+
+					//double diff = arma::norm(rho_guess[i]-rho_old[i], "fro");
+					//if(diff > max_diff) {max_diff = diff;}
+				}
+				
+				std::complex<double> mismatch_factor = trace_target / total_numerical_change;
+				for(unsigned int i = 0; i < sys; i++)
+				{
+        			arma::cx_mat rho_next_i = rho_guess[i] * mismatch_factor;
+        
+        			rho_guess[i] = rho_next_i;
+
+        			double diff = arma::norm(rho_guess[i] - rho_old[i], "fro");
+        			if(diff > max_diff) { max_diff = diff; }
+				}
+
+				if(max_diff < prop.atol) {break;}
 			}
+				
+
+			std::vector<arma::cx_mat> rho_next = rho_guess;
 
 			std::vector<double> err_sq;
 			std::vector<double> tol_sq;
 			std::vector<double> err_rat;
+			double trace_err = 0.0;
+			double total_trace = 0.0;
 			for(int i = 0; i < sys; i++)
 			{
 				arma::cx_mat err_mat = rho_next[i]-an[i];
+				//auto tr = arma::trace(rho_next[i]);
+				//std::cout << tr.real() << " , " << tr.imag() << std::endl;
+				trace_err += std::abs(arma::trace(rho_next[i] - an[i]));
+				total_trace += std::abs(arma::trace(rho_next[i]));
 				double err = arma::norm(err_mat,"fro");
 				err_sq.push_back(err);
 				double tol = prop.rtol * arma::norm(rho_next[i],"fro") + prop.atol;
 				tol_sq.push_back(tol);
 				err_rat.push_back(err/tol);
+				
 				//std::cout << rho_next[i] << std::endl;
 			}
 
+			double trace_r = trace_err/(prop.atol);
+
 			std::sort(err_rat.begin(), err_rat.end());
-			double R = err_rat.back();
-			double dumpstep = Adjusth(R, prop.safety, prop.f1, prop.f2, std::abs(dt),4);
+			double R = std::max(err_rat.back(),trace_r);
+			double dumpstep = Adjusth(R, prop.safety, prop.f1, prop.f2, std::abs(dt),2);
 
 			double timestep_ratio = dumpstep / std::abs(dt);
 			double proposed_timestep = std::abs(dt);
@@ -1962,23 +1991,25 @@ namespace SpinAPI
 				proposed_timestep = dumpstep;
 			}
 
-			if(prop.normalise) {
+			std::cout << proposed_timestep << "," << R << "," << std::endl;
 
-				double total_trace = 0.0;
-				for(int i = 0; i < sys; i++) {
-					total_trace += std::real(arma::trace(rho_next[i]));
-				}
-
-				double global_leak = total_trace - 1.0;
-				if(std::abs(global_leak) > 1e-15)
-				{
-					double correction = 1.0 / total_trace;
-					for(int i = 0; i < sys; i++)
-					{
-						rho_next[i] *= correction;
-					}
-				}
-			}
+			//if(prop.normalise) {
+//
+			//	double total_trace = 0.0;
+			//	for(int i = 0; i < sys; i++) {
+			//		total_trace += std::real(arma::trace(rho_next[i]));
+			//	}
+//
+			//	double global_leak = total_trace - 1.0;
+			//	if(std::abs(global_leak) > 1e-15)
+			//	{
+			//		double correction = 1.0 / total_trace;
+			//		for(int i = 0; i < sys; i++)
+			//		{
+			//			rho_next[i] *= correction;
+			//		}
+			//	}
+			//}
 
 			if(R <= 1)
 			{
@@ -1994,6 +2025,10 @@ namespace SpinAPI
 			}
 			else
 			{
+				for(unsigned int i = 0; i < reval.size(); i++)
+				{
+					reval[i] = true;
+				}
 				expH.clear();
 				expH_conj.clear();
 				phi1.clear();
