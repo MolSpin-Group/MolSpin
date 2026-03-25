@@ -37,6 +37,8 @@ SpinSystem GS
         group2 = N14;
         tensor = matrix("-2.70 0 0; 0 -2.70 0; 0 0 -2.14"); //Mhz
         prefactor = 0.035682426404996e-3;
+        tensortype = "monochromatic";
+        frequency = 0.0;
     }
 
     Interaction N14nqp
@@ -57,7 +59,7 @@ SpinSystem GS
         type = singlespin;
         spins = e1;
         //field = "0.0 0.0 0.0101";
-        field = "0.0 0.0 0.095";
+        field = "0.0 0.0 0.5";
     }
     
     Interaction nuclearzeeman
@@ -65,7 +67,8 @@ SpinSystem GS
         type = singlespin;
         spins = N14;
         //field = "0.0 0.0 0.101";
-        field = "0.0 0.0 0.095";
+        //field = "0.0 0.0 0.095";
+        field = "0.0 0.0 0.5";
         prefactor = -0.019327078; //g_n = 3.076Mhz/T -> 19.327078Mrad/sT -> 0.019327078rad/(ns)T
         commonprefactor = false;
     }
@@ -147,6 +150,8 @@ SpinSystem ES
         group2 = N14;
         tensor = matrix("40 0 0; 0 40 0; 0 0 -23"); //Mhz
         prefactor = 0.035682426404996e-3;
+        tensortype = "monochromatic";
+        frequency = 0.0;
     }
 
     Interaction N14nqp
@@ -164,7 +169,8 @@ SpinSystem ES
         type = singlespin;
         spins = e1;
         //field = "0.0 0.0 0.02";
-        field = "0.0 0.0 0.095";
+        //field = "0.0 0.0 0.095";
+        field = "0.0 0.0 0.5";
     }
     
     Interaction nuclearzeeman
@@ -172,7 +178,8 @@ SpinSystem ES
         type = singlespin;
         spins = N14;
         //field = "0.0 0.0 0.02";
-        field = "0.0 0.0 0.095";
+        //field = "0.0 0.0 0.095";
+        field = "0.0 0.0 0.5";
         prefactor = -0.019327078; //g_n = 3.076Mhz/T -> 19.327078Mrad/sT -> 0.019327078rad/(ns)T
         commonprefactor = false;
     }
@@ -251,10 +258,10 @@ Run
 {
     Task TE
     {
-        //type       = MultiStaticSS-timeevolution;
-        type = MultiDynamicHS-timeevolution;
-        logfile    = "NV_centre_N14_GSLAC-HS.log";
-        datafile   = "NV_centre_N14_GSLAC-HS.dat";
+        type       = MultiStaticSS-timeevolution;
+        //type = MultiDynamicHS-timeevolution;
+        logfile    = "NV_centre_N14_GSLAC-SS.log";
+        datafile   = "NV_centre_N14_GSLAC-SS.dat";
         ReactionOperator = Haberkorn;
         transitionyields = false;
         //propagator = RK45;
@@ -263,10 +270,10 @@ Run
         TotalTime  = 5000;     // ns
         minimumtimestep = 0.001;
         maximumtimestep = 15;
-        atol = 1e-6;
-        rtol = 1e-5;
-        //atol = 1e-12;
-        //rtol = 1e-12;
+        //atol = 1e-6;
+        //rtol = 1e-5;
+        atol = 1e-12;
+        rtol = 1e-12;
     }
 }
 
@@ -274,14 +281,44 @@ Settings
 {
     Settings general
 	{
-		//steps = 2000;
-        steps = 1;
+		//steps = 20541;
+        //steps = 1;
+        steps = 720;
 	}
 
     Output fieldstrength
     {
         type = length;
         vector = GS.zeeman.field;
+    }
+
+    Output hyperfinefrequency
+    {
+        type = scalar;
+        scalar = GS.E1N14.frequency;
+    }
+
+    Action increasefreq1
+    {
+        type = addscalar;
+        scalar = GS.E1N14.frequency;
+        value = 0.02;
+        first = 1;
+        //last = 600;
+        last = 60;
+        //last = 6;
+        loop = true;
+    }
+
+    Action increasefreq2
+    {
+        type = addscalar;
+        scalar = ES.E1N14.frequency;
+        value = 0.02;
+        first = 1;
+        //last = 600;
+        last = 60;
+        loop = true;
     }
 
     Action increasefieldstrength1
@@ -291,7 +328,13 @@ Settings
 		direction = "0 0 1";
         //value = 50e-9;
         //value = 50e-6;
-        value = 1e-5;
+        //value = 0.005;
+        value = 0.1;
+        //period = 501;
+        //period = 6;
+        //period = 600;
+        period = 60;
+        
 	}
 
     Action increasefieldstrength2
@@ -301,7 +344,10 @@ Settings
 		direction = "0 0 1"; 
         //value = 50e-9;
         //value = 50e-6;
-        value = 1e-5;
+        //value = 0.005;
+        value = 0.1;
+        //period = 501;
+        period = 60;
 	}
 
     Action increasefieldstrength3
@@ -310,7 +356,10 @@ Settings
 		vector = ES.zeeman.field;
 		direction = "0 0 1";
         //value = 10e-7;
-        value = 1e-5;
+        //value = 0.005;
+        value = 0.1;
+        //period = 501;
+        period = 60;
 	}
 
     Action increasefieldstrength4
@@ -319,6 +368,9 @@ Settings
 		vector = ES.nuclearzeeman.field;
 		direction = "0 0 1"; 
         //value = 10e-7;
-        value = 1e-5;
+        //value = 0.005;
+        value = 0.1;
+        //period = 501;
+        period = 60;
 	}
 }

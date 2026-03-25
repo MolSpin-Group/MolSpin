@@ -1308,6 +1308,7 @@ namespace SpinAPI
 			{
 				h_mplusone_m = znmorm; 
 				actual = it1 + 1;
+				pass = false;
 				break;
 			}
 			Hessen(it1 + 1, it1) = znmorm;
@@ -1316,7 +1317,6 @@ namespace SpinAPI
 			{
 				h_mplusone_m = 0.0;
 				//std::cout << "Stopped in Arnoldi Process" << std::endl;
-				pass = false;
 				actual = it1 + 1;
 				break;
 			}
@@ -1615,13 +1615,19 @@ namespace SpinAPI
 
 			dumpstep = Adjusth(R, propParam.safety, propParam.f1, propParam.f2, dumpstep);
 
+			double dt_d = (dt / propParam.TimePrefactor).real();
+
 			if(R <= propParam.reject_limit)
             {
                 ReturnInfo.result = KyrlovResult.result;
-				ReturnInfo.timestep_used = (dt / propParam.TimePrefactor).real();
+				ReturnInfo.timestep_used = dt_d;
 				keepstep = true;
             }
 
+			if(dumpstep < dt_d && R < propParam.reject_limit)
+			{
+				dumpstep = dt_d;
+			}
             if(dumpstep < propParam.min && R > propParam.reject_limit)
             {
                 propParam.min = dumpstep;

@@ -72,6 +72,7 @@ namespace RunSection
 			// If SpinSpace is made up of multiple SubSystems, this get's handled seperately rejoining when evaluating the creation operators for linking SpinSpaces.
 			//  Make sure we have an initial state
 			auto initial_states = i->first->InitialState();
+			i->second->SetTime(0.0);
 			arma::cx_mat rho0HS;
 			if (initial_states.size() < 1)
 			{
@@ -108,97 +109,138 @@ namespace RunSection
 
 			// Next, get the Hamiltonian
 			arma::sp_cx_mat H;
-			if (!i->second->StaticHamiltonian(H));
+			if(!i->second->Hamiltonian(H))
 			{
 				this->Log() << "ERROR: Failed to obtain the superspace Hamiltonian for spin system \"" << i->first->Name() << "\"!" << std::endl;
 				return false;
 			}
 			SCData DataStruct = GetHamiltonian(H,i->second->SpaceDimensions());
 			L.submat(nextDimension, nextDimension, nextDimension + i->second->SpaceDimensions() - 1, nextDimension + i->second->SpaceDimensions() - 1) = arma::cx_double(0.0, -1.0) * DataStruct.H;
-			
+			if(i->second->HasTimedependentInteractions())
+			{
+				arma::sp_cx_mat dH;
+				if (!i->second->DynamicHamiltonian(dH))
+				{
+					this->Log() << "ERROR: Failed to obtain the superspace Hamiltonian for spin system \"" << i->first->Name() << "\"!" << std::endl;
+					return false;
+				}
+				dL.submat(nextDimension, nextDimension, nextDimension + i->second->SpaceDimensions() - 1, nextDimension + i->second->SpaceDimensions() - 1) = arma::cx_double(0.0, -1.0) * dH;
+			}
+
 
 			// Then get the reaction operators
 			arma::sp_cx_mat K;
-			if (!i->second->TotalReactionOperator(K))
+			if(!i->second->StaticTotalReactionOperator(K))
 			{
 				this->Log() << "ERROR: Failed to obtain matrix representation of the reaction operators for spin system \"" << i->first->Name() << "\"!" << std::endl;
 				return false;
 			}
-
 			L.submat(nextDimension, nextDimension, nextDimension + i->second->SpaceDimensions() - 1, nextDimension + i->second->SpaceDimensions() - 1) -= K;
+			if(i->second->HasTimedependentTransitions())
+			{
+				arma::sp_cx_mat dK;
+				if(!i->second->DynamicTotalReactionOperator(dK))
+				{
+					this->Log() << "ERROR: Failed to obtain the superspace Hamiltonian for spin system \"" << i->first->Name() << "\"!" << std::endl;
+					return false;
+				}
+				dL.submat(nextDimension, nextDimension, nextDimension + i->second->SpaceDimensions() - 1, nextDimension + i->second->SpaceDimensions() - 1) -= dK ;
+			}
 
 			// Get the relaxation terms, assuming that they can just be added to the Liouvillian superoperator
 			arma::sp_cx_mat R;
 			for (auto t = i->first->operators_cbegin(); t != i->first->operators_cend(); t++)
 			{
-				if (i->second->RelaxationOperator((*t), R))
+				if(i->second->RelaxationOperator((*t), R))
 				{
 					L.submat(nextDimension, nextDimension, nextDimension + i->second->SpaceDimensions() - 1, nextDimension + i->second->SpaceDimensions() - 1) += R;
 					this->Log() << "Added relaxation operator \"" << (*t)->Name() << "\" to the Liouvillian.\n";
 				}
 			}
 
-			// Obtain the creation operators - note that we need to loop through the other SpinSystems again to find transitions leading into the current SpinSystem
-			unsigned int nextCDimension = 0; // Similar to nextDimension, but to keep track of first dimension for this other SpinSystem
-			for (auto j = spaces.cbegin(); j != spaces.cend(); j++)
-			{
-				// Creation operators are off-diagonal elements
-				if (j != i)
-				{
-					// Check all transitions whether they should produce a creation operator
-					for (auto t = j->first->transitions_cbegin(); t != j->first->transitions_cend(); t++)
-					{
-						// Does the Transition lead into the current spin space?
-						if ((*t)->Target() == i->first)
-						{
-							// Prepare a creation operator
-							arma::sp_cx_mat C;
-							if (!SpinAPI::CreationOperator((*t), *(j->second), *(i->second), C, true))
-							{
-								this->Log() << "ERROR: Failed to obtain matrix representation of the creation operator for transition \"" << (*t)->Name() << "\"!" << std::endl;
-								return false;
-							}
-
-							// Put it into the total Liouvillian:
-							//  - The row should be that of the current spin space (the target space)
-							//  - The column should be that of the source spin space (the spin system containing the Transition object)
-							L.submat(nextDimension, nextCDimension, nextDimension + i->second->SpaceDimensions() - 1, nextCDimension + j->second->SpaceDimensions() - 1) += C * (*t)->Rate();
-						}
-					}
-				}
-
-				// Move on to check next spin system for transitions into the current spin space
-				nextCDimension += j->second->SpaceDimensions();
-			}
-
 			// Move on to next spin space
 			nextDimension += i->second->SpaceDimensions();
 		}
 
+		auto UpdateTimeDependentL = [&](double time) {
+			unsigned int row = 0;
+			arma::sp_cx_mat Ltd(dimensions,dimensions);
+			for(auto i = spaces.begin(); i != spaces.end(); i++)
+			{
+				i->second->SetTime(time);
+				if(i->second->HasTimedependentInteractions())
+				{
+					arma::sp_cx_mat dH;
+					if(!i->second->DynamicHamiltonian(dH))
+					{
+						this->Log() << "ERROR: Failed to obtain the superspace Hamiltonian for spin system \"" << i->first->Name() << "\"!" << std::endl;
+						//return false;
+					}
+					Ltd.submat(row, row, row + i->second->SpaceDimensions() - 1, row + i->second->SpaceDimensions() - 1) = arma::cx_double(0.0, -1.0) * dH;
+				}
+
+				if(i->second->HasTimedependentTransitions())
+				{
+					arma::sp_cx_mat dK;
+					if(!i->second->DynamicTotalReactionOperator(dK))
+					{
+						this->Log() << "ERROR: Failed to obtain the superspace Hamiltonian for spin system \"" << i->first->Name() << "\"!" << std::endl;
+						//return false;
+					}
+					Ltd.submat(row, row, row + i->second->SpaceDimensions() - 1, row + i->second->SpaceDimensions() - 1) -= dK ;
+				}
+				row += i->second->SpaceDimensions();
+			}
+			return Ltd;
+		};
+
+		// Obtain the creation operators - note that we need to loop through the other SpinSystems again to find transitions leading into the current SpinSystem
+		auto GetCreationOperators = [&]() {
+			arma::sp_cx_mat C_mat(L.n_rows, L.n_cols);
+			nextDimension = 0;
+			for(auto i = spaces.cbegin(); i != spaces.cend(); i++) 
+			{
+				unsigned int nextCDimension = 0; // Similar to nextDimension, but to keep track of first dimension for this other SpinSystem
+				for (auto j = spaces.cbegin(); j != spaces.cend(); j++)
+				{
+					// Creation operators are off-diagonal elements
+					if (j != i)
+					{
+						// Check all transitions whether they should produce a creation operator
+						for (auto t = j->first->transitions_cbegin(); t != j->first->transitions_cend(); t++)
+						{
+							// Does the Transition lead into the current spin space?
+							if ((*t)->Target() == i->first)
+							{
+								// Prepare a creation operator
+								arma::sp_cx_mat C;
+								if (!SpinAPI::CreationOperator((*t), *(j->second), *(i->second), C, true))
+								{
+									this->Log() << "ERROR: Failed to obtain matrix representation of the creation operator for transition \"" << (*t)->Name() << "\"!" << std::endl;
+									//return false;
+								}
+								// Put it into the total Liouvillian:
+								//  - The row should be that of the current spin space (the target space)
+								//  - The column should be that of the source spin space (the spin system containing the Transition object)
+								C_mat.submat(nextDimension, nextCDimension, nextDimension + i->second->SpaceDimensions() - 1, nextCDimension + j->second->SpaceDimensions() - 1) += C * (*t)->Rate();
+							}
+						}
+					}
+					// Move on to check next spin system for transitions into the current spin space
+					nextCDimension += j->second->SpaceDimensions();
+				}
+				// Move on to next spin space
+				nextDimension += i->second->SpaceDimensions();
+			}
+			nextDimension = 0;
+			return C_mat;
+		};
+		arma::sp_cx_mat L_base = L;
+		L = L + GetCreationOperators() + dL;
+
 		// Write results for initial state as well (i.e. at time 0)
 		this->Data() << this->RunSettings()->CurrentStep() << " 0 ";
 		this->WriteStandardOutput(this->Data());
-		// There are two result modes - either write results per transition or for each defined state
-		// bool nf = SeperateSpinSystems(rho0, spaces, this->ProductYieldsOnly);
-		//nextDimension = 0;
-		//for (auto i = spaces.cbegin(); i != spaces.cend(); i++)
-		//{
-		//	// Get the superspace result vector and convert it back to the native Hilbert space
-		//	arma::cx_mat rho_result;
-		//	arma::cx_vec rho_result_vec;
-		//	rho_result_vec = rho0.rows(nextDimension, nextDimension + i->second->SpaceDimensions() - 1);
-		//	if (!i->second->OperatorFromSuperspace(rho_result_vec, rho_result))
-		//	{
-		//		this->Log() << "ERROR: Failed to convert resulting superspace-vector back to native Hilbert space for spin system \"" << i->first->Name() << "\"!" << std::endl;
-		//		return false;
-		//	}
-//
-		//	// Get the results
-		//	this->GatherResults(rho_result, *(i->first), *(i->second));
-//
-		//	// Move on to next spin space
-		//	nextDimension += i->second->SpaceDimensions();
-		//}
 		SeperateSpinSystems(rho0,spaces,this->ProductYieldsOnly, this->timestep);
 		this->Data() << std::endl;
 
@@ -274,36 +316,23 @@ namespace RunSection
 		params.f1 = 0.1;
 		params.f2 = 2.0;
 
-		//auto eigs = arma::eig_gen(arma::conv_to<arma::cx_mat>::from(L));
-		//double max_eig = 0.0;
-		//double min_eig = 1e+20;
-		//for (auto e = eigs.cbegin(); e != eigs.cend(); e++)
-		//{
-		//	if (std::abs((*e).imag()) > max_eig)
-		//		max_eig = std::abs((*e).imag());
-		//	if (std::abs((*e).imag()) < min_eig && std::abs((*e).imag()) > 1e-10)
-		//		min_eig = std::abs((*e).imag());
-		//}
-		//this->Log() << "Maximum eigenvalue imaginary part of Liouvillian: " << max_eig << std::endl;
-		//this->Log() << "Minimum eigenvalue imaginary part of Liouvillian: " << min_eig << std::endl;
-//
-		//double stiffness = max_eig / min_eig;
-		//this->Log() << "Liouvillian stiffness: " << stiffness << std::endl;
-		
-
+	
+	
 		this->Log() << "Starting time evolution with timestep: " << this->timestep << ", total time: " << this->totaltime << ", minimum timestep: " << MinTimeStep << ", maximum timestep: " << MaxTimeStep << std::endl;
 		while (CurrentTime < this->totaltime)
 		{
 			// Propagate
 
 			SpinAPI::SpinSpace::TimePropReturnInfo r;
+			L = L_base + GetCreationOperators();
+			dL = UpdateTimeDependentL(CurrentTime);
+			L = L + dL;
 
 			if(this->timestep + CurrentTime > this->totaltime)
 			{
 				this->timestep = this->totaltime - CurrentTime;
 			}
 
-			//this->timestep = RungeKutta45Armadillo(L, rho0, rho0, this->timestep, ComputeRhoDot,0.0,params);
 
 			if(this->prop == Propagator::RK45)
 			{

@@ -1323,6 +1323,18 @@ namespace SpinAPI
 					scalars.push_back(RunSection::NamedActionScalar(_system + "." + this->Name() + ".phase", phaseScalar));
 				}
 			}
+
+			if(this->type == InteractionType::DoubleSpin)
+			{
+				if(this->tensorType == InteractionTensorType::Monochromatic)
+				{
+					RunSection::ActionScalar frequencyScalar = RunSection::ActionScalar(this->tdFrequency, nullptr);
+					scalars.push_back(RunSection::NamedActionScalar(_system + "." + this->Name() + ".frequency", frequencyScalar));
+
+					RunSection::ActionScalar phaseScalar = RunSection::ActionScalar(this->tdPhase, nullptr);
+					scalars.push_back(RunSection::NamedActionScalar(_system + "." + this->Name() + ".phase", phaseScalar));
+				}
+			}
 		}
 
 		return scalars;
