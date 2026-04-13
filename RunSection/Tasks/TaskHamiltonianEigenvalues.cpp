@@ -98,24 +98,27 @@ namespace RunSection
 				for (auto j = this->referenceStates.cbegin(); j != this->referenceStates.cend(); j++)
 				{
 					// Check whether the current state is relevant for the current spin system
-					if (!(*i)->Contains(*j))
+					if(j->second != (*i)->Name())
+						continue;;
+					
+					if (!(*i)->Contains(j->first))
 					{
-						this->Log() << "Skipping state " << (*j)->Name() << " as it does not belong to current spin system." << std::endl;
+						this->Log() << "Skipping state " << (j->first)->Name() << " as it does not belong to current spin system." << std::endl;
 						continue;
 					}
 
 					// Get a projection operator onto the state
 					arma::cx_mat R;
-					if (!space.GetState((*j), R))
+					if (!space.GetState((j->first), R))
 					{
-						this->Log() << "Failed to obtain projection matrix onto the reference state \"" << (*j)->Name() << "\" of SpinSystem \"" << (*i)->Name() << "\"." << std::endl;
+						this->Log() << "Failed to obtain projection matrix onto the reference state \"" << (j->first)->Name() << "\" of SpinSystem \"" << (*i)->Name() << "\"." << std::endl;
 						continue;
 					}
 
 					// Make sure the dimensions fit
 					if (R.n_rows != V.n_rows || R.n_cols != V.n_cols)
 					{
-						this->Log() << "Warning: Problem with the reference state " << (*j)->Name() << ". Reference state ignored." << std::endl;
+						this->Log() << "Warning: Problem with the reference state " << (j->first)->Name() << ". Reference state ignored." << std::endl;
 						continue;
 					}
 
@@ -297,9 +300,20 @@ namespace RunSection
 				_stream << (*i)->Name() << ".H.lambda" << j << " ";
 
 			// Write headers for the reference states
+			//for (auto refstate = this->referenceStates.cbegin(); refstate != this->referenceStates.cend(); refstate++)
+			//	for (unsigned int j = 0; j < space.SpaceDimensions(); j++)
+			//		_stream << (*i)->Name() << ".H.ref" << j << "(" << (*refstate).first->Name() << ")" << " ";
 			for (auto refstate = this->referenceStates.cbegin(); refstate != this->referenceStates.cend(); refstate++)
+			{
+				if(refstate->second != (*i)->Name())
+					continue;
+
 				for (unsigned int j = 0; j < space.SpaceDimensions(); j++)
-					_stream << (*i)->Name() << ".H.ref" << j << "(" << (*refstate)->Name() << ")" << " ";
+				{
+					_stream << (*i)->Name() << ".H.ref" << j << "(" << (*refstate).first->Name() << ")" << " ";
+				}
+			}
+
 		}
 		_stream << std::endl;
 	}
@@ -397,21 +411,46 @@ namespace RunSection
 		{
 			// Loop through the list of states that was specified
 			auto systems = this->SpinSystems();
+
+			//if state string has a identifier in front of it e.g. GS.TO go the the GS spin system
+			//otherwise assume the same state can be found in multiple spin systems 
+
+			auto spinsystem = [&](std::string in, char delimiter){
+				std::string::const_iterator start = in.begin();
+				std::string::const_iterator end = in.end();
+				std::string::const_iterator next = std::find(start,end,delimiter);
+				if(next != end) {
+					return std::make_tuple(std::string(start,next),std::string(next+1,end),1);
+				}
+				else
+					return std::make_tuple(in,std::string(""),0);
+			};
+
 			for (const std::string &s : strs)
 			{
 				SpinAPI::state_ptr state = nullptr;
+				auto[ss,state_str,valid] = spinsystem(s,'.');
+				if(!valid)
+				{
+					state_str = s;
+				}
 
 				// Loop through the spin systems until a state is found
 				for (auto i = systems.cbegin(); i != systems.cend(); i++)
 				{
+					if(valid)
+					{
+						if((*i)->Name() != ss)
+							continue;
+					}
 					// Attemp to find the state in the spin system
-					state = (*i)->states_find(s);
+					state = (*i)->states_find(state_str);
 					if (state != nullptr)
 					{
-						// A state was found, no need to look in the other spin systems
-						this->referenceStates.push_back(state);
+						// A state was found, no need to look in the other spin systems - ignore this, see above comment
+						this->referenceStates.push_back({state,(*i)->Name()});
 						this->Log(MessageType_Important | MessageType_Warning) << "Task " << this->Name() << ": Found state " << s << " in spin system " << (*i)->Name() << "!" << std::endl;
-						break;
+						//break;
 					}
 				}
 

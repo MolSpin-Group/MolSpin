@@ -64,6 +64,19 @@ namespace RunSection
 			return false;
 		}
 
+		if(this->m_ActionMode == MODE::linespace)
+		{
+			this->m_startScaler = this->actionScalar->Get();
+			double diff = this->m_targetScalar - this->m_startScaler;
+			if(diff < 0.0)
+			{
+				return false;
+			}
+			this->value = diff/((double)this->m_num_steps-1.0);
+			this->first = 1;
+			this->last = this->m_num_steps;
+		}
+
 		return true;
 	}
 

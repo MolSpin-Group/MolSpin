@@ -27,7 +27,7 @@ namespace RunSection
 		double totalTime;
 		double timestep;
 		bool resonanceFrequencies;
-		std::vector<SpinAPI::state_ptr> referenceStates;
+		std::vector<std::pair<SpinAPI::state_ptr, std::string>> referenceStates;
 		std::vector<std::string> transitionSpins; // Used for transition matrix element calculations
 
 		// Private methods

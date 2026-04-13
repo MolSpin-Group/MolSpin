@@ -44,6 +44,8 @@ namespace RunSection
 		{
 			this->m_loop = false;
 		}
+
+		this->m_ActionMode = Action::MODE::defualt;
 	}
 
 	Action::~Action()
