@@ -72,6 +72,12 @@ namespace SpinAPI
 			{
 				this->type = OperatorType::RelaxationT2;
 			}
+			else if (str.compare("relaxationphenomenological") == 0 || str.compare("phenomenologicalrelaxation") == 0 || str.compare("phenomenological") == 0)
+			{
+				// rate1: population transfer between eigenstates
+				// rate2: damping of off-diagonal density-matrix elements
+				this->type = OperatorType::RelaxationPhenomenological;
+			}
 			else if (str.compare("unspecified") == 0)
 			{
 				this->type = OperatorType::Unspecified;

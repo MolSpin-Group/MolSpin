@@ -16,6 +16,7 @@
 #include "SpinSpace.h"
 #include "Function.h"
 #include "Pulse.h"
+#include <sstream>
 //////////////////////////////////////////////////////////////////////////////
 // Tests whether the spin quantum number is stored correctly.
 // DEPENDENCY NOTE: ObjectParser
@@ -1726,6 +1727,222 @@ bool test_spinapi_interaction_tensor_ornsteinuhlenbeck()
 }
 //////////////////////////////////////////////////////////////////////////////
 
+bool test_spinapi_interaction_orientation_validation_and_exchange()
+{
+	std::ostringstream expectedError;
+	std::streambuf *originalCerr = std::cerr.rdbuf(expectedError.rdbuf());
+	SpinAPI::Interaction badZfs("badZfs", "type=zfs;D=1;E=0;orientation=1,2;");
+	std::cerr.rdbuf(originalCerr);
+
+	SpinAPI::Interaction exchange("exchange", "type=exchange;orientation=1,2,3;");
+
+	bool isCorrect = true;
+	isCorrect &= equal_vec(badZfs.Framelist(), arma::vec("0 0 0"));
+	isCorrect &= equal_vec(exchange.Framelist(), arma::vec("0 0 0"));
+	isCorrect &= (exchange.Type() == SpinAPI::InteractionType::Exchange);
+
+	return isCorrect;
+}
+//////////////////////////////////////////////////////////////////////////////
+
+bool test_spinapi_zeeman_orientation_rotates_gtensor()
+{
+	auto spin = std::make_shared<SpinAPI::Spin>("E", "type=electron;spin=1/2;tensor=matrix(1 0 0; 0 2 0; 0 0 3);");
+	auto zeeman = std::make_shared<SpinAPI::Interaction>(
+		"B0",
+		"type=zeeman;spins=E;field=0 0 1;ignoretensors=false;commonprefactor=false;prefactor=1;"
+		"orientation=0,1.5707963267948966,0;");
+
+	SpinAPI::SpinSystem spinsys("System");
+	spinsys.Add(spin);
+	spinsys.Add(zeeman);
+	spinsys.ValidateInteractions();
+
+	SpinAPI::SpinSpace space(spinsys);
+	space.UseSuperoperatorSpace(false);
+
+	arma::cx_mat H;
+	arma::cx_mat Sz;
+
+	bool isCorrect = true;
+	isCorrect &= space.InteractionOperator(zeeman, H);
+	isCorrect &= space.CreateOperator(arma::conv_to<arma::cx_mat>::from(spin->Sz()), spin, Sz);
+
+	// A beta=pi/2 tensor-frame rotation moves the tensor x-axis onto lab z,
+	// so Bz sees gxx=1 instead of the unrotated gzz=3.
+	isCorrect &= equal_matrices(H, Sz, 1e-12);
+
+	return isCorrect;
+}
+//////////////////////////////////////////////////////////////////////////////
+
+bool test_spinapi_zfs_formalism_and_orientation()
+{
+	auto spin = std::make_shared<SpinAPI::Spin>("T", "type=electron;spin=1;");
+	auto zfs = std::make_shared<SpinAPI::Interaction>(
+		"ZFS",
+		"type=zfs;group1=T;D=9;E=2;commonprefactor=false;prefactor=1;energyshift=true;");
+	auto zfsRotated = std::make_shared<SpinAPI::Interaction>(
+		"ZFSrot",
+		"type=zfs;group1=T;D=9;E=0;commonprefactor=false;prefactor=1;energyshift=false;"
+		"orientation=0,1.5707963267948966,0;");
+
+	SpinAPI::SpinSystem spinsys("System");
+	spinsys.Add(spin);
+	spinsys.Add(zfs);
+	spinsys.Add(zfsRotated);
+	spinsys.ValidateInteractions();
+
+	SpinAPI::SpinSpace space(spinsys);
+	space.UseSuperoperatorSpace(false);
+
+	arma::cx_mat H;
+	arma::cx_mat Hrot;
+	arma::cx_mat Sx;
+	arma::cx_mat Sy;
+	arma::cx_mat Sz;
+
+	bool isCorrect = true;
+	isCorrect &= space.CreateOperator(arma::conv_to<arma::cx_mat>::from(spin->Sx()), spin, Sx);
+	isCorrect &= space.CreateOperator(arma::conv_to<arma::cx_mat>::from(spin->Sy()), spin, Sy);
+	isCorrect &= space.CreateOperator(arma::conv_to<arma::cx_mat>::from(spin->Sz()), spin, Sz);
+	isCorrect &= space.InteractionOperator(zfs, H);
+	isCorrect &= space.InteractionOperator(zfsRotated, Hrot);
+
+	const double s = 1.0;
+	arma::cx_mat identity = arma::eye<arma::cx_mat>(H.n_rows, H.n_cols);
+	arma::cx_mat expected = 9.0 * (Sz * Sz - (s * (s + 1.0) / 3.0) * identity) + 2.0 * (Sx * Sx - Sy * Sy);
+	arma::cx_mat expectedRotated = 9.0 * Sx * Sx;
+
+	isCorrect &= equal_matrices(H, expected, 1e-12);
+	isCorrect &= equal_matrices(Hrot, expectedRotated, 1e-12);
+
+	return isCorrect;
+}
+//////////////////////////////////////////////////////////////////////////////
+
+bool test_spinapi_rotated_quadraticspin_matches_plain_for_identity_powder()
+{
+	auto spin = std::make_shared<SpinAPI::Spin>("T", "type=electron;spin=1;");
+	auto quadratic = std::make_shared<SpinAPI::Interaction>(
+		"Q",
+		"type=quadraticspin;group1=T;tensor=matrix(\"1 0 0; 0 2 0; 0 0 4\");commonprefactor=false;prefactor=1;"
+		"orientation=0.2,0.4,0.6;");
+
+	SpinAPI::SpinSystem spinsys("System");
+	spinsys.Add(spin);
+	spinsys.Add(quadratic);
+	spinsys.ValidateInteractions();
+
+	SpinAPI::SpinSpace space(spinsys);
+	space.UseSuperoperatorSpace(false);
+	space.UseFullTensorRotation(true);
+
+	arma::sp_cx_mat plain;
+	arma::sp_cx_mat rotated;
+	arma::mat identityRotation = arma::eye<arma::mat>(3, 3);
+
+	bool isCorrect = true;
+	isCorrect &= space.InteractionOperator(quadratic, plain);
+	isCorrect &= space.InteractionOperatorRotatedZYZ(quadratic, identityRotation, rotated);
+	isCorrect &= equal_matrices(plain, rotated, 1e-12);
+
+	return isCorrect;
+}
+//////////////////////////////////////////////////////////////////////////////
+
+bool test_spinapi_phenomenological_relaxation_operator()
+{
+	auto spin = std::make_shared<SpinAPI::Spin>("E", "spin=1/2;");
+	auto relax = std::make_shared<SpinAPI::Operator>("R", "type=relaxationphenomenological;rate1=0.25;rate2=0.75;");
+
+	auto spinsys = std::make_shared<SpinAPI::SpinSystem>("System");
+	spinsys->Add(spin);
+	spinsys->Add(relax);
+	std::vector<std::shared_ptr<SpinAPI::SpinSystem>> systems;
+	systems.push_back(spinsys);
+
+	bool isCorrect = true;
+	isCorrect &= (spinsys->ValidateOperators(systems).size() == 0);
+
+	SpinAPI::SpinSpace space(*spinsys);
+	space.UseSuperoperatorSpace(true);
+
+	arma::cx_mat R;
+	arma::cx_mat expected = arma::zeros<arma::cx_mat>(4, 4);
+	expected(0, 0) = -0.25;
+	expected(0, 3) = 0.25;
+	expected(1, 1) = -0.75;
+	expected(2, 2) = -0.75;
+	expected(3, 0) = 0.25;
+	expected(3, 3) = -0.25;
+
+	isCorrect &= space.RelaxationOperator(relax, R);
+	isCorrect &= equal_matrices(R, expected, 1e-12);
+
+	return isCorrect;
+}
+//////////////////////////////////////////////////////////////////////////////
+
+bool test_spinapi_rotate_state_maps_z_population_to_x_population()
+{
+	auto spin = std::make_shared<SpinAPI::Spin>("E", "spin=1/2;");
+
+	SpinAPI::SpinSystem spinsys("System");
+	spinsys.Add(spin);
+
+	SpinAPI::SpinSpace space(spinsys);
+	space.UseSuperoperatorSpace(false);
+
+	arma::cx_mat Sx;
+	bool isCorrect = true;
+	isCorrect &= space.CreateOperator(arma::conv_to<arma::cx_mat>::from(spin->Sx()), spin, Sx);
+
+	arma::cx_mat rhoZ = arma::zeros<arma::cx_mat>(2, 2);
+	rhoZ(0, 0) = 1.0;
+
+	arma::mat rotation = {
+		{0.0, 0.0, 1.0},
+		{0.0, 1.0, 0.0},
+		{-1.0, 0.0, 0.0}};
+
+	arma::cx_mat rotated;
+	isCorrect &= space.RotateState(rhoZ, rotation, rotated);
+
+	arma::cx_mat expected = 0.5 * arma::eye<arma::cx_mat>(2, 2) + Sx;
+	isCorrect &= equal_matrices(rotated, expected, 1e-12);
+
+	return isCorrect;
+}
+//////////////////////////////////////////////////////////////////////////////
+
+bool test_spinapi_dephase_state_in_eigenbasis_removes_hamiltonian_coherences()
+{
+	auto spin = std::make_shared<SpinAPI::Spin>("E", "spin=1/2;");
+
+	SpinAPI::SpinSystem spinsys("System");
+	spinsys.Add(spin);
+
+	SpinAPI::SpinSpace space(spinsys);
+	space.UseSuperoperatorSpace(false);
+
+	arma::cx_mat Sx;
+	bool isCorrect = true;
+	isCorrect &= space.CreateOperator(arma::conv_to<arma::cx_mat>::from(spin->Sx()), spin, Sx);
+
+	arma::cx_mat rhoZ = arma::zeros<arma::cx_mat>(2, 2);
+	rhoZ(0, 0) = 1.0;
+
+	arma::cx_mat dephased;
+	isCorrect &= space.DephaseStateInEigenbasis(rhoZ, Sx, dephased);
+
+	arma::cx_mat expected = 0.5 * arma::eye<arma::cx_mat>(2, 2);
+	isCorrect &= equal_matrices(dephased, expected, 1e-12);
+
+	return isCorrect;
+}
+//////////////////////////////////////////////////////////////////////////////
+
 // Add all the SpinAPI test cases
 void AddSpinAPITests(std::vector<test_case> &_cases)
 {
@@ -1772,5 +1989,12 @@ void AddSpinAPITests(std::vector<test_case> &_cases)
 	_cases.push_back(test_case("SpinAPI::Interaction MonochromaticTensor", test_spinapi_interaction_tensor_monochromatic));
 	_cases.push_back(test_case("SpinAPI::Interaction BroadbandTensor", test_spinapi_interaction_tensor_broadband));
 	_cases.push_back(test_case("SpinAPI::Interaction OUGeneralTensor", test_spinapi_interaction_tensor_ornsteinuhlenbeck));
+	_cases.push_back(test_case("SpinAPI::Interaction orientation validation and exchange", test_spinapi_interaction_orientation_validation_and_exchange));
+	_cases.push_back(test_case("SpinSpace::Zeeman orientation rotates g-tensor", test_spinapi_zeeman_orientation_rotates_gtensor));
+	_cases.push_back(test_case("SpinSpace::ZFS formalism and orientation", test_spinapi_zfs_formalism_and_orientation));
+	_cases.push_back(test_case("SpinSpace::Rotated quadratic spin identity powder", test_spinapi_rotated_quadraticspin_matches_plain_for_identity_powder));
+	_cases.push_back(test_case("SpinSpace::Phenomenological relaxation operator", test_spinapi_phenomenological_relaxation_operator));
+	_cases.push_back(test_case("SpinSpace::RotateState maps z population to x population", test_spinapi_rotate_state_maps_z_population_to_x_population));
+	_cases.push_back(test_case("SpinSpace::DephaseStateInEigenbasis removes Hamiltonian coherences", test_spinapi_dephase_state_in_eigenbasis_removes_hamiltonian_coherences));
 }
 //////////////////////////////////////////////////////////////////////////////

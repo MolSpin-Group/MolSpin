@@ -67,11 +67,20 @@ namespace SpinAPI
 		double rate3 = 0.0;
 	};
 
+	struct HilbertRelaxationPhenomenologicalTerm
+	{
+		// Used by Hilbert-space propagation caches. The corresponding
+		// superoperator is rebuilt for the active Hilbert-space dimension.
+		double populationRate = 0.0;
+		double coherenceRate = 0.0;
+	};
+
 	struct HilbertRelaxationCache
 	{
 		std::vector<HilbertRelaxationTerm> lindblad_terms;
 		std::vector<HilbertRelaxationDephasingTerm> dephasing_terms;
 		std::vector<HilbertRelaxationRandomFieldTerm> random_field_terms;
+		std::vector<HilbertRelaxationPhenomenologicalTerm> phenomenological_terms;
 		double random_field_rho_coeff = 0.0;
 	};
 
@@ -179,6 +188,9 @@ namespace SpinAPI
 		bool GetState(const state_ptr &, arma::cx_mat &) const;											 // Projection operator onto the state (dense matrix)
 		bool GetState(const state_ptr &, arma::sp_cx_mat &) const;										 // Projection operator onto the state (sparse matrix)
 		bool GetStateSubSpace(const state_ptr &_state, arma::cx_vec &_out) const;						 // Vector representing the state in subspace
+		bool RotateState(const arma::cx_mat &_state, const arma::mat &_rotation, arma::cx_mat &_out) const; // Rotate a density matrix with the same spatial rotation used for powder averaging
+		bool DephaseStateInEigenbasis(const arma::cx_mat &_state, const arma::cx_mat &_hamiltonian, arma::cx_mat &_out) const; // Keep only populations in a Hamiltonian eigenbasis
+		bool ThermalStateFromHamiltonian(const arma::cx_mat &_hamiltonian, double _Temperature, arma::cx_mat &_mat) const; // Thermal state generated from a specific Hamiltonian
 		bool GetThermalState(SpinAPI::SpinSpace &_space, double _Temperature, std::vector<std::string> thermalhamiltonian_list, arma::cx_mat &_mat) const; // Projection operator onto the thermal equilibrium state (dense matrix)
 
 		// ------------------------------------------------
@@ -265,7 +277,7 @@ namespace SpinAPI
 		// ------------------------------------------------
 		bool InteractionOperator(const interaction_ptr &, arma::cx_mat &) const;	// Returns the matrix representation of the interaction on the spin space (dense matrix)
 		bool InteractionOperator(const interaction_ptr &, arma::sp_cx_mat &) const; // Returns the matrix representation of the interaction on the spin space (sparse matrix)
-		bool InteractionOperatorRotatedZXZ(const interaction_ptr &, arma::mat &, arma::sp_cx_mat &) const;
+		bool InteractionOperatorRotatedZYZ(const interaction_ptr &, arma::mat &, arma::sp_cx_mat &) const;
 		bool InteractionOperatorRotated_SA(const interaction_ptr &, arma::mat &, arma::sp_cx_mat &) const;
 		bool Hamiltonian(arma::cx_mat &, int TaskNum = 0) const;										// Total Hamiltonian operator (dense matrix)
 		bool Hamiltonian(arma::sp_cx_mat &, int TaskNum = 0) const;									// Total Hamiltonian operator (sparse matrix)
@@ -277,7 +289,7 @@ namespace SpinAPI
 		bool DynamicHamiltonian(arma::sp_cx_mat &) const;							// Time-dependent part of the Hamiltonian operator (sparse matrix)
 		bool ThermalHamiltonian(std::vector<std::string> thermalhamiltonian_list, arma::cx_mat &_out) const;							// Time-independent part of the Hamiltonian for thermal state (dense matrix)
 		bool ThermalHamiltonian(std::vector<std::string> thermalhamiltonian_list, arma::sp_cx_mat &_out) const;							// Time-independent part of the Hamiltonian for thermal state (sparse matrix)
-		bool BaseHamiltonianRotatedZXZ(std::vector<std::string> basehamiltonian_list, arma::mat rotmatrix, arma::sp_cx_mat &_out) const;
+		bool BaseHamiltonianRotatedZYZ(std::vector<std::string> basehamiltonian_list, arma::mat rotmatrix, arma::sp_cx_mat &_out) const;
 		bool BaseHamiltonianRotated_SA(std::vector<std::string> basehamiltonian_list, arma::mat rotmatrix, arma::sp_cx_mat &_out) const;
 
 		// ------------------------------------------------
@@ -346,7 +358,7 @@ namespace SpinAPI
 		// Settings for the spin space
 		// ------------------------------------------------
 		bool UseSuperoperatorSpace(bool);							// Determines whether all returned operators, etc. will be in superoperator-/Liouville-space
-		bool UseFullTensorRotation(bool);							// Determines whether rotated interaction tensors keep off-diagonal elements
+		bool UseFullTensorRotation(bool);							// Controls whether powder-rotated tensors keep off-diagonal elements
 		bool SetReactionOperatorType(const ReactionOperatorType &); // Sets the type of reaction operator to be produced - NOTE: Only works in superspace
 		bool SetTime(double);										// Set the current time, used to set states from trajectories (provided the trajectories have "time" columns, otherwise first step is used)
 		bool SetTrajectoryStep(unsigned int);						// Set the current step to be used in all trajectories (trajectories with too few steps will use last step)

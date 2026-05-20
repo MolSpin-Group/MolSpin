@@ -1,7 +1,8 @@
 /////////////////////////////////////////////////////////////////////////
 // TaskStaticSSPowderSpectra implementation (RunSection module)  developed by Irina Anisimova.
 //
-// Notes: no pulses implemented at the current state
+// Notes: supports powder averaging, optional pulse sequences, and
+// orientation-dependent initial-state preparation.
 //
 // Molecular Spin Dynamics Software - developed by Luca Gerhards.
 // (c) 2022 Quantum Biology and Computational Physics Group.
@@ -23,6 +24,28 @@
 
 namespace RunSection
 {
+	namespace
+	{
+		bool TransformSuperoperatorFromEigenbasis(SpinAPI::SpinSpace &_space, const arma::cx_mat &_eigenvectors, const arma::sp_cx_mat &_relaxationEigenbasis, arma::sp_cx_mat &_out)
+		{
+			// Phenomenological relaxation is assembled in the H0 eigenbasis.
+			// Convert it back to the lab superspace before adding it to the
+			// orientation Liouvillian.
+			arma::cx_mat eigenvectors = _eigenvectors;
+			arma::cx_mat eigenvectorsDag = eigenvectors.t();
+			arma::cx_mat fromEigenbasis;
+			arma::cx_mat toEigenbasis;
+			if (!_space.SuperoperatorFromOperators(eigenvectors, eigenvectorsDag, fromEigenbasis) ||
+				!_space.SuperoperatorFromOperators(eigenvectorsDag, eigenvectors, toEigenbasis))
+			{
+				return false;
+			}
+
+			_out = arma::sp_cx_mat(fromEigenbasis) * _relaxationEigenbasis * arma::sp_cx_mat(toEigenbasis);
+			return true;
+		}
+	}
+
 	// -----------------------------------------------------
 	// TaskStaticSSPowderSpectra Constructors and Destructor
 	// -----------------------------------------------------
@@ -218,7 +241,7 @@ namespace RunSection
 				this->Log() << "Failed to obtain an Uniform grid." << std::endl;
 			}
 
-			// Pulse sequence stuff
+			// Optional pulse sequence before the spectrum is sampled.
 			//  Read printtimeframe from the input file
 			std::string Timewindow;
 			if (!this->Properties()->Get("printtimeframe", Timewindow))
@@ -237,23 +260,106 @@ namespace RunSection
 			}
 			this->Log() << "Timewindow for the propagation integration: " << Integrationwindow << std::endl;
 
-			// Create a common density array holder to be able to propagate over the whole time (pulsesequence + calcultion)
-			std::vector<arma::cx_vec> rhovec(numPoints);
-			// Initialize a firststep
-			for (auto &v : rhovec)
+			// Get the initial state frame to determine if density matrix rotation is needed per orientation
+			const SpinAPI::StateFrame initialStateFrame = (*i)->InitialStateFrame();
+			if (initialStateFrame == SpinAPI::StateFrame::Molecular)
+				this->Log() << "Initial state frame = molecular. Rotating density matrix per orientation." << std::endl;
+
+			const SpinAPI::InitialStateCoherenceMode initialCoherences = (*i)->InitialStateCoherences();
+			const bool dephaseInitialState = (initialCoherences == SpinAPI::InitialStateCoherenceMode::DephaseEigenbasis);
+			std::vector<std::string> initialStateHamiltonianList;
+			if (dephaseInitialState)
 			{
-				// v.zeros(size(rho0vec));
-				v = rho0vec;
+				// Coherence removal is done in the eigenbasis of an
+				// orientation-specific Hamiltonian. The regular H0 list is the
+				// default basis unless the input names a separate list.
+				if (!this->Properties()->GetList("initialstatehamiltonian", initialStateHamiltonianList, ',') &&
+					!this->Properties()->GetList("hamiltonianh0list", initialStateHamiltonianList, ','))
+				{
+					this->Log() << "Initial-state eigenbasis dephasing requires initialstatehamiltonian or hamiltonianh0list." << std::endl;
+					return false;
+				}
+				this->Log() << "Initial-state coherences = eigenbasis populations. Off-diagonal elements are discarded per orientation." << std::endl;
+			}
+
+			// Store the prepared initial state for every orientation. The same
+			// vector is then used across the pulse sequence and the subsequent
+			// detection or integration window.
+			std::vector<arma::cx_vec> rhovec(numPoints);
+			for (int grid_num = 0; grid_num < numPoints; ++grid_num)
+			{
+				auto [theta, phi, weight] = grid[grid_num];
+
+				if (numPoints <= 1)
+				{
+					// Non-powdered calculation through the powder task. Keep
+					// the identity orientation and a unit integration weight.
+					theta = 0.0;
+					phi = 0.0;
+					weight = 1.0;
+				}
+
+				arma::mat Rot_mat;
+				double gamma = 0.0;
+				if (!this->CreateRotationMatrix(gamma, theta, phi, Rot_mat))
+				{
+					this->Log() << "Failed to create rotation matrix for grid point " << grid_num << "." << std::endl;
+					rhovec[grid_num] = rho0vec;
+					continue;
+				}
+
+				arma::cx_mat rho_oriented = rho0;
+				if (initialStateFrame == SpinAPI::StateFrame::Molecular)
+				{
+					// Molecular-frame initial conditions follow the sample
+					// orientation, just like anisotropic interaction tensors.
+					if (!space.RotateState(rho0, Rot_mat, rho_oriented))
+					{
+						this->Log() << "Failed to rotate density matrix for grid point " << grid_num << "." << std::endl;
+						rhovec[grid_num] = rho0vec;
+						continue;
+					}
+				}
+
+				if (dephaseInitialState)
+				{
+					arma::sp_cx_mat H0sp;
+					space.UseSuperoperatorSpace(false);
+					const bool gotH0 = space.BaseHamiltonianRotated_SA(initialStateHamiltonianList, Rot_mat, H0sp);
+					space.UseSuperoperatorSpace(true);
+
+					if (!gotH0)
+					{
+						this->Log() << "Failed to construct initial-state Hamiltonian for grid point " << grid_num << "." << std::endl;
+						return false;
+					}
+
+					arma::cx_mat rho_dephased;
+					// Discard coherences between Hamiltonian eigenstates, not
+					// between lab-frame basis functions.
+					if (!space.DephaseStateInEigenbasis(rho_oriented, arma::conv_to<arma::cx_mat>::from(H0sp), rho_dephased))
+					{
+						this->Log() << "Failed to dephase initial density matrix for grid point " << grid_num << "." << std::endl;
+						return false;
+					}
+					rho_oriented = rho_dephased;
+				}
+
+				if (!space.OperatorToSuperspace(rho_oriented, rhovec[grid_num]))
+				{
+					this->Log() << "Failed to convert oriented density matrix to superspace for grid point " << grid_num << "." << std::endl;
+					rhovec[grid_num] = rho0vec;
+				}
 			}
 
 			// Read a pulse sequence from the input
-			std::vector<std::tuple<std::string, double>> Pulsesequence;
-			if (this->Properties()->GetPulseSequence("pulsesequence", Pulsesequence))
+			std::vector<std::tuple<std::string, double>> pulseSequence;
+			if (this->Properties()->GetPulseSequence("pulsesequence", pulseSequence))
 			{
-				this->Log() << "Pulsesequence" << std::endl;
+				this->Log() << "Pulse sequence" << std::endl;
 
 				// Loop through all pulse sequences
-				for (const auto &seq : Pulsesequence)
+				for (const auto &seq : pulseSequence)
 				{
 					// Write which pulse in pulsesequence is calculating now
 					this->Log() << std::get<0>(seq) << ", " << std::get<1>(seq) << std::endl;
@@ -283,7 +389,7 @@ namespace RunSection
 								{
 									auto [theta, phi, weight] = grid[grid_num];
 
-									// Make the option without powdering from inside possible
+									// Single-point grid: use the non-powdered limit.
 									if (numPoints <= 1)
 									{
 										theta = 0.0;
@@ -335,7 +441,7 @@ namespace RunSection
 								{
 									auto [theta, phi, weight] = grid[grid_num];
 
-									// Make the option without powdering from inside possible
+									// Single-point grid: use the non-powdered limit.
 									if (numPoints <= 1)
 									{
 										theta = 0.0;
@@ -346,7 +452,7 @@ namespace RunSection
 									// arma::sp_cx_mat A;
 									if (!this->Create_A_for_current_orientation(i, space, theta, phi, A, this->Log()))
 									{
-										this->Log() << "Could not construc the Liuovillian operator for specific orientation" << std::endl;
+										this->Log() << "Could not construct the Liouvillian operator for this orientation." << std::endl;
 									}
 
 									if (A.n_rows <= 64) // for the systems not bigger than 2 electrons and 1 spin 1/2 nuclei
@@ -472,7 +578,7 @@ namespace RunSection
 								{
 									auto [theta, phi, weight] = grid[grid_num];
 
-									// Make the option without powdering from inside possible
+									// Single-point grid: use the non-powdered limit.
 									if (numPoints <= 1)
 									{
 										theta = 0.0;
@@ -483,10 +589,10 @@ namespace RunSection
 									// arma::sp_cx_mat A;
 									if (!this->Create_A_for_current_orientation(i, space, theta, phi, A, this->Log()))
 									{
-										this->Log() << "Could not construc the Liuovillian operator for specific orientation" << std::endl;
+										this->Log() << "Could not construct the Liouvillian operator for this orientation." << std::endl;
 									}
 
-									// Here we don't save a tupple anymore, because the A_sp needs to be constructed on every step
+									// The Liouvillian is orientation dependent, so it is rebuilt for each grid point.
 
 									// save the density on the current step
 									arma::cx_vec tmp_rho = rhovec[grid_num];
@@ -612,7 +718,7 @@ namespace RunSection
 								{
 									auto [theta, phi, weight] = grid[grid_num];
 
-									// Make the option without powdering from inside possible
+									// Single-point grid: use the non-powdered limit.
 									if (numPoints <= 1)
 									{
 										theta = 0.0;
@@ -623,7 +729,7 @@ namespace RunSection
 									// arma::sp_cx_mat A;
 									if (!this->Create_A_for_current_orientation(i, space, theta, phi, A, this->Log()))
 									{
-										this->Log() << "Could not construc the Liuovillian operator for specific orientation" << std::endl;
+										this->Log() << "Could not construct the Liouvillian operator for this orientation." << std::endl;
 									}
 
 									// save the density on the current step
@@ -631,7 +737,7 @@ namespace RunSection
 
 									if (A.n_rows <= 64) // for the systems not bigger than 2 electrons and 1 spin 1/2 nuclei
 									{
-										// Here we don't save a tupple anymore, because the A_sp needs to be constructed on every step
+										// The Liouvillian is orientation dependent, so it is rebuilt for each grid point.
 										for (unsigned int n = firststep; n <= steps; n++)
 										{
 											if (n == 0)
@@ -774,7 +880,7 @@ namespace RunSection
 								{
 									auto [theta, phi, weight] = grid[grid_num];
 
-									// Make the option without powdering from inside possible
+									// Single-point grid: use the non-powdered limit.
 									if (numPoints <= 1)
 									{
 										theta = 0.0;
@@ -784,7 +890,7 @@ namespace RunSection
 
 									if (!this->Create_A_for_current_orientation(i, space, theta, phi, A, this->Log()))
 									{
-										this->Log() << "Could not construc the Liuovillian operator for specific orientation" << std::endl;
+										this->Log() << "Could not construct the Liouvillian operator for this orientation." << std::endl;
 									}
 
 									if (A.n_rows <= 64) // for the systems not bigger than 2 electrons and 1 spin 1/2 nuclei
@@ -905,7 +1011,7 @@ namespace RunSection
 				{
 					auto [theta, phi, weight] = grid[grid_num];
 
-					// Make the option without powdering from inside possible
+					// Single-point grid: use the non-powdered limit.
 					if (numPoints <= 1)
 					{
 						theta = 0.0;
@@ -915,7 +1021,7 @@ namespace RunSection
 
 					if (!this->Create_A_for_current_orientation(i, space, theta, phi, A, this->Log()))
 					{
-						this->Log() << "Could not construc the Liuovillian operator for specific orientation" << std::endl;
+						this->Log() << "Could not construct the Liouvillian operator for this orientation." << std::endl;
 					}
 
 					arma::cx_vec result = -solve(arma::conv_to<arma::cx_mat>::from(A), rhovec[grid_num]);
@@ -962,7 +1068,7 @@ namespace RunSection
 					{
 						auto [theta, phi, weight] = grid[grid_num];
 
-						// Make the option without powdering from inside possible
+						// Single-point grid: use the non-powdered limit.
 						if (numPoints <= 1)
 						{
 							theta = 0.0;
@@ -972,7 +1078,7 @@ namespace RunSection
 
 						if (!this->Create_A_for_current_orientation(i, space, theta, phi, A, this->Log()))
 						{
-							this->Log() << "Could not construct the Liuovillian operator for specific orientation" << std::endl;
+							this->Log() << "Could not construct the Liouvillian operator for this orientation." << std::endl;
 						}
 
 						arma::cx_vec rhoavg_n;
@@ -1769,9 +1875,9 @@ namespace RunSection
 		{
 			double index = static_cast<double>(i) + 0.5;
 
-			theta[i] = std::acos(1.0 - index / _Npoints);		  // hemisphere
-			phi[i] = golden * index;							  // hemisphere
-			weight[i] = std::sin(theta[i]) * 2 * M_PI / _Npoints; // 2 * pi for hemisphere
+			theta[i] = std::acos(1.0 - index / _Npoints); // hemisphere, uniform in cos(theta)
+			phi[i] = golden * index;
+			weight[i] = 2 * M_PI / _Npoints;
 			_uniformGrid[i] = {theta[i], phi[i], weight[i]};
 		}
 
@@ -1810,12 +1916,13 @@ namespace RunSection
 
 	bool TaskStaticSSPowderSpectra::Create_A_for_current_orientation(auto &_i, SpinAPI::SpinSpace &_space, double &_theta, double &_phi, arma::sp_cx_mat &_A, std::ostream &_logstream) const
 	{
-		// Create rotation matrix
+		// Powder orientations are represented with the same rotation matrix
+		// used for tensor rotation and initial-state preparation.
 		arma::mat Rot_mat;
-		double gamma = 0; // here this is not euler angles, but I use the same function for creating rotations
+		double gamma = 0.0;
 		if (!this->CreateRotationMatrix(gamma, _theta, _phi, Rot_mat))
 		{
-			_logstream << "Failed to obtain an Lebedev grid." << std::endl;
+			_logstream << "Failed to obtain a powder rotation matrix." << std::endl;
 		}
 
 		// Create Hamiltonian H0
@@ -1883,17 +1990,53 @@ namespace RunSection
 		}
 		_A -= K;
 
-		// Get the relaxation terms, assuming that they can just be added to the Liouvillian superoperator
+		// Relaxation operators are additive Liouvillian terms. The
+		// phenomenological model is defined in the current H0 eigenbasis, so
+		// it needs one extra basis transformation before being added to A.
+		arma::vec eigenvalues;
+		arma::cx_mat eigenvectors;
+		bool eigenbasisReady = false;
+
+		auto loadEigenbasis = [&]() -> bool
+		{
+			if (eigenbasisReady)
+				return true;
+
+			arma::cx_mat H0dense(H0);
+			if (!arma::eig_sym(eigenvalues, eigenvectors, H0dense))
+			{
+				_logstream << "Failed to diagonalize H0 for eigenbasis relaxation." << std::endl;
+				return false;
+			}
+
+			eigenbasisReady = true;
+			return true;
+		};
+
 		arma::sp_cx_mat R;
 		for (auto j = (*_i)->operators_cbegin(); j != (*_i)->operators_cend(); j++)
 		{
-			if (_space.RelaxationOperator((*j), R))
+			if ((*j)->Type() == SpinAPI::OperatorType::RelaxationPhenomenological)
+			{
+				arma::sp_cx_mat R_eigenbasis;
+				arma::sp_cx_mat R_propagationbasis;
+				if (!loadEigenbasis() ||
+					!_space.RelaxationOperatorFrameChange((*j), eigenvectors, R_eigenbasis) ||
+					!TransformSuperoperatorFromEigenbasis(_space, eigenvectors, R_eigenbasis, R_propagationbasis))
+				{
+					_logstream << "Failed to construct eigenbasis relaxation operator \"" << (*j)->Name() << "\"." << std::endl;
+					return false;
+				}
+
+				_A += R_propagationbasis;
+				_logstream << "Added eigenbasis relaxation operator \"" << (*j)->Name() << "\" to the Liouvillian.\n";
+			}
+			else if (_space.RelaxationOperator((*j), R))
 			{
 				_A += R;
 				_logstream << "Added relaxation operator \"" << (*j)->Name() << "\" to the Liouvillian.\n";
 			}
 		}
-		///////////////
 
 		return true;
 	}

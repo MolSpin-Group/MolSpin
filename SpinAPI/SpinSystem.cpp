@@ -17,6 +17,8 @@
 #include "SubSystem.h"
 #include "ObjectParser.h"
 #include "SpinSystem.h"
+#include <algorithm>
+#include <cctype>
 
 namespace SpinAPI
 {
@@ -529,6 +531,57 @@ namespace SpinAPI
 		}
 
 		return iniStates;
+	}
+
+	StateFrame SpinSystem::InitialStateFrame() const
+	{
+		if (this->properties == nullptr)
+			return StateFrame::Fixed;
+
+		std::string str;
+		if (!this->properties->Get("frame", str) && !this->properties->Get("stateframe", str))
+			return StateFrame::Fixed;
+
+		// Accept a few short aliases because this keyword appears in user MSD
+		// files. The returned enum is used by powder tasks when they decide
+		// whether the initial density matrix follows the molecular frame.
+		std::transform(str.begin(), str.end(), str.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+		if (str == "fixed" || str == "lab" || str == "laboratory" || str == "default")
+			return StateFrame::Fixed;
+		if (str == "molecular" || str == "mol" || str == "rotating")
+			return StateFrame::Molecular;
+		if (str == "eigen" || str == "thermal")
+			return StateFrame::Eigen;
+
+		return StateFrame::Fixed;
+	}
+
+	InitialStateCoherenceMode SpinSystem::InitialStateCoherences() const
+	{
+		if (this->properties == nullptr)
+			return InitialStateCoherenceMode::Keep;
+
+		std::string str;
+		if (!this->properties->Get("initialstatecoherences", str) &&
+			!this->properties->Get("initialcoherences", str) &&
+			!this->properties->Get("coherences", str))
+		{
+			return InitialStateCoherenceMode::Keep;
+		}
+
+		// The "dephase" mode is basis dependent. The task supplies the
+		// orientation-specific Hamiltonian used to define that eigenbasis.
+		std::transform(str.begin(), str.end(), str.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+		if (str == "keep" || str == "full" || str == "coherent" || str == "default")
+			return InitialStateCoherenceMode::Keep;
+		if (str == "dephase" || str == "discard" || str == "diagonal" || str == "populations" ||
+			str == "eigen" || str == "eigenbasis" || str == "eigenpopulations")
+		{
+			return InitialStateCoherenceMode::DephaseEigenbasis;
+		}
+
+		std::cerr << "Warning: Unknown initial-state coherences mode \"" << str << "\". Keeping coherences." << std::endl;
+		return InitialStateCoherenceMode::Keep;
 	}
 
 	// Obtain the temperature for a temperature weighted density matrix

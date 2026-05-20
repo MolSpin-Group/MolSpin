@@ -11,8 +11,10 @@
 // See LICENSE.txt for license information.
 //////////////////////////////////////////////////////////////////////////////
 #include <iostream>
+#include <cstdio>
 #include <vector>
 #include <armadillo>
+#include <unistd.h>
 
 #include "Tensor.h"
 #include "RunSection.h"
@@ -38,6 +40,23 @@ using test_case = std::pair<std::string, test_ptr>; // Function pointer and name
 bool this_is_a_test_of_the_test_module()
 {
 	return true;
+}
+//////////////////////////////////////////////////////////////////////////////
+std::string read_captured_stream(std::FILE *file)
+{
+	if (file == nullptr)
+		return "";
+
+	std::fflush(file);
+	std::rewind(file);
+
+	std::string output;
+	char buffer[4096];
+	size_t bytes_read = 0;
+	while ((bytes_read = std::fread(buffer, 1, sizeof(buffer), file)) > 0)
+		output.append(buffer, bytes_read);
+
+	return output;
 }
 //////////////////////////////////////////////////////////////////////////////
 int main(int argc, char **argv)
@@ -74,7 +93,42 @@ int main(int argc, char **argv)
 	for (auto i = cases.cbegin(); i != cases.cend(); i++)
 	{
 		std::cout << "Running test \"" << i->first << "\" ......... " << std::flush;
-		if (i->second())
+
+		std::FILE *captured_stdout = std::tmpfile();
+		std::FILE *captured_stderr = std::tmpfile();
+		int original_stdout = -1;
+		int original_stderr = -1;
+		bool capture_active = false;
+		if (captured_stdout != nullptr && captured_stderr != nullptr)
+		{
+			std::cout.flush();
+			std::cerr.flush();
+			std::fflush(stdout);
+			std::fflush(stderr);
+			original_stdout = dup(STDOUT_FILENO);
+			original_stderr = dup(STDERR_FILENO);
+			capture_active = (original_stdout >= 0 && original_stderr >= 0 &&
+							  dup2(fileno(captured_stdout), STDOUT_FILENO) >= 0 &&
+							  dup2(fileno(captured_stderr), STDERR_FILENO) >= 0);
+		}
+
+		bool passed_test = i->second();
+
+		if (capture_active)
+		{
+			std::cout.flush();
+			std::cerr.flush();
+			std::fflush(stdout);
+			std::fflush(stderr);
+			dup2(original_stdout, STDOUT_FILENO);
+			dup2(original_stderr, STDERR_FILENO);
+		}
+		if (original_stdout >= 0)
+			close(original_stdout);
+		if (original_stderr >= 0)
+			close(original_stderr);
+
+		if (passed_test)
 		{
 			std::cout << "PASSED!";
 		}
@@ -84,6 +138,21 @@ int main(int argc, char **argv)
 			failed_cases.push_back(*i);
 		}
 		std::cout << std::endl;
+
+		if (!passed_test)
+		{
+			std::string captured_stdout_content = read_captured_stream(captured_stdout);
+			std::string captured_stderr_content = read_captured_stream(captured_stderr);
+			if (!captured_stdout_content.empty())
+				std::cout << captured_stdout_content;
+			if (!captured_stderr_content.empty())
+				std::cerr << captured_stderr_content;
+		}
+
+		if (captured_stdout != nullptr)
+			std::fclose(captured_stdout);
+		if (captured_stderr != nullptr)
+			std::fclose(captured_stderr);
 	}
 
 	// Get number of passed and failed tests

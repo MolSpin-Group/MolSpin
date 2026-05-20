@@ -437,6 +437,8 @@ namespace MSDParser
 			// Remove square brackets
 			modified_str.erase(std::remove(modified_str.begin(), modified_str.end(), '['), modified_str.end());
 			modified_str.erase(std::remove(modified_str.begin(), modified_str.end(), ']'), modified_str.end());
+			modified_str.erase(std::remove(modified_str.begin(), modified_str.end(), '"'), modified_str.end());
+			modified_str.erase(std::remove(modified_str.begin(), modified_str.end(), '\''), modified_str.end());
 
 			// Trim leading and trailing whitespaces
 			trim(modified_str);
@@ -665,6 +667,8 @@ namespace MSDParser
 
 			modified_str.erase(std::remove(modified_str.begin(), modified_str.end(), '['), modified_str.end());
 			modified_str.erase(std::remove(modified_str.begin(), modified_str.end(), ']'), modified_str.end());
+			modified_str.erase(std::remove(modified_str.begin(), modified_str.end(), '"'), modified_str.end());
+			modified_str.erase(std::remove(modified_str.begin(), modified_str.end(), '\''), modified_str.end());
 			trim(modified_str);
 
 			std::istringstream stream(modified_str);

@@ -220,6 +220,26 @@ bool test_msdparser_objectparser_gettensor()
 	return isCorrect;
 }
 //////////////////////////////////////////////////////////////////////////////
+// Tests the ObjectParser::GetPulseSequence method with the syntax used by MSD inputs
+bool test_msdparser_objectparser_getpulsesequence_quoted()
+{
+	MSDParser::ObjectParser parser("test", "pulsesequence=[\"pulse1 0.1\"], ['pulse2 2.5'];");
+
+	std::vector<std::tuple<std::string, double>> sequence;
+	bool isCorrect = true;
+	isCorrect &= parser.GetPulseSequence("pulsesequence", sequence);
+	isCorrect &= (sequence.size() == 2);
+	if (sequence.size() == 2)
+	{
+		isCorrect &= (std::get<0>(sequence[0]) == "pulse1");
+		isCorrect &= equal_double(std::get<1>(sequence[0]), 0.1);
+		isCorrect &= (std::get<0>(sequence[1]) == "pulse2");
+		isCorrect &= equal_double(std::get<1>(sequence[1]), 2.5);
+	}
+
+	return isCorrect;
+}
+//////////////////////////////////////////////////////////////////////////////
 // Add all the MSDParser test cases
 void AddMSDParserTests(std::vector<test_case> &_cases)
 {
@@ -229,5 +249,6 @@ void AddMSDParserTests(std::vector<test_case> &_cases)
 	_cases.push_back(test_case("MSDParser::ObjectParser::Get to get boolean", test_msdparser_objectparser_getbool));
 	_cases.push_back(test_case("MSDParser::ObjectParser::Get to get vector", test_msdparser_objectparser_getvector));
 	_cases.push_back(test_case("MSDParser::ObjectParser::Get to get tensor", test_msdparser_objectparser_gettensor));
+	_cases.push_back(test_case("MSDParser::ObjectParser::Get quoted pulse sequence", test_msdparser_objectparser_getpulsesequence_quoted));
 }
 //////////////////////////////////////////////////////////////////////////////

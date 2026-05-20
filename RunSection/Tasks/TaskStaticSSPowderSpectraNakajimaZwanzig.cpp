@@ -21,6 +21,137 @@
 
 namespace RunSection
 {
+	namespace
+	{
+		bool BuildOrientedInitialDensity(SpinAPI::SpinSpace &space,
+										 const arma::cx_mat &referenceDensity,
+										 const arma::mat &orientationRotation,
+										 SpinAPI::StateFrame stateFrame,
+										 bool discardHamiltonianCoherences,
+										 const std::vector<std::string> &dephasingHamiltonian,
+										 arma::cx_mat &orientedDensity,
+										 std::ostream &log_stream)
+		{
+			orientedDensity = referenceDensity;
+
+			// NZ propagation stores each orientation in its own eigenbasis.
+			// Prepare the density matrix in the lab frame first, then transform
+			// it to the NZ eigenbasis outside this helper.
+			space.UseSuperoperatorSpace(false);
+			if (stateFrame == SpinAPI::StateFrame::Molecular)
+			{
+				if (!space.RotateState(referenceDensity, orientationRotation, orientedDensity))
+				{
+					log_stream << "Failed to rotate initial density matrix for powder orientation." << std::endl;
+					return false;
+				}
+			}
+
+			if (discardHamiltonianCoherences)
+			{
+				arma::sp_cx_mat H0sp;
+				if (!space.BaseHamiltonianRotated_SA(dephasingHamiltonian, orientationRotation, H0sp))
+				{
+					log_stream << "Failed to construct initial-state Hamiltonian for powder orientation." << std::endl;
+					return false;
+				}
+
+				arma::cx_mat rho_dephased;
+				if (!space.DephaseStateInEigenbasis(orientedDensity, arma::conv_to<arma::cx_mat>::from(H0sp), rho_dephased))
+				{
+					log_stream << "Failed to dephase initial density matrix for powder orientation." << std::endl;
+					return false;
+				}
+				orientedDensity = rho_dephased;
+			}
+
+			return true;
+		}
+
+		std::vector<arma::cx_mat> RotateRank1OperatorBasis(const std::vector<arma::cx_mat> &cartesian_operators,
+														   const arma::mat &frame_to_lab)
+		{
+			// Rotate a vector-operator basis, e.g. {Sx, Sy, Sz}, into the
+			// tensor frame used for this powder orientation.
+			std::vector<arma::cx_mat> rotated(3);
+			for (int axis = 0; axis < 3; ++axis)
+			{
+				rotated[axis].zeros(arma::size(cartesian_operators[0]));
+				for (int lab_axis = 0; lab_axis < 3; ++lab_axis)
+				{
+					rotated[axis] += frame_to_lab(lab_axis, axis) * cartesian_operators[lab_axis];
+				}
+			}
+			return rotated;
+		}
+
+		std::vector<arma::cx_mat> RotateRank2OperatorBasis(const std::vector<arma::cx_mat> &cartesian_operators,
+														   const arma::mat &frame_to_lab)
+		{
+			// Rank-2 operators transform on both Cartesian indices. The
+			// flattened order is (xx, xy, xz, yx, ..., zz).
+			std::vector<arma::cx_mat> rotated(9);
+			for (int first_axis = 0; first_axis < 3; ++first_axis)
+			{
+				for (int second_axis = 0; second_axis < 3; ++second_axis)
+				{
+					const int out_index = 3 * first_axis + second_axis;
+					rotated[out_index].zeros(arma::size(cartesian_operators[0]));
+					for (int first_lab = 0; first_lab < 3; ++first_lab)
+					{
+						for (int second_lab = 0; second_lab < 3; ++second_lab)
+						{
+							const int in_index = 3 * first_lab + second_lab;
+							rotated[out_index] += frame_to_lab(first_lab, first_axis) *
+												  frame_to_lab(second_lab, second_axis) *
+												  cartesian_operators[in_index];
+						}
+					}
+				}
+			}
+			return rotated;
+		}
+
+		std::vector<arma::cx_mat> SingleSpinSphericalTensors(const std::vector<arma::cx_mat> &spin_operators,
+															 const arma::cx_vec &field)
+		{
+			const arma::cx_double im(0.0, 1.0);
+			const arma::cx_mat &Sx = spin_operators[0];
+			const arma::cx_mat &Sy = spin_operators[1];
+			const arma::cx_mat &Sz = spin_operators[2];
+
+			arma::cx_mat T0_rank_0 = (1.0 / std::sqrt(3.0)) * (Sx * field(0) + Sy * field(1) + Sz * field(2));
+			arma::cx_mat T0_rank_2 = (1.0 / std::sqrt(6.0)) * ((3.0 * Sz * field(2)) - (Sx * field(0) + Sy * field(1) + Sz * field(2)));
+			arma::cx_mat Tp1 = -0.5 * (Sx * field(2) + Sz * field(0) + im * (Sy * field(2) + Sz * field(1)));
+			arma::cx_mat Tm1 = 0.5 * (Sx * field(2) + Sz * field(0) - im * (Sy * field(2) + Sz * field(1)));
+			arma::cx_mat Tp2 = 0.5 * (Sx * field(0) - Sy * field(1) + im * (Sx * field(1) + Sy * field(0)));
+			arma::cx_mat Tm2 = 0.5 * (Sx * field(0) - Sy * field(1) - im * (Sx * field(1) + Sy * field(0)));
+
+			return {T0_rank_0, T0_rank_2, -Tm1, -Tp1, Tm2, Tp2};
+		}
+
+		std::vector<arma::cx_mat> DoubleSpinSphericalTensors(const std::vector<arma::cx_mat> &spin1_operators,
+															 const std::vector<arma::cx_mat> &spin2_operators)
+		{
+			const arma::cx_double im(0.0, 1.0);
+			const arma::cx_mat &S1x = spin1_operators[0];
+			const arma::cx_mat &S1y = spin1_operators[1];
+			const arma::cx_mat &S1z = spin1_operators[2];
+			const arma::cx_mat &S2x = spin2_operators[0];
+			const arma::cx_mat &S2y = spin2_operators[1];
+			const arma::cx_mat &S2z = spin2_operators[2];
+
+			arma::cx_mat T0_rank_0 = (1.0 / std::sqrt(3.0)) * (S1x * S2x + S1y * S2y + S1z * S2z);
+			arma::cx_mat T0_rank_2 = (1.0 / std::sqrt(6.0)) * (3.0 * S1z * S2z - (S1x * S2x + S1y * S2y + S1z * S2z));
+			arma::cx_mat Tp1 = -0.5 * (S1x * S2z + S1z * S2x + im * (S1y * S2z + S1z * S2y));
+			arma::cx_mat Tm1 = 0.5 * (S1x * S2z + S1z * S2x - im * (S1y * S2z + S1z * S2y));
+			arma::cx_mat Tp2 = 0.5 * (S1x * S2x - S1y * S2y + im * (S1x * S2y + S1y * S2x));
+			arma::cx_mat Tm2 = 0.5 * (S1x * S2x - S1y * S2y - im * (S1x * S2y + S1y * S2x));
+
+			return {T0_rank_0, T0_rank_2, -Tm1, -Tp1, Tm2, Tp2};
+		}
+	}
+
 	// -----------------------------------------------------
 	// TaskStaticSSPowderSpectraNakajimaZwanzig Constructors and Destructor
 	// -----------------------------------------------------
@@ -32,18 +163,18 @@ namespace RunSection
 	{
 	}
 
-	bool TaskStaticSSPowderSpectraNakajimaZwanzig::BuildNakajimaZwanzigLiouvillian(auto &_i, SpinAPI::SpinSpace &_space, const arma::cx_mat &_H, arma::cx_mat &_A, arma::cx_mat &_eigenvec)
+	bool TaskStaticSSPowderSpectraNakajimaZwanzig::BuildNakajimaZwanzigLiouvillian(auto &_i, SpinAPI::SpinSpace &_space, const arma::cx_mat &_H, const arma::mat &_rotationmatrix, arma::cx_mat &_A, arma::cx_mat &_eigenvec)
 	{
 		_space.UseSuperoperatorSpace(false);
 
-		arma::vec eigen_val;
-		arma::eig_sym(eigen_val, _eigenvec, _H);
-		arma::cx_mat eig_val_mat = arma::diagmat(arma::conv_to<arma::cx_mat>::from(eigen_val));
+		arma::vec eigenvalues;
+		arma::eig_sym(eigenvalues, _eigenvec, _H);
+		arma::cx_mat eigenvalueMatrix = arma::diagmat(arma::conv_to<arma::cx_mat>::from(eigenvalues));
 
-		arma::cx_mat one;
-		one.set_size(arma::size(_H));
-		one.eye();
-		arma::cx_mat lambda = (arma::kron(eig_val_mat, one) - arma::kron(one, eig_val_mat.st()));
+		arma::cx_mat identity;
+		identity.set_size(arma::size(_H));
+		identity.eye();
+		arma::cx_mat lambda = (arma::kron(eigenvalueMatrix, identity) - arma::kron(identity, eigenvalueMatrix.st()));
 
 		arma::cx_mat R;
 		R.set_size(arma::size(lambda));
@@ -235,6 +366,20 @@ namespace RunSection
 				return true;
 			};
 
+			auto frame_to_lab_rotation = [&](const SpinAPI::interaction_ptr &interaction, arma::mat &rotation) -> bool {
+				arma::vec frame = interaction->Framelist();
+				double alpha = (frame.n_elem >= 1) ? frame(0) : 0.0;
+				double beta = (frame.n_elem >= 2) ? frame(1) : 0.0;
+				double gamma = (frame.n_elem >= 3) ? frame(2) : 0.0;
+				arma::mat frame_rotation;
+				if (!this->CreateRotationMatrix(alpha, beta, gamma, frame_rotation))
+				{
+					return false;
+				}
+				rotation = _rotationmatrix * frame_rotation;
+				return true;
+			};
+
 			this->Log() << "Starting NZ relaxation matrix construction for internal powder orientation." << std::endl;
 
 			for (auto interaction = (*_i)->interactions_cbegin(); interaction < (*_i)->interactions_cend(); interaction++)
@@ -294,6 +439,10 @@ namespace RunSection
 				for (auto s1 = group1.cbegin(); s1 < group1.cend(); s1++)
 				{
 					std::vector<arma::cx_mat> tensors;
+					arma::mat frame_to_lab;
+					if (!frame_to_lab_rotation((*interaction), frame_to_lab))
+						return false;
+
 					if (ops == 1)
 					{
 						arma::cx_mat Sx, Sy, Sz;
@@ -302,36 +451,27 @@ namespace RunSection
 						if (!_space.CreateOperator(arma::conv_to<arma::cx_mat>::from((*s1)->Sy()), *s1, Sy))
 							return false;
 						if (!_space.CreateOperator(arma::conv_to<arma::cx_mat>::from((*s1)->Sz()), *s1, Sz))
-							return false;
-						tensors.push_back(Sx);
-						tensors.push_back(Sy);
-						tensors.push_back(Sz);
+								return false;
+							tensors.push_back(Sx);
+							tensors.push_back(Sy);
+							tensors.push_back(Sz);
+							tensors = RotateRank1OperatorBasis(tensors, frame_to_lab);
 					}
 					else
 					{
 						arma::vec static_field = (*interaction)->Field();
 						arma::cx_vec complex_field = arma::conv_to<arma::cx_vec>::from(static_field);
 
-						arma::cx_mat T0_rank_0, T0_rank_2, Tm1, Tp1, Tm2, Tp2;
-						if (!_space.LRk0TensorT0((*s1), complex_field, T0_rank_0))
+						arma::cx_mat Sx, Sy, Sz;
+						if (!_space.CreateOperator(arma::conv_to<arma::cx_mat>::from((*s1)->Sx()), *s1, Sx))
 							return false;
-						if (!_space.LRk2SphericalTensorT0((*s1), complex_field, T0_rank_2))
+						if (!_space.CreateOperator(arma::conv_to<arma::cx_mat>::from((*s1)->Sy()), *s1, Sy))
 							return false;
-						if (!_space.LRk2SphericalTensorTm1((*s1), complex_field, Tm1))
+						if (!_space.CreateOperator(arma::conv_to<arma::cx_mat>::from((*s1)->Sz()), *s1, Sz))
 							return false;
-						if (!_space.LRk2SphericalTensorTp1((*s1), complex_field, Tp1))
-							return false;
-						if (!_space.LRk2SphericalTensorTm2((*s1), complex_field, Tm2))
-							return false;
-						if (!_space.LRk2SphericalTensorTp2((*s1), complex_field, Tp2))
-							return false;
-
-						tensors.push_back(T0_rank_0);
-						tensors.push_back(T0_rank_2);
-						tensors.push_back(-Tm1);
-						tensors.push_back(-Tp1);
-						tensors.push_back(Tm2);
-						tensors.push_back(Tp2);
+						std::vector<arma::cx_mat> spin_ops = {Sx, Sy, Sz};
+						spin_ops = RotateRank1OperatorBasis(spin_ops, frame_to_lab);
+						tensors = SingleSpinSphericalTensors(spin_ops, complex_field);
 					}
 
 					for (auto &tensor : tensors)
@@ -360,6 +500,10 @@ namespace RunSection
 					for (auto s2 = group2.cbegin(); s2 < group2.cend(); s2++)
 					{
 						std::vector<arma::cx_mat> tensors;
+						arma::mat frame_to_lab;
+						if (!frame_to_lab_rotation((*interaction), frame_to_lab))
+							return false;
+
 						if (ops == 1)
 						{
 							arma::cx_mat Sx1, Sy1, Sz1, Sx2, Sy2, Sz2;
@@ -382,32 +526,32 @@ namespace RunSection
 							tensors.push_back(Sy1 * Sx2);
 							tensors.push_back(Sy1 * Sy2);
 							tensors.push_back(Sy1 * Sz2);
-							tensors.push_back(Sz1 * Sx2);
-							tensors.push_back(Sz1 * Sy2);
-							tensors.push_back(Sz1 * Sz2);
-						}
-						else
-						{
-							arma::cx_mat T0_rank_0, T0_rank_2, Tm1, Tp1, Tm2, Tp2;
-							if (!_space.BlRk0TensorT0(*s1, *s2, T0_rank_0))
-								return false;
-							if (!_space.BlRk2SphericalTensorT0(*s1, *s2, T0_rank_2))
-								return false;
-							if (!_space.BlRk2SphericalTensorTm1(*s1, *s2, Tm1))
-								return false;
-							if (!_space.BlRk2SphericalTensorTp1(*s1, *s2, Tp1))
-								return false;
-							if (!_space.BlRk2SphericalTensorTm2(*s1, *s2, Tm2))
-								return false;
-							if (!_space.BlRk2SphericalTensorTp2(*s1, *s2, Tp2))
-								return false;
+								tensors.push_back(Sz1 * Sx2);
+								tensors.push_back(Sz1 * Sy2);
+								tensors.push_back(Sz1 * Sz2);
+								tensors = RotateRank2OperatorBasis(tensors, frame_to_lab);
+							}
+							else
+							{
+								arma::cx_mat Sx1, Sy1, Sz1, Sx2, Sy2, Sz2;
+								if (!_space.CreateOperator(arma::conv_to<arma::cx_mat>::from((*s1)->Sx()), *s1, Sx1))
+									return false;
+								if (!_space.CreateOperator(arma::conv_to<arma::cx_mat>::from((*s1)->Sy()), *s1, Sy1))
+									return false;
+								if (!_space.CreateOperator(arma::conv_to<arma::cx_mat>::from((*s1)->Sz()), *s1, Sz1))
+									return false;
+								if (!_space.CreateOperator(arma::conv_to<arma::cx_mat>::from((*s2)->Sx()), *s2, Sx2))
+									return false;
+								if (!_space.CreateOperator(arma::conv_to<arma::cx_mat>::from((*s2)->Sy()), *s2, Sy2))
+									return false;
+								if (!_space.CreateOperator(arma::conv_to<arma::cx_mat>::from((*s2)->Sz()), *s2, Sz2))
+									return false;
 
-							tensors.push_back(T0_rank_0);
-							tensors.push_back(T0_rank_2);
-							tensors.push_back(-Tm1);
-							tensors.push_back(-Tp1);
-							tensors.push_back(Tm2);
-							tensors.push_back(Tp2);
+								std::vector<arma::cx_mat> spin1_ops = {Sx1, Sy1, Sz1};
+								std::vector<arma::cx_mat> spin2_ops = {Sx2, Sy2, Sz2};
+								spin1_ops = RotateRank1OperatorBasis(spin1_ops, frame_to_lab);
+								spin2_ops = RotateRank1OperatorBasis(spin2_ops, frame_to_lab);
+								tensors = DoubleSpinSphericalTensors(spin1_ops, spin2_ops);
 
 							SpinAPI::Tensor inTensor(0);
 							if ((*interaction)->Properties()->Get("tensor", inTensor) && coeff == 1)
@@ -455,8 +599,8 @@ namespace RunSection
 		arma::cx_mat lhs;
 		arma::cx_mat rhs;
 		arma::cx_mat H_SS;
-		_space.SuperoperatorFromLeftOperator(eig_val_mat, lhs);
-		_space.SuperoperatorFromRightOperator(eig_val_mat, rhs);
+		_space.SuperoperatorFromLeftOperator(eigenvalueMatrix, lhs);
+		_space.SuperoperatorFromRightOperator(eigenvalueMatrix, rhs);
 		H_SS = lhs - rhs;
 		_A = arma::cx_double(0.0, -1.0) * H_SS;
 
@@ -494,6 +638,8 @@ namespace RunSection
 
 	bool TaskStaticSSPowderSpectraNakajimaZwanzig::ConvertSuperspaceToLab(auto &_space, const arma::cx_vec &_rho_vec_eig, const arma::cx_mat &_eigenvec, arma::cx_vec &_rho_vec_lab)
 	{
+		// NZ propagation is stored in the Hamiltonian eigenbasis. Outputs and
+		// powder averages are accumulated in the lab superspace convention.
 		arma::cx_mat rho_eig;
 		if (!_space.OperatorFromSuperspace(_rho_vec_eig, rho_eig))
 			return false;
@@ -692,10 +838,35 @@ namespace RunSection
 				this->Log() << "Failed to obtain an input for a HamiltonianH1." << std::endl;
 			}
 
+			const SpinAPI::StateFrame initialStateFrame = (*i)->InitialStateFrame();
+			if (initialStateFrame == SpinAPI::StateFrame::Molecular)
+			{
+				this->Log() << "Initial state frame = molecular. Rotating density matrix per orientation." << std::endl;
+			}
+
+			const SpinAPI::InitialStateCoherenceMode initialCoherences = (*i)->InitialStateCoherences();
+			const bool dephaseInitialState = (initialCoherences == SpinAPI::InitialStateCoherenceMode::DephaseEigenbasis);
+			std::vector<std::string> initialStateHamiltonianList;
+			if (dephaseInitialState)
+			{
+				// Dephasing is orientation dependent. Use H0 unless a
+				// dedicated initial-state Hamiltonian list is supplied.
+				if (!this->Properties()->GetList("initialstatehamiltonian", initialStateHamiltonianList, ',') &&
+					!this->Properties()->GetList("hamiltonianh0list", initialStateHamiltonianList, ','))
+				{
+					this->Log() << "Initial-state eigenbasis dephasing requires initialstatehamiltonian or hamiltonianh0list." << std::endl;
+					return false;
+				}
+				this->Log() << "Initial-state coherences = eigenbasis populations. Off-diagonal elements are discarded per orientation." << std::endl;
+			}
+
 			struct OrientationState
 			{
 				bool valid = false;
 				double weight = 0.0;
+				// NZ propagation is carried out in this orientation's
+				// Hamiltonian eigenbasis; eigen_vec converts back to lab space
+				// for output and powder accumulation.
 				arma::cx_mat A_nz;
 				arma::cx_mat eigen_vec;
 				arma::cx_vec rhovec;
@@ -709,6 +880,8 @@ namespace RunSection
 				auto [theta, phi, weight] = grid[grid_num];
 				if (numPoints <= 1)
 				{
+					// Single orientation is the non-powdered limit. Use unit
+					// weight to keep the task normalization consistent.
 					theta = 0.0;
 					phi = 0.0;
 					weight = 1.0;
@@ -742,14 +915,23 @@ namespace RunSection
 				arma::cx_mat H = arma::conv_to<arma::cx_mat>::from(H0 + H1);
 				arma::cx_mat A_nz;
 				arma::cx_mat eigen_vec;
-				if (!this->BuildNakajimaZwanzigLiouvillian(i, space, H, A_nz, eigen_vec))
+				if (!this->BuildNakajimaZwanzigLiouvillian(i, space, H, Rot_mat, A_nz, eigen_vec))
 				{
 					this->Log() << "Failed to build NZ Liouvillian for powder orientation " << grid_num << "." << std::endl;
 					continue;
 				}
 
+				arma::cx_mat rho_oriented;
+				if (!BuildOrientedInitialDensity(space, rho0, Rot_mat, initialStateFrame, dephaseInitialState, initialStateHamiltonianList, rho_oriented, this->Log()))
+				{
+					continue;
+				}
+				rho_oriented /= arma::trace(rho_oriented);
+
 				space.UseSuperoperatorSpace(true);
-				arma::cx_mat rho0_eig = (eigen_vec.t() * rho0 * eigen_vec);
+				// Store the initial density in the same eigenbasis as A_nz so
+				// that pulses and free evolution use one consistent frame.
+				arma::cx_mat rho0_eig = (eigen_vec.t() * rho_oriented * eigen_vec);
 				rho0_eig /= arma::trace(rho0_eig);
 				arma::cx_vec rho0vec_eig;
 				if (!space.OperatorToSuperspace(rho0_eig, rho0vec_eig))
@@ -783,12 +965,12 @@ namespace RunSection
 				return true;
 			};
 
-			std::vector<std::tuple<std::string, double>> Pulsesequence;
-			if (this->Properties()->GetPulseSequence("pulsesequence", Pulsesequence))
+			std::vector<std::tuple<std::string, double>> pulseSequence;
+			if (this->Properties()->GetPulseSequence("pulsesequence", pulseSequence))
 			{
-				this->Log() << "Pulsesequence" << std::endl;
+				this->Log() << "Pulse sequence" << std::endl;
 
-				for (const auto &seq : Pulsesequence)
+				for (const auto &seq : pulseSequence)
 				{
 					this->Log() << std::get<0>(seq) << ", " << std::get<1>(seq) << std::endl;
 
@@ -1701,7 +1883,7 @@ namespace RunSection
 
 			theta[i] = std::acos(1.0 - index / _Npoints);		  // hemisphere
 			phi[i] = golden * index;							  // hemisphere
-			weight[i] = std::sin(theta[i]) * 2 * M_PI / _Npoints; // 2 * pi for hemisphere
+			weight[i] = 2 * M_PI / _Npoints; // constant in cos(theta) over the hemisphere
 			_uniformGrid[i] = {theta[i], phi[i], weight[i]};
 		}
 

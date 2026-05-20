@@ -209,6 +209,54 @@ namespace RunSection
 
 			return B;
 		}
+
+		bool BuildOrientedInitialDensity(SpinAPI::SpinSpace &space,
+										 const arma::cx_mat &referenceDensity,
+										 const arma::mat &orientationRotation,
+										 SpinAPI::StateFrame stateFrame,
+										 bool discardHamiltonianCoherences,
+										 const std::vector<std::string> &dephasingHamiltonian,
+										 arma::cx_mat &orientedDensity,
+										 std::ostream &log_stream)
+		{
+			orientedDensity = referenceDensity;
+
+			// The Hilbert task stores the initial state once, before the powder
+			// loop. If the input state is molecular-frame data, rotate that
+			// density matrix into each lab-frame orientation before propagation.
+			space.UseSuperoperatorSpace(false);
+			if (stateFrame == SpinAPI::StateFrame::Molecular)
+			{
+				if (!space.RotateState(referenceDensity, orientationRotation, orientedDensity))
+				{
+					log_stream << "Failed to rotate initial density matrix for powder orientation." << std::endl;
+					return false;
+				}
+			}
+
+			if (discardHamiltonianCoherences)
+			{
+				arma::sp_cx_mat H0sp;
+				if (!space.BaseHamiltonianRotated_SA(dephasingHamiltonian, orientationRotation, H0sp))
+				{
+					log_stream << "Failed to construct initial-state Hamiltonian for powder orientation." << std::endl;
+					return false;
+				}
+
+				// Dephase in the eigenbasis belonging to this same orientation.
+				// Removing off-diagonal elements in the lab basis would not
+				// represent loss of coherences between Hamiltonian eigenstates.
+				arma::cx_mat rho_dephased;
+				if (!space.DephaseStateInEigenbasis(orientedDensity, arma::conv_to<arma::cx_mat>::from(H0sp), rho_dephased))
+				{
+					log_stream << "Failed to dephase initial density matrix for powder orientation." << std::endl;
+					return false;
+				}
+				orientedDensity = rho_dephased;
+			}
+
+			return true;
+		}
 	}
 
 	// -----------------------------------------------------
@@ -252,16 +300,8 @@ namespace RunSection
 				continue;
 			}
 
-			arma::cx_mat Binitial = FactorizeDensityMatrix(rho0, this->Log());
-			if (Binitial.is_empty())
-			{
-				this->Log() << "Skipping SpinSystem \"" << (*i)->Name() << "\" because the initial density matrix could not be factorized." << std::endl;
-				continue;
-			}
-
 			const int dim = static_cast<int>(rho0.n_rows);
 			this->Log() << "Hilbert Space Size " << dim << " x " << dim << std::endl;
-			this->Log() << "Initial-state rank " << Binitial.n_cols << std::endl;
 
 			// Get Information about the polarization of choice
 			bool CIDSP = false;
@@ -639,9 +679,32 @@ namespace RunSection
 			bool hasH0list = this->Properties()->GetList("hamiltonianh0list", HamiltonianH0list, ',');
 			bool hasH1list = this->Properties()->GetList("hamiltonianh1list", HamiltonianH1list, ',');
 
+			const SpinAPI::StateFrame initialStateFrame = (*i)->InitialStateFrame();
+			if (initialStateFrame == SpinAPI::StateFrame::Molecular)
+			{
+				this->Log() << "Initial state frame = molecular. Rotating density matrix per orientation." << std::endl;
+			}
+
+			const SpinAPI::InitialStateCoherenceMode initialCoherences = (*i)->InitialStateCoherences();
+			const bool dephaseInitialState = (initialCoherences == SpinAPI::InitialStateCoherenceMode::DephaseEigenbasis);
+			std::vector<std::string> initialStateHamiltonianList;
+			if (dephaseInitialState)
+			{
+				// The dephasing basis has to be generated with the same
+				// orientation as the propagation Hamiltonian. By default we use
+				// H0, but an input file may name a separate Hamiltonian list.
+				if (!this->Properties()->GetList("initialstatehamiltonian", initialStateHamiltonianList, ',') &&
+					!this->Properties()->GetList("hamiltonianh0list", initialStateHamiltonianList, ','))
+				{
+					this->Log() << "Initial-state eigenbasis dephasing requires initialstatehamiltonian or hamiltonianh0list." << std::endl;
+					return false;
+				}
+				this->Log() << "Initial-state coherences = eigenbasis populations. Off-diagonal elements are discarded per orientation." << std::endl;
+			}
+
 			// Read a pulse sequence from the input
-			std::vector<std::tuple<std::string, double>> Pulsesequence;
-			bool hasPulseSequence = this->Properties()->GetPulseSequence("pulsesequence", Pulsesequence);
+			std::vector<std::tuple<std::string, double>> pulseSequence;
+			bool hasPulseSequence = this->Properties()->GetPulseSequence("pulsesequence", pulseSequence);
 			if (hasPulseSequence)
 			{
 				this->Log() << "Pulse sequence:" << std::endl;
@@ -657,7 +720,7 @@ namespace RunSection
 				double current_time = 0.0;
 				bool include_initial_step = true;
 
-				for (const auto &seq : Pulsesequence)
+				for (const auto &seq : pulseSequence)
 				{
 					std::string pulse_name = std::get<0>(seq);
 					double timerelaxation = std::get<1>(seq);
@@ -813,6 +876,15 @@ namespace RunSection
 				const auto &grid_point = grid[grid_num];
 				double theta, phi, weight;
 				std::tie(theta, phi, weight) = grid_point;
+				if (grid_size <= 1)
+				{
+					// A single point means "no powder average" for this task.
+					// Keep the identity orientation and unit weight so that HS
+					// and SS spectra have the same normalization.
+					theta = 0.0;
+					phi = 0.0;
+					weight = 1.0;
+				}
 
 				arma::mat Rot_mat = arma::eye<arma::mat>(3, 3);
 				double gamma = 0.0;
@@ -853,9 +925,15 @@ namespace RunSection
 					}
 				}
 
+				arma::cx_mat rho_initial;
+				if (!BuildOrientedInitialDensity(space_thread, rho0, Rot_mat, initialStateFrame, dephaseInitialState, initialStateHamiltonianList, rho_initial, this->Log()))
+				{
+					continue;
+				}
+
 				if (use_density_matrix)
 				{
-					arma::cx_mat rho = rho0;
+					arma::cx_mat rho = rho_initial;
 					int dim = static_cast<int>(rho.n_rows);
 
 					arma::cx_mat work_left(dim, dim, arma::fill::zeros);
@@ -987,7 +1065,7 @@ namespace RunSection
 
 					if (hasPulseSequence)
 					{
-						for (const auto &seq : Pulsesequence)
+						for (const auto &seq : pulseSequence)
 						{
 							if (grid_num == 0)
 							{
@@ -1219,21 +1297,30 @@ namespace RunSection
 					{
 						arma::cx_mat rho0mat = rho;
 						arma::cx_mat A_dense = -arma::cx_double(0.0, 1.0) * arma::cx_mat(H) - arma::cx_mat(K);
-						arma::cx_mat A_star = arma::conj(A_dense);
 
-						arma::cx_mat L = arma::kron(A_star, Iden_dense) + arma::kron(Iden_dense, A_dense);
+						arma::cx_mat L = arma::kron(A_dense, Iden_dense) + arma::kron(Iden_dense, arma::conj(A_dense));
 						if (!relaxation_super.is_empty())
 						{
 							L += relaxation_super;
 						}
-						arma::cx_vec rhs = arma::vectorise(-rho0mat);
+						arma::cx_vec rhs;
+						if (!space_thread.OperatorToSuperspace(-rho0mat, rhs))
+						{
+							this->Log() << "Failed to convert Hilbert timeinf right-hand side to superspace convention." << std::endl;
+							continue;
+						}
 						arma::cx_vec sol = arma::solve(L, rhs);
 						if (sol.is_empty())
 						{
 							this->Log() << "Failed to solve timeinf Lyapunov equation in Hilbert space." << std::endl;
 							continue;
 						}
-						arma::cx_mat X = arma::reshape(sol, rho0mat.n_rows, rho0mat.n_cols);
+						arma::cx_mat X;
+						if (!space_thread.OperatorFromSuperspace(sol, X))
+						{
+							this->Log() << "Failed to convert Hilbert timeinf solution from superspace convention." << std::endl;
+							continue;
+						}
 
 						rho_integrated_partial[tid] += weight * X;
 					}
@@ -1247,7 +1334,12 @@ namespace RunSection
 					continue;
 				}
 
-				arma::cx_mat B = Binitial;
+				arma::cx_mat B = FactorizeDensityMatrix(rho_initial, this->Log());
+				if (B.is_empty())
+				{
+					this->Log() << "Skipping powder orientation because the prepared initial density matrix could not be factorized." << std::endl;
+					continue;
+				}
 
 				auto record_expectation = [&](arma::mat &target, size_t row_index, const arma::cx_mat &state) {
 					arma::cx_mat state_conj = arma::conj(state);
@@ -1285,7 +1377,7 @@ namespace RunSection
 				if (hasPulseSequence)
 				{
 					// Loop through all pulse sequences
-					for (const auto &seq : Pulsesequence)
+					for (const auto &seq : pulseSequence)
 					{
 						// Write which pulse in pulsesequence is calculating now
 						if (grid_num == 0)
@@ -1536,19 +1628,28 @@ namespace RunSection
 					// A_state X + X A_state^† = -rho0, with A_state = -i H - K
 					arma::cx_mat rho0mat = B * B.st();
 					arma::cx_mat A_dense = -arma::cx_double(0.0, 1.0) * arma::cx_mat(H) - arma::cx_mat(K);
-					arma::cx_mat A_star = arma::conj(A_dense);
 
-					// Solve (A_state^* ⊗ I + I ⊗ A_state) vec(X) = -vec(rho0)
+					// Solve using MolSpin's row-major superspace convention, vec(X^T).
 					// This corresponds to A_state X + X A_state^† = -rho0.
-					arma::cx_mat L = arma::kron(A_star, Iden_dense) + arma::kron(Iden_dense, A_dense);
-					arma::cx_vec rhs = arma::vectorise(-rho0mat);
+					arma::cx_mat L = arma::kron(A_dense, Iden_dense) + arma::kron(Iden_dense, arma::conj(A_dense));
+					arma::cx_vec rhs;
+					if (!space_thread.OperatorToSuperspace(-rho0mat, rhs))
+					{
+						this->Log() << "Failed to convert Hilbert timeinf right-hand side to superspace convention." << std::endl;
+						continue;
+					}
 					arma::cx_vec sol = arma::solve(L, rhs);
 					if (sol.is_empty())
 					{
 						this->Log() << "Failed to solve timeinf Lyapunov equation in Hilbert space." << std::endl;
 						continue;
 					}
-					arma::cx_mat X = arma::reshape(sol, rho0mat.n_rows, rho0mat.n_cols);
+					arma::cx_mat X;
+					if (!space_thread.OperatorFromSuperspace(sol, X))
+					{
+						this->Log() << "Failed to convert Hilbert timeinf solution from superspace convention." << std::endl;
+						continue;
+					}
 
 					rho_integrated_partial[tid] += weight * X;
 				}
@@ -1633,8 +1734,7 @@ namespace RunSection
 					this->Log() << "Writing time-integrated (time -> inf) polarisation." << std::endl;
 
 					this->Data() << this->RunSettings()->CurrentStep() << " ";
-					this->Data() << "inf"
-								 << " ";
+					this->Data() << "inf" << " ";
 					this->WriteStandardOutput(this->Data());
 
 					for (int idx = 0; idx < projection_counter; idx++)
@@ -1701,7 +1801,7 @@ namespace RunSection
 
 			this->Log() << "\nDone with SpinSystem \"" << (*i)->Name() << "\"" << std::endl;
 		}
-		this->Data() << std::endl;
+		// this->Data() << std::endl;
 		return true;
 	}
 
@@ -1830,7 +1930,7 @@ namespace RunSection
 
 			theta[i] = std::acos(1.0 - index / _Npoints);							// hemisphere
 			phi[i] = golden * index;												// hemisphere
-			weight[i] = std::sin(theta[i]) * 2 * arma::datum::pi / _Npoints; // 2 * pi for hemisphere
+			weight[i] = 2 * arma::datum::pi / _Npoints; // constant in cos(theta) over the hemisphere
 			_uniformGrid[i] = {theta[i], phi[i], weight[i]};
 		}
 

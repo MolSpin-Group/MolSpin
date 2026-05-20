@@ -30,9 +30,11 @@ namespace RunSection
 
 		double mwFrequencyGHz;
 		double linewidth_mT;
-		double linewidthFad_mT;
-		double linewidthDonor_mT;
 		std::string lineshape;
+
+		int detectionHarmonic;
+		double modulationAmplitude_mT;
+
 		std::string powderGridType;
 		std::string powderGridSymmetry;
 		int powderGridSize;
@@ -45,8 +47,6 @@ namespace RunSection
 		bool sweepCacheResfields;
 		int sweepCacheResfieldPoints;
 		std::vector<std::string> detectSpinNames;
-		std::string electron1Name;
-		std::string electron2Name;
 		std::string fieldInteractionName;
 		bool enforceZeemanSync;
 		std::string initialStateName;
@@ -54,8 +54,7 @@ namespace RunSection
 		std::map<std::string, SpectrumCache> spectrumCache;
 
 		double LineshapeValue(double _delta, double _fwhm) const;
-		double LinewidthToOmega(double _fwhm_mT, double _giso) const;
-		bool CreateRotationMatrix(double &_alpha, double &_beta, double &_gamma, arma::mat &_R) const;
+		bool CreatePassiveZYZRotationMatrix(double &_alpha, double &_beta, double &_gamma, arma::mat &_R) const;
 		bool CreateSopheGrid(int _gridSize, const std::string &_symmetry, std::vector<std::tuple<double, double, double>> &_grid) const;
 		bool SopheGridParams(const std::string &_symmetry, double &_maxPhi, bool &_closedPhi, int &_nOctants) const;
 		bool CreateUniformGrid(int &_Npoints, std::vector<std::tuple<double, double, double>> &_uniformGrid) const;
@@ -64,6 +63,10 @@ namespace RunSection
 		void WriteHeader(std::ostream &_stream);
 		bool GetLinearFieldSweep(const SpinAPI::system_ptr &_system, const SpinAPI::interaction_ptr &_fieldInteraction, arma::vec &_field0, arma::vec &_fieldStep) const;
 		bool BuildCachedSpectrum(const SpinAPI::system_ptr &_system, const SpinAPI::interaction_ptr &_fieldInteraction, const arma::vec &_field0, const arma::vec &_fieldStep, SpectrumCache &_cache);
+
+		std::vector<double> ApplyFieldHarmonic(const std::vector<double> &_field_mT, const std::vector<double> &_channel) const;
+		void ApplyDetectionHarmonic(SpectrumCache &_cache) const;
+
 
 	protected:
 		bool RunLocal() override;

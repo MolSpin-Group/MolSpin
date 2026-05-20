@@ -318,7 +318,6 @@ namespace RunSection
 		for (unsigned int i = 0; i < As.size(); i++)
 		{
 			arma::cx_vec result = -1 * solve(arma::conv_to<arma::cx_mat>::from(As[i]), rho0vec);
-			std::cout << "Sample " << i << " trace: " << arma::trace(arma::reshape(result, std::sqrt(result.n_rows), std::sqrt(result.n_rows))) << std::endl;
 			std::vector<double> weights = SampleWeights[i];
 			double weight_product = 1.0;
 			for(unsigned int j = 0; j < weights.size(); j++)

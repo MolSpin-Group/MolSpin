@@ -10,6 +10,97 @@
 /////////////////////////////////////////////////////////////////////////
 namespace SpinAPI
 {
+	// Phenomenological relaxation in MolSpin superspace ordering. Diagonal
+	// density-matrix elements exchange population at rate1, while off-diagonal
+	// elements decay independently at rate2. The operator is basis agnostic;
+	// callers choose the basis by transforming before or after construction.
+	bool PhenomenologicalRelaxationOperator(unsigned int _dimension, double _populationRate, double _coherenceRate, arma::cx_mat &_out)
+	{
+		if (_dimension == 0 || _populationRate < 0.0 || _coherenceRate < 0.0)
+			return false;
+
+		const unsigned int superspaceDimension = _dimension * _dimension;
+		_out = arma::zeros<arma::cx_mat>(superspaceDimension, superspaceDimension);
+
+		for (unsigned int row = 0; row < _dimension; ++row)
+		{
+			for (unsigned int col = 0; col < _dimension; ++col)
+			{
+				const unsigned int index = row * _dimension + col;
+				if (row == col)
+				{
+					_out(index, index) -= _populationRate * static_cast<double>(_dimension - 1);
+					for (unsigned int source = 0; source < _dimension; ++source)
+					{
+						if (source == row)
+							continue;
+						const unsigned int sourceIndex = source * _dimension + source;
+						_out(index, sourceIndex) += _populationRate;
+					}
+				}
+				else
+				{
+					_out(index, index) -= _coherenceRate;
+				}
+			}
+		}
+
+		return true;
+	}
+
+	// Sparse version of the same rate model. Keeping this separate avoids
+	// constructing a dense temporary in larger Hilbert spaces.
+	bool PhenomenologicalRelaxationOperator(unsigned int _dimension, double _populationRate, double _coherenceRate, arma::sp_cx_mat &_out)
+	{
+		if (_dimension == 0 || _populationRate < 0.0 || _coherenceRate < 0.0)
+			return false;
+
+		const unsigned int superspaceDimension = _dimension * _dimension;
+		_out = arma::sp_cx_mat(superspaceDimension, superspaceDimension);
+
+		for (unsigned int row = 0; row < _dimension; ++row)
+		{
+			for (unsigned int col = 0; col < _dimension; ++col)
+			{
+				const unsigned int index = row * _dimension + col;
+				if (row == col)
+				{
+					_out(index, index) -= _populationRate * static_cast<double>(_dimension - 1);
+					for (unsigned int source = 0; source < _dimension; ++source)
+					{
+						if (source == row)
+							continue;
+						const unsigned int sourceIndex = source * _dimension + source;
+						_out(index, sourceIndex) += _populationRate;
+					}
+				}
+				else
+				{
+					_out(index, index) -= _coherenceRate;
+				}
+			}
+		}
+
+		return true;
+	}
+
+	bool TransformSuperoperatorToEigenbasis(const arma::cx_mat &_superoperatorLab, const arma::cx_mat &_eigenvectors, arma::cx_mat &_out)
+	{
+		if (_eigenvectors.n_rows != _eigenvectors.n_cols)
+			return false;
+		if (_superoperatorLab.n_rows != _superoperatorLab.n_cols)
+			return false;
+		if (_superoperatorLab.n_rows != _eigenvectors.n_rows * _eigenvectors.n_rows)
+			return false;
+
+		// Same row-major superspace convention as OperatorToSuperspace().
+		// The basis change is applied to both sides of the density operator.
+		const arma::cx_mat labToEigen = arma::kron(_eigenvectors.t(), _eigenvectors.st());
+		const arma::cx_mat eigenToLab = arma::kron(_eigenvectors, arma::conj(_eigenvectors));
+		_out = labToEigen * _superoperatorLab * eigenToLab;
+		return true;
+	}
+
 	// -----------------------------------------------------
 	// Relaxation operators
 	// -----------------------------------------------------
@@ -260,9 +351,9 @@ namespace SpinAPI
 			_out = P;
 		}
 		else if (_operator->Type() == OperatorType::RelaxationT2)
-		{
-			// Routine to calculate T2 relaxation (transverse)
-			auto spins = _operator->Spins();
+			{
+				// Routine to calculate T2 relaxation (transverse)
+				auto spins = _operator->Spins();
 
 			arma::cx_mat Sx;
 			arma::cx_mat Sy;
@@ -293,11 +384,16 @@ namespace SpinAPI
 			// Set the resulting operator
 			_out = P;
 		}
+		else if (_operator->Type() == OperatorType::RelaxationPhenomenological)
+			{
+				if (!PhenomenologicalRelaxationOperator(this->HilbertSpaceDimensions(), _operator->Rate1(), _operator->Rate2(), _out))
+					return false;
+			}
 		else if (_operator->Type() == OperatorType::Unspecified)
-		{
-			// Cannot construct operator if the type is not specified
-			return false;
-		}
+			{
+				// Cannot construct operator if the type is not specified
+				return false;
+			}
 		else
 		{
 			std::cout << "Cannot construct relaxation operator for Operator " << _operator->Name() << "!" << std::endl;
@@ -555,10 +651,10 @@ namespace SpinAPI
 			// Set the resulting operator
 			_out = P;
 		}
-		else if (_operator->Type() == OperatorType::RelaxationT2)
-		{
-			// Routine to calculate T2 relaxation (transverse)
-			auto spins = _operator->Spins();
+			else if (_operator->Type() == OperatorType::RelaxationT2)
+			{
+				// Routine to calculate T2 relaxation (transverse)
+				auto spins = _operator->Spins();
 
 			arma::sp_cx_mat Sx;
 			arma::sp_cx_mat Sy;
@@ -589,11 +685,16 @@ namespace SpinAPI
 			// Set the resulting operator
 			_out = P;
 		}
+		else if (_operator->Type() == OperatorType::RelaxationPhenomenological)
+			{
+				if (!PhenomenologicalRelaxationOperator(this->HilbertSpaceDimensions(), _operator->Rate1(), _operator->Rate2(), _out))
+					return false;
+			}
 		else if (_operator->Type() == OperatorType::Unspecified)
-		{
-			// Cannot construct operator if the type is not specified
-			return false;
-		}
+			{
+				// Cannot construct operator if the type is not specified
+				return false;
+			}
 		else
 		{
 			std::cout << "Cannot construct relaxation operator for Operator " << _operator->Name() << "!" << std::endl;
@@ -781,6 +882,22 @@ namespace SpinAPI
 				}
 			}
 		}
+		else if (_operator->Type() == OperatorType::RelaxationPhenomenological)
+		{
+			if (_operator->Rate1() < 0.0 || _operator->Rate2() < 0.0)
+				return false;
+
+			if (_operator->Rate1() != 0.0 || _operator->Rate2() != 0.0)
+			{
+				// Store rates only. The actual matrix size is fixed by the
+				// SpinSpace used during Hilbert-space propagation.
+				HilbertRelaxationPhenomenologicalTerm term;
+				term.populationRate = _operator->Rate1();
+				term.coherenceRate = _operator->Rate2();
+				_out.phenomenological_terms.push_back(term);
+				added = true;
+			}
+		}
 		else if (_operator->Type() == OperatorType::RelaxationT1)
 		{
 			auto spins = _operator->Spins();
@@ -868,6 +985,39 @@ namespace SpinAPI
 			}
 		}
 
+		for (const auto &term : _cache.phenomenological_terms)
+		{
+			const arma::uword dim = _rho.n_rows;
+			if (_rho.n_cols != dim)
+				continue;
+
+			if (term.populationRate != 0.0)
+			{
+				for (arma::uword row = 0; row < dim; ++row)
+				{
+					_out(row, row) -= term.populationRate * static_cast<double>(dim - 1) * _rho(row, row);
+					for (arma::uword source = 0; source < dim; ++source)
+					{
+						if (source == row)
+							continue;
+						_out(row, row) += term.populationRate * _rho(source, source);
+					}
+				}
+			}
+
+			if (term.coherenceRate != 0.0)
+			{
+				for (arma::uword row = 0; row < dim; ++row)
+				{
+					for (arma::uword col = 0; col < dim; ++col)
+					{
+						if (row != col)
+							_out(row, col) -= term.coherenceRate * _rho(row, col);
+					}
+				}
+			}
+		}
+
 		return true;
 	}
 
@@ -937,6 +1087,15 @@ namespace SpinAPI
 		if (rho_coeff != 0.0)
 		{
 			_out.diag() += rho_coeff;
+		}
+
+		for (const auto &term : _cache.phenomenological_terms)
+		{
+			arma::cx_mat P;
+			if (PhenomenologicalRelaxationOperator(static_cast<unsigned int>(dim), term.populationRate, term.coherenceRate, P))
+			{
+				_out += P;
+			}
 		}
 
 		return true;
@@ -1252,11 +1411,23 @@ namespace SpinAPI
 			// Set the resulting operator
 			_out = P;
 		}
+		else if (_operator->Type() == OperatorType::RelaxationPhenomenological)
+			{
+				arma::cx_mat Rlab;
+				arma::cx_mat Reig;
+				if (!PhenomenologicalRelaxationOperator(this->HilbertSpaceDimensions(), _operator->Rate1(), _operator->Rate2(), Rlab))
+					return false;
+				// In powder/NZ calculations the phenomenological model is
+				// normally defined in the current Hamiltonian eigenbasis.
+				if (!TransformSuperoperatorToEigenbasis(Rlab, _rotationmatrix, Reig))
+					return false;
+				_out = Reig;
+			}
 		else if (_operator->Type() == OperatorType::Unspecified)
-		{
-			// Cannot construct operator if the type is not specified
-			return false;
-		}
+			{
+				// Cannot construct operator if the type is not specified
+				return false;
+			}
 		else
 		{
 			std::cout << "Cannot construct relaxation operator for Operator " << _operator->Name() << "!" << std::endl;
@@ -1574,11 +1745,21 @@ namespace SpinAPI
 			// Set the resulting operator
 			_out = P;
 		}
+		else if (_operator->Type() == OperatorType::RelaxationPhenomenological)
+			{
+				arma::cx_mat Rlab;
+				arma::cx_mat Reig;
+				if (!PhenomenologicalRelaxationOperator(this->HilbertSpaceDimensions(), _operator->Rate1(), _operator->Rate2(), Rlab))
+					return false;
+				if (!TransformSuperoperatorToEigenbasis(Rlab, _rotationmatrix, Reig))
+					return false;
+				_out = arma::conv_to<arma::sp_cx_mat>::from(Reig);
+			}
 		else if (_operator->Type() == OperatorType::Unspecified)
-		{
-			// Cannot construct operator if the type is not specified
-			return false;
-		}
+			{
+				// Cannot construct operator if the type is not specified
+				return false;
+			}
 		else
 		{
 			std::cout << "Cannot construct relaxation operator for Operator " << _operator->Name() << "!" << std::endl;
@@ -1896,11 +2077,21 @@ namespace SpinAPI
 			// Set the resulting operator
 			_out = P;
 		}
+		else if (_operator->Type() == OperatorType::RelaxationPhenomenological)
+			{
+				arma::cx_mat Rlab;
+				arma::cx_mat Reig;
+				if (!PhenomenologicalRelaxationOperator(this->HilbertSpaceDimensions(), _operator->Rate1(), _operator->Rate2(), Rlab))
+					return false;
+				if (!TransformSuperoperatorToEigenbasis(Rlab, arma::cx_mat(_rotationmatrix), Reig))
+					return false;
+				_out = arma::conv_to<arma::sp_cx_mat>::from(Reig);
+			}
 		else if (_operator->Type() == OperatorType::Unspecified)
-		{
-			// Cannot construct operator if the type is not specified
-			return false;
-		}
+			{
+				// Cannot construct operator if the type is not specified
+				return false;
+			}
 		else
 		{
 			std::cout << "Cannot construct relaxation operator for Operator " << _operator->Name() << "!" << std::endl;

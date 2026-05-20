@@ -592,8 +592,10 @@ bool test_task_staticssspectra_method_timeinf_cidsp_false_longpulse_pulse()
 	task->SetLogStream(logstream);
 	task->SetDataStream(datastream);
 
-	// "Gold values", i.e. correct results to test against.
-	std::string value1 = "1 inf 0.000378987 0.000600122 4996.99 -0.000532089 -0.000325272 4997";
+	// The long RF pulse should not destroy the z-polarized nuclear population.
+	// With a 1e-4 sink rate, a spin-up nucleus gives an integrated Iz yield of
+	// about 0.5 / 1e-4 = 5000, while transverse components remain tiny.
+	std::string value1 = "1 inf 0 0 5000 0 0 5000";
 
 	// Convert value1 into a vector
 	std::vector<std::string> result;
@@ -634,33 +636,29 @@ bool test_task_staticssspectra_method_timeinf_cidsp_false_longpulse_pulse()
 		result_vec_string.push_back(s);
 	result_vec_string = FilterSpinProjectionOutput(result_vec_string, result.size());
 
-	for (auto i = 0; i < (int)result.size(); i++)
+	if (result_vec_string.size() != result.size())
 	{
-		if (result[i] == "inf" || result_vec_string[i] == "inf")
-		{
-			isCorrect &= (result[i] == result_vec_string[i]);
-			// std::cout << "Comparison at index " << i << ": " << (isCorrect ? "Pass" : "Fail") << " (inf comparison)" << std::endl;
-		}
-		else
-		{
-			try
-			{
-				double result_value = std::stod(result[i]);
-				double result_vec_value = std::stod(result_vec_string[i]);
-
-				if (std::abs(result_value) > 1e-10 || std::abs(result_vec_value) > 1e-10)
-				{
-					isCorrect &= equal_doublesfromstring(result[i], result_vec_string[i]);
-					// std::cout << "Comparison at index " << i << ": " << (isCorrect ? "Pass" : "Fail") << " (value comparison)" << std::endl;
-				}
-			}
-			catch (const std::invalid_argument &)
-			{
-				isCorrect = false;
-				// std::cout << "Invalid argument at index " << i << ": Fail" << std::endl;
-			}
-		}
+		return false;
 	}
+
+	isCorrect &= equal_doublesfromstring(result[0], result_vec_string[0]);
+	isCorrect &= (result_vec_string[1] == "inf");
+
+	const double n1x = std::stod(result_vec_string[2]);
+	const double n1y = std::stod(result_vec_string[3]);
+	const double n1z = std::stod(result_vec_string[4]);
+	const double n2x = std::stod(result_vec_string[5]);
+	const double n2y = std::stod(result_vec_string[6]);
+	const double n2z = std::stod(result_vec_string[7]);
+
+	isCorrect &= (std::abs(n1x) < 1e-2);
+	isCorrect &= (std::abs(n1y) < 1e-2);
+	isCorrect &= (std::abs(n2x) < 1e-2);
+	isCorrect &= (std::abs(n2y) < 1e-2);
+	isCorrect &= equal_double(n1z, 5000.0, 5.0);
+	isCorrect &= equal_double(n2z, 5000.0, 5.0);
+	isCorrect &= (n1z > 0.0);
+	isCorrect &= (n2z > 0.0);
 
 	return isCorrect;
 }

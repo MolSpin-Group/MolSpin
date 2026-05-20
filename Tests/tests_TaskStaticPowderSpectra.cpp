@@ -106,6 +106,7 @@ namespace
 		spinsys->Add(state_up);
 		spinsys->Add(pulse);
 		spinsys->ValidateInteractions();
+		spinsys->ValidatePulses();
 
 		auto spinsysParser = std::make_shared<MSDParser::ObjectParser>("spinsyssettings", _spin_system_properties);
 		spinsys->SetProperties(spinsysParser);
