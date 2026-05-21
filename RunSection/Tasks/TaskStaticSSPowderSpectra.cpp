@@ -10,6 +10,7 @@
 /////////////////////////////////////////////////////////////////////////
 #include <iostream>
 #include <iomanip>
+#include <cmath>
 #include "TaskStaticSSPowderSpectra.h"
 #include "Transition.h"
 #include "Settings.h"
@@ -42,6 +43,43 @@ namespace RunSection
 			}
 
 			_out = arma::sp_cx_mat(fromEigenbasis) * _relaxationEigenbasis * arma::sp_cx_mat(toEigenbasis);
+			return true;
+		}
+
+		void WriteTransitionYieldHeader(const SpinAPI::system_ptr &_system, std::ostream &_stream)
+		{
+			auto transitions = _system->Transitions();
+			for (auto transition = transitions.cbegin(); transition != transitions.cend(); ++transition)
+			{
+				if ((*transition)->SourceState() == nullptr)
+					continue;
+				_stream << _system->Name() << "." << (*transition)->Name() << ".yield ";
+			}
+		}
+
+		bool ProjectTransitionYields(const SpinAPI::system_ptr &_system,
+									 SpinAPI::SpinSpace &_space,
+									 const arma::cx_mat &_rho,
+									 std::ostream &_datastream,
+									 std::ostream &_logstream)
+		{
+			arma::cx_mat P;
+			auto transitions = _system->Transitions();
+			for (auto transition = transitions.cbegin(); transition != transitions.cend(); ++transition)
+			{
+				if ((*transition)->SourceState() == nullptr)
+					continue;
+
+				if (!_space.GetState((*transition)->SourceState(), P))
+				{
+					_logstream << "Failed to obtain projection matrix onto state \""
+							   << (*transition)->Name() << "\" of SpinSystem \""
+							   << _system->Name() << "\"." << std::endl;
+					return false;
+				}
+
+				_datastream << std::setprecision(12) << (*transition)->Rate() * std::abs(arma::trace(P * _rho)) << " ";
+			}
 			return true;
 		}
 	}
@@ -225,20 +263,27 @@ namespace RunSection
 				this->Log() << "Failed to obtain an input for a CIDSP. Plese use cidsp = true/false. Using cidsp = false by default. " << std::endl;
 			}
 
-			// Read in the number of points on the sampling grid
-			int numPoints = 1000;
-			if (!this->Properties()->Get("powdersamplingpoints", numPoints))
-			{
-				this->Log() << "Failed to obtain an input for a number of sampling points. Plese use powdersamplingpoints = N. Using powdersamplingpoints = 1000 by default. " << std::endl;
-			}
-
 			double Printedtime = 0;
 
 			// Construct grid
 			std::vector<std::tuple<double, double, double>> grid;
-			if (!this->CreateUniformGrid(numPoints, grid))
+			int numPoints = 1000;
+			bool explicitPowderGrid = this->CreateExplicitPowderGrid(grid);
+			if (explicitPowderGrid)
 			{
-				this->Log() << "Failed to obtain an Uniform grid." << std::endl;
+				numPoints = static_cast<int>(grid.size());
+			}
+			else
+			{
+				if (!this->Properties()->Get("powdersamplingpoints", numPoints))
+				{
+					this->Log() << "Failed to obtain an input for a number of sampling points. Plese use powdersamplingpoints = N. Using powdersamplingpoints = 1000 by default. " << std::endl;
+				}
+
+				if (!this->CreateUniformGrid(numPoints, grid))
+				{
+					this->Log() << "Failed to obtain an Uniform grid." << std::endl;
+				}
 			}
 
 			// Optional pulse sequence before the spectrum is sampled.
@@ -290,7 +335,7 @@ namespace RunSection
 			{
 				auto [theta, phi, weight] = grid[grid_num];
 
-				if (numPoints <= 1)
+				if (numPoints <= 1 && !explicitPowderGrid)
 				{
 					// Non-powdered calculation through the powder task. Keep
 					// the identity orientation and a unit integration weight.
@@ -390,7 +435,7 @@ namespace RunSection
 									auto [theta, phi, weight] = grid[grid_num];
 
 									// Single-point grid: use the non-powdered limit.
-									if (numPoints <= 1)
+									if (numPoints <= 1 && !explicitPowderGrid)
 									{
 										theta = 0.0;
 										phi = 0.0;
@@ -442,7 +487,7 @@ namespace RunSection
 									auto [theta, phi, weight] = grid[grid_num];
 
 									// Single-point grid: use the non-powdered limit.
-									if (numPoints <= 1)
+									if (numPoints <= 1 && !explicitPowderGrid)
 									{
 										theta = 0.0;
 										phi = 0.0;
@@ -579,7 +624,7 @@ namespace RunSection
 									auto [theta, phi, weight] = grid[grid_num];
 
 									// Single-point grid: use the non-powdered limit.
-									if (numPoints <= 1)
+									if (numPoints <= 1 && !explicitPowderGrid)
 									{
 										theta = 0.0;
 										phi = 0.0;
@@ -719,7 +764,7 @@ namespace RunSection
 									auto [theta, phi, weight] = grid[grid_num];
 
 									// Single-point grid: use the non-powdered limit.
-									if (numPoints <= 1)
+									if (numPoints <= 1 && !explicitPowderGrid)
 									{
 										theta = 0.0;
 										phi = 0.0;
@@ -881,7 +926,7 @@ namespace RunSection
 									auto [theta, phi, weight] = grid[grid_num];
 
 									// Single-point grid: use the non-powdered limit.
-									if (numPoints <= 1)
+									if (numPoints <= 1 && !explicitPowderGrid)
 									{
 										theta = 0.0;
 										phi = 0.0;
@@ -1012,7 +1057,7 @@ namespace RunSection
 					auto [theta, phi, weight] = grid[grid_num];
 
 					// Single-point grid: use the non-powdered limit.
-					if (numPoints <= 1)
+					if (numPoints <= 1 && !explicitPowderGrid)
 					{
 						theta = 0.0;
 						phi = 0.0;
@@ -1069,7 +1114,7 @@ namespace RunSection
 						auto [theta, phi, weight] = grid[grid_num];
 
 						// Single-point grid: use the non-powdered limit.
-						if (numPoints <= 1)
+						if (numPoints <= 1 && !explicitPowderGrid)
 						{
 							theta = 0.0;
 							phi = 0.0;
@@ -1201,6 +1246,12 @@ namespace RunSection
 		auto systems = this->SpinSystems();
 		for (auto i = systems.cbegin(); i != systems.cend(); i++)
 		{
+			bool transitionYields = false;
+			if (this->Properties()->Get("transitionyields", transitionYields) && transitionYields)
+			{
+				WriteTransitionYieldHeader((*i), _stream);
+				continue;
+			}
 
 			if (this->Properties()->GetList("spinlist", spinList, ','))
 			{
@@ -1396,6 +1447,17 @@ namespace RunSection
 		_datastream << std::setprecision(12) << _printedtime + (_n * _timestep) << " ";
 		this->WriteStandardOutput(_datastream);
 
+		bool transitionYields = false;
+		if (this->Properties()->Get("transitionyields", transitionYields) && transitionYields)
+		{
+			if (!ProjectTransitionYields((*_i), _space, rho0, _datastream, _logstream))
+			{
+				return false;
+			}
+			_datastream << std::endl;
+			return true;
+		}
+
 		if (this->Properties()->GetList("spinlist", spinList, ','))
 		{
 
@@ -1513,6 +1575,17 @@ namespace RunSection
 		// Save the current time
 		_datastream << std::setprecision(12) << _printedtime + (_n * _timestep) << " ";
 		this->WriteStandardOutput(_datastream);
+
+		bool transitionYields = false;
+		if (this->Properties()->Get("transitionyields", transitionYields) && transitionYields)
+		{
+			if (!ProjectTransitionYields((*_i), _space, rho0, _datastream, _logstream))
+			{
+				return false;
+			}
+			_datastream << std::endl;
+			return true;
+		}
 
 		if (this->Properties()->GetList("spinlist", spinList, ','))
 		{
@@ -1635,6 +1708,17 @@ namespace RunSection
 		_datastream << "inf" << " ";
 		this->WriteStandardOutput(_datastream);
 
+		bool transitionYields = false;
+		if (this->Properties()->Get("transitionyields", transitionYields) && transitionYields)
+		{
+			if (!ProjectTransitionYields((*_i), _space, rho0, _datastream, _logstream))
+			{
+				return false;
+			}
+			_datastream << std::endl;
+			return true;
+		}
+
 		if (this->Properties()->GetList("spinlist", spinList, ','))
 		{
 
@@ -1748,6 +1832,17 @@ namespace RunSection
 		// Save the current time
 		_datastream << "inf" << " ";
 		this->WriteStandardOutput(_datastream);
+
+		bool transitionYields = false;
+		if (this->Properties()->Get("transitionyields", transitionYields) && transitionYields)
+		{
+			if (!ProjectTransitionYields((*_i), _space, rho0, _datastream, _logstream))
+			{
+				return false;
+			}
+			_datastream << std::endl;
+			return true;
+		}
 
 		if (this->Properties()->GetList("spinlist", spinList, ','))
 		{
@@ -1881,6 +1976,58 @@ namespace RunSection
 			_uniformGrid[i] = {theta[i], phi[i], weight[i]};
 		}
 
+		return true;
+	}
+
+	bool TaskStaticSSPowderSpectra::CreateExplicitPowderGrid(std::vector<std::tuple<double, double, double>> &_grid)
+	{
+		// External powder averaging can be decomposed into one MolSpin task
+		// per orientation. The explicit orientation is theta, phi, weight in
+		// radians and MolSpin's hemisphere integration convention. MolSpin
+		// still constructs the rotated Hamiltonian and the correctly rotated
+		// molecular-frame initial density matrix for this single orientation.
+		arma::vec orientation;
+		if (this->Properties()->Get("powderorientation", orientation) ||
+			this->Properties()->Get("powder_orientation", orientation))
+		{
+			if (orientation.n_elem < 2)
+			{
+				this->Log() << "Explicit powder orientation requires at least theta and phi." << std::endl;
+				return false;
+			}
+			double weight = (orientation.n_elem > 2) ? orientation(2) : 1.0;
+			_grid.clear();
+			_grid.push_back({orientation(0), orientation(1), weight});
+			this->Log() << "Using explicit powder orientation theta=" << orientation(0)
+						<< ", phi=" << orientation(1)
+						<< ", weight=" << weight << "." << std::endl;
+			return true;
+		}
+
+		double theta = 0.0;
+		double phi = 0.0;
+		double weight = 1.0;
+		bool hasTheta = this->Properties()->Get("powdertheta", theta) ||
+						this->Properties()->Get("powder_theta", theta);
+		bool hasPhi = this->Properties()->Get("powderphi", phi) ||
+					  this->Properties()->Get("powder_phi", phi);
+		bool hasWeight = this->Properties()->Get("powderweight", weight) ||
+						 this->Properties()->Get("powder_weight", weight);
+		if (!(hasTheta || hasPhi || hasWeight))
+		{
+			return false;
+		}
+		if (!(hasTheta && hasPhi))
+		{
+			this->Log() << "Explicit powder orientation requires powdertheta and powderphi." << std::endl;
+			return false;
+		}
+
+		_grid.clear();
+		_grid.push_back({theta, phi, weight});
+		this->Log() << "Using explicit powder orientation theta=" << theta
+					<< ", phi=" << phi
+					<< ", weight=" << weight << "." << std::endl;
 		return true;
 	}
 

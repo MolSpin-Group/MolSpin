@@ -39,6 +39,7 @@ namespace RunSection
 		void WriteHeader(std::ostream &); // Write header for the output file
 		bool CreateRotationMatrix(double &_alpha, double &_beta, double &_gamma, arma::mat &_R) const;
 		bool CreateUniformGrid(int &_Npoints, std::vector<std::tuple<double, double, double>> &_uniformGrid) const;
+		bool CreateExplicitPowderGrid(std::vector<std::tuple<double, double, double>> &_grid);
 
 	protected:
 		bool RunLocal() override;

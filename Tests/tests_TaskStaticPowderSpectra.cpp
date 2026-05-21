@@ -446,10 +446,10 @@ bool test_task_staticpowder_timeevo_ss_hs_agree()
 
 //////////////////////////////////////////////////////////////////////////////
 // Time-evo: HS and SS should agree when relaxation operators are present.
-bool test_task_staticpowder_timeevo_relaxation_hs_ss_agree()
-{
-	auto system = BuildTwoElectronSystem(0.0, 0.0, 0.0, false, 0.0);
-	bool ok = PrepareSystem(system);
+	bool test_task_staticpowder_timeevo_relaxation_hs_ss_agree()
+	{
+		auto system = BuildTwoElectronSystem(0.0, 0.0, 0.0, false, 0.0);
+		bool ok = PrepareSystem(system);
 
 	auto relax = std::make_shared<SpinAPI::Operator>(
 		"relax",
@@ -482,13 +482,83 @@ bool test_task_staticpowder_timeevo_relaxation_hs_ss_agree()
 	ok &= (hs_decay > 1e-3);
 	ok &= RowsClose(ss_rows, hs_rows, 5e-4);
 
-	return ok;
-}
+		return ok;
+	}
 
-//////////////////////////////////////////////////////////////////////////////
-// Time-evo powder CW: HS direct spectra should also work for a non-RP one-electron system.
-bool test_task_staticpowder_timeevo_oneelectron_hs_ss_agree()
-{
+	//////////////////////////////////////////////////////////////////////////////
+	// Phenomenological relaxation is defined in the orientation-specific H0
+	// eigenbasis. Rotate the molecular-frame |up_z><up_z| state into a
+	// lab-frame Sx coherence while H0 remains Sz. The non-commuting H1 term
+	// exercises the NZ transform from the H0 relaxation basis into the
+	// propagation eigenbasis.
+	bool test_task_staticpowder_phenomenological_relaxation_eigenbasis_three_tasks()
+	{
+		OneElectronSystem system;
+
+		auto spin = std::make_shared<SpinAPI::Spin>("E", "type=electron;spin=1/2;tensor=isotropic(2);");
+		auto zeeman = std::make_shared<SpinAPI::Interaction>(
+			"zeeman",
+			"type=zeeman;spins=E;field=0 0 1;ignoretensors=true;commonprefactor=false;prefactor=1.0;");
+		auto drive = std::make_shared<SpinAPI::Interaction>(
+			"drive",
+			"type=zeeman;spins=E;field=0.25 0 0;ignoretensors=true;commonprefactor=false;prefactor=1.0;");
+		auto state_up = std::make_shared<SpinAPI::State>("Up", "spin(E)=|1/2>;");
+		auto relax = std::make_shared<SpinAPI::Operator>(
+			"Rphen",
+			"type=relaxationphenomenological;rate1=0.0;rate2=1.0;");
+
+		auto spinsys = std::make_shared<SpinAPI::SpinSystem>("System");
+		spinsys->Add(spin);
+		spinsys->Add(zeeman);
+		spinsys->Add(drive);
+		spinsys->Add(state_up);
+		spinsys->Add(relax);
+		spinsys->ValidateInteractions();
+		auto spinsysParser = std::make_shared<MSDParser::ObjectParser>("spinsyssettings", "initialstate=Up;frame=molecular;");
+		spinsys->SetProperties(spinsysParser);
+
+		system.spinsys = spinsys;
+		system.spinsystems.push_back(spinsys);
+		system.state_up = state_up;
+
+		bool ok = PrepareSystem(system);
+		ok &= (system.spinsys->ValidateOperators(system.spinsystems).size() == 0);
+
+		std::string ss_data;
+		std::string nz_data;
+		std::string hs_data;
+		std::string props = "method=timeevo;integration=false;cidsp=false;spinlist=E;powdersamplingpoints=1;"
+							"powderorientation=1.5707963267948966 0 1;"
+							"hamiltonianh0list=zeeman;hamiltonianh1list=drive;totaltime=0.55;timestep=0.1;";
+
+		ok &= RunPowderTask(system.spinsys, "staticss-powderspectra", props, ss_data);
+		ok &= RunPowderTask(system.spinsys, "staticss-powderspectra-nakajimazwanzig", props, nz_data);
+		ok &= RunPowderTask(system.spinsys, "statichs-direct-spectra", props + "propagationmethod=normal;", hs_data);
+
+		std::vector<std::vector<double>> ss_rows;
+		std::vector<std::vector<double>> nz_rows;
+		std::vector<std::vector<double>> hs_rows;
+		ok &= ParseDataRows(ss_data, ss_rows);
+		ok &= ParseDataRows(nz_data, nz_rows);
+		ok &= ParseDataRows(hs_data, hs_rows);
+
+		if (ss_rows.empty() || nz_rows.empty() || hs_rows.empty())
+			return false;
+
+		ok &= (ss_rows.size() == nz_rows.size());
+		ok &= (ss_rows.size() == hs_rows.size());
+		ok &= RowsClose(ss_rows, nz_rows, 1e-10);
+		ok &= RowsClose(ss_rows, hs_rows, 5e-5);
+
+		ok &= (std::abs(ss_rows.front()[0] - ss_rows.back()[0]) > 1e-2);
+
+		return ok;
+	}
+
+	//////////////////////////////////////////////////////////////////////////////
+	// Time-evo powder CW: HS direct spectra should also work for a non-RP one-electron system.
+	bool test_task_staticpowder_timeevo_oneelectron_hs_ss_agree()
+	{
 	auto system = BuildOneElectronSystem();
 	bool ok = PrepareSystem(system);
 
@@ -660,6 +730,7 @@ void AddTaskStaticPowderSpectraTests(std::vector<test_case> &_cases)
 	_cases.push_back(test_case("Task StaticPowderSpectra timeevo integration", test_task_staticpowder_timeevo_integration_linear));
 	_cases.push_back(test_case("Task StaticPowderSpectra timeevo SS/HS agree", test_task_staticpowder_timeevo_ss_hs_agree));
 	_cases.push_back(test_case("Task StaticPowderSpectra timeevo relaxation HS/SS agree", test_task_staticpowder_timeevo_relaxation_hs_ss_agree));
+	_cases.push_back(test_case("Task StaticPowderSpectra phenomenological relaxation eigenbasis across tasks", test_task_staticpowder_phenomenological_relaxation_eigenbasis_three_tasks));
 	_cases.push_back(test_case("Task StaticPowderSpectra timeevo one-electron HS/SS agree", test_task_staticpowder_timeevo_oneelectron_hs_ss_agree));
 	_cases.push_back(test_case("Task StaticPowderSpectra timeevo one-electron thermal HS/SS agree", test_task_staticpowder_timeevo_oneelectron_thermal_hs_ss_agree));
 	_cases.push_back(test_case("Task StaticPowderSpectra pulse one-electron thermal HS/SS agree", test_task_staticpowder_pulse_oneelectron_thermal_hs_ss_agree));

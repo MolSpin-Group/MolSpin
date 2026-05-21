@@ -16,6 +16,7 @@
 #include "SpinSpace.h"
 #include "Function.h"
 #include "Pulse.h"
+#include <cmath>
 #include <sstream>
 //////////////////////////////////////////////////////////////////////////////
 // Tests whether the spin quantum number is stored correctly.
@@ -1884,6 +1885,40 @@ bool test_spinapi_phenomenological_relaxation_operator()
 }
 //////////////////////////////////////////////////////////////////////////////
 
+bool test_spinapi_phenomenological_relaxation_framechange_is_basis_local()
+{
+	auto spin = std::make_shared<SpinAPI::Spin>("E", "spin=1/2;");
+	auto relax = std::make_shared<SpinAPI::Operator>("R", "type=relaxationphenomenological;rate1=0.25;rate2=0.75;");
+
+	auto spinsys = std::make_shared<SpinAPI::SpinSystem>("System");
+	spinsys->Add(spin);
+	spinsys->Add(relax);
+	std::vector<std::shared_ptr<SpinAPI::SpinSystem>> systems;
+	systems.push_back(spinsys);
+
+	bool isCorrect = true;
+	isCorrect &= (spinsys->ValidateOperators(systems).size() == 0);
+
+	SpinAPI::SpinSpace space(*spinsys);
+	space.UseSuperoperatorSpace(true);
+
+	arma::cx_mat canonical;
+	arma::cx_mat changed;
+	const double inv_sqrt2 = 1.0 / std::sqrt(2.0);
+	arma::cx_mat x_basis(2, 2);
+	x_basis(0, 0) = inv_sqrt2;
+	x_basis(0, 1) = inv_sqrt2;
+	x_basis(1, 0) = inv_sqrt2;
+	x_basis(1, 1) = -inv_sqrt2;
+
+	isCorrect &= space.RelaxationOperator(relax, canonical);
+	isCorrect &= space.RelaxationOperatorFrameChange(relax, x_basis, changed);
+	isCorrect &= equal_matrices(changed, canonical, 1e-12);
+
+	return isCorrect;
+}
+//////////////////////////////////////////////////////////////////////////////
+
 bool test_spinapi_rotate_state_maps_z_population_to_x_population()
 {
 	auto spin = std::make_shared<SpinAPI::Spin>("E", "spin=1/2;");
@@ -1994,6 +2029,7 @@ void AddSpinAPITests(std::vector<test_case> &_cases)
 	_cases.push_back(test_case("SpinSpace::ZFS formalism and orientation", test_spinapi_zfs_formalism_and_orientation));
 	_cases.push_back(test_case("SpinSpace::Rotated quadratic spin identity powder", test_spinapi_rotated_quadraticspin_matches_plain_for_identity_powder));
 	_cases.push_back(test_case("SpinSpace::Phenomenological relaxation operator", test_spinapi_phenomenological_relaxation_operator));
+	_cases.push_back(test_case("SpinSpace::Phenomenological relaxation frame change is basis-local", test_spinapi_phenomenological_relaxation_framechange_is_basis_local));
 	_cases.push_back(test_case("SpinSpace::RotateState maps z population to x population", test_spinapi_rotate_state_maps_z_population_to_x_population));
 	_cases.push_back(test_case("SpinSpace::DephaseStateInEigenbasis removes Hamiltonian coherences", test_spinapi_dephase_state_in_eigenbasis_removes_hamiltonian_coherences));
 }

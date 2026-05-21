@@ -39,6 +39,17 @@ namespace RunSection
 			return std::real(sum);
 		}
 
+		void WriteTransitionYieldHeader(const SpinAPI::system_ptr &_system, std::ostream &_stream)
+		{
+			auto transitions = _system->Transitions();
+			for (auto transition = transitions.cbegin(); transition != transitions.cend(); ++transition)
+			{
+				if ((*transition)->SourceState() == nullptr)
+					continue;
+				_stream << _system->Name() << "." << (*transition)->Name() << ".yield ";
+			}
+		}
+
 		std::string TrimCopy(const std::string &value)
 		{
 			const auto begin = value.find_first_not_of(" \t\n\r");
@@ -175,7 +186,7 @@ namespace RunSection
 
 		arma::cx_mat FactorizeDensityMatrix(const arma::cx_mat &rho0, std::ostream &log_stream)
 		{
-			const arma::cx_mat hermitian_rho0 = 0.5 * (rho0 + rho0.st());
+			const arma::cx_mat hermitian_rho0 = 0.5 * (rho0 + rho0.t());
 			arma::vec eigenvalues;
 			arma::cx_mat eigenvectors;
 			if (!arma::eig_sym(eigenvalues, eigenvectors, hermitian_rho0))
@@ -257,7 +268,140 @@ namespace RunSection
 
 			return true;
 		}
-	}
+
+		bool AddPhenomenologicalTerm(const SpinAPI::operator_ptr &relaxationOperator,
+									 std::vector<SpinAPI::HilbertRelaxationPhenomenologicalTerm> &terms)
+		{
+			if (relaxationOperator == nullptr ||
+				relaxationOperator->Type() != SpinAPI::OperatorType::RelaxationPhenomenological ||
+				relaxationOperator->Rate1() < 0.0 ||
+				relaxationOperator->Rate2() < 0.0)
+			{
+				return false;
+			}
+
+			if (relaxationOperator->Rate1() == 0.0 && relaxationOperator->Rate2() == 0.0)
+				return false;
+
+			SpinAPI::HilbertRelaxationPhenomenologicalTerm term;
+			term.populationRate = relaxationOperator->Rate1();
+			term.coherenceRate = relaxationOperator->Rate2();
+			terms.push_back(term);
+			return true;
+		}
+
+		bool DiagonalizeRelaxationBasis(const arma::sp_cx_mat &basisHamiltonian,
+										arma::cx_mat &basisEigenvectors,
+										std::ostream &log_stream)
+			{
+				arma::vec eigenvalues;
+				if (!arma::eig_sym(eigenvalues, basisEigenvectors, arma::cx_mat(basisHamiltonian)))
+				{
+					log_stream << "Failed to diagonalize the Hamiltonian used for phenomenological relaxation." << std::endl;
+					return false;
+				}
+
+				return true;
+			}
+
+		void ApplyPhenomenologicalRelaxationInBasis(const std::vector<SpinAPI::HilbertRelaxationPhenomenologicalTerm> &terms,
+													const arma::cx_mat &basisEigenvectors,
+													const arma::cx_mat &rho,
+													arma::cx_mat &out)
+			{
+				out.zeros(rho.n_rows, rho.n_cols);
+				if (terms.empty())
+					return;
+
+				const arma::uword dim = rho.n_rows;
+				arma::cx_mat rho_basis = basisEigenvectors.t() * rho * basisEigenvectors;
+				arma::cx_mat relax_basis(dim, dim, arma::fill::zeros);
+
+				for (const auto &term : terms)
+				{
+					if (term.populationRate != 0.0)
+					{
+						for (arma::uword row = 0; row < dim; ++row)
+						{
+							relax_basis(row, row) -= term.populationRate * static_cast<double>(dim - 1) * rho_basis(row, row);
+							for (arma::uword source = 0; source < dim; ++source)
+							{
+								if (source == row)
+									continue;
+								relax_basis(row, row) += term.populationRate * rho_basis(source, source);
+							}
+						}
+					}
+
+					if (term.coherenceRate != 0.0)
+					{
+						for (arma::uword row = 0; row < dim; ++row)
+						{
+							for (arma::uword col = 0; col < dim; ++col)
+							{
+								if (row != col)
+									relax_basis(row, col) -= term.coherenceRate * rho_basis(row, col);
+							}
+						}
+					}
+				}
+
+				out = basisEigenvectors * relax_basis * basisEigenvectors.t();
+			}
+
+		bool BuildPhenomenologicalRelaxationSuperoperator(SpinAPI::SpinSpace &space,
+														  const std::vector<SpinAPI::HilbertRelaxationPhenomenologicalTerm> &terms,
+														  const arma::cx_mat &basisEigenvectors,
+														  arma::cx_mat &out)
+			{
+				if (terms.empty())
+				{
+					out.reset();
+					return true;
+				}
+
+				const arma::uword dim = basisEigenvectors.n_rows;
+				arma::cx_mat canonical(dim * dim, dim * dim, arma::fill::zeros);
+				for (const auto &term : terms)
+				{
+					for (arma::uword row = 0; row < dim; ++row)
+					{
+						for (arma::uword col = 0; col < dim; ++col)
+						{
+							const arma::uword index = row * dim + col;
+							if (row == col)
+							{
+								if (term.populationRate == 0.0)
+									continue;
+								canonical(index, index) -= term.populationRate * static_cast<double>(dim - 1);
+								for (arma::uword source = 0; source < dim; ++source)
+								{
+									if (source == row)
+										continue;
+									const arma::uword sourceIndex = source * dim + source;
+									canonical(index, sourceIndex) += term.populationRate;
+								}
+							}
+							else if (term.coherenceRate != 0.0)
+							{
+								canonical(index, index) -= term.coherenceRate;
+							}
+						}
+					}
+				}
+
+				arma::cx_mat basisToLab;
+				arma::cx_mat labToBasis;
+				if (!space.SuperoperatorFromOperators(basisEigenvectors, basisEigenvectors.t(), basisToLab) ||
+					!space.SuperoperatorFromOperators(basisEigenvectors.t(), basisEigenvectors, labToBasis))
+				{
+					return false;
+				}
+
+				out = basisToLab * canonical * labToBasis;
+				return true;
+			}
+		}
 
 	// -----------------------------------------------------
 	// TaskStaticHSDirectSpectra Constructors and Destructor
@@ -328,9 +472,33 @@ namespace RunSection
 			std::vector<arma::sp_cx_mat> OperatorsSparse;
 			std::vector<arma::cx_mat> OperatorsDense;
 			arma::vec rates(1, 1);
+			bool transitionYields = false;
+			this->Properties()->Get("transitionyields", transitionYields);
 
 			// Getting the projection operators
-			if (this->Properties()->GetList("spinlist", spinList, ','))
+			if (transitionYields)
+			{
+				for (auto j = transitions.cbegin(); j != transitions.cend(); j++)
+				{
+					if ((*j)->SourceState() == nullptr)
+						continue;
+					if (!space.GetState((*j)->SourceState(), P))
+					{
+						this->Log() << "Failed to obtain projection matrix onto state \"" << (*j)->Name() << "\" of SpinSystem \"" << (*i)->Name() << "\"." << std::endl;
+						return false;
+					}
+					if (num_transitions != 0)
+					{
+						rates.insert_rows(num_transitions, 1);
+					}
+
+					Operators[projection_counter] = (*j)->Rate() * P;
+					projection_counter += 1;
+					rates(num_transitions) = (*j)->Rate();
+					num_transitions++;
+				}
+			}
+			else if (this->Properties()->GetList("spinlist", spinList, ','))
 			{
 				for (auto l = (*i)->spins_cbegin(); l != (*i)->spins_cend(); l++)
 				{
@@ -441,21 +609,33 @@ namespace RunSection
 					continue;
 				space.GetState((*j)->SourceState(), P);
 				K += (*j)->Rate() / 2 * P;
-			}
-			SpinAPI::HilbertRelaxationCache relaxation_cache;
-			bool use_density_matrix = false;
-			for (auto j = (*i)->operators_cbegin(); j != (*i)->operators_cend(); j++)
-			{
-				if (space.RelaxationOperator((*j), relaxation_cache))
-				{
-					use_density_matrix = true;
-					this->Log() << "Added relaxation operator \"" << (*j)->Name() << "\" to Hilbert-space propagation.\n";
 				}
-			}
-			if (use_density_matrix)
-			{
-				this->Log() << "Relaxation operators detected. Using density-matrix propagation in Hilbert space." << std::endl;
-			}
+				SpinAPI::HilbertRelaxationCache relaxation_cache;
+				std::vector<SpinAPI::HilbertRelaxationPhenomenologicalTerm> phenomenological_relaxation_terms;
+				bool use_density_matrix = false;
+				for (auto j = (*i)->operators_cbegin(); j != (*i)->operators_cend(); j++)
+				{
+					if ((*j)->Type() == SpinAPI::OperatorType::RelaxationPhenomenological)
+					{
+						if (AddPhenomenologicalTerm((*j), phenomenological_relaxation_terms))
+						{
+							use_density_matrix = true;
+							this->Log() << "Added eigenbasis relaxation operator \"" << (*j)->Name() << "\" to Hilbert-space propagation.\n";
+						}
+						continue;
+					}
+
+					if (space.RelaxationOperator((*j), relaxation_cache))
+					{
+						use_density_matrix = true;
+						this->Log() << "Added relaxation operator \"" << (*j)->Name() << "\" to Hilbert-space propagation.\n";
+					}
+				}
+				const bool use_phenomenological_relaxation = !phenomenological_relaxation_terms.empty();
+				if (use_density_matrix)
+				{
+					this->Log() << "Relaxation operators detected. Using density-matrix propagation in Hilbert space." << std::endl;
+				}
 
 			// Setting or calculating total time.
 			double totaltime = this->totaltime;
@@ -641,37 +821,46 @@ namespace RunSection
 			bool integrate_pulses = integration && (Integrationwindow.compare("freeevo") != 0);
 			bool integrate_freeevo = integration && (Integrationwindow.compare("pulse") != 0);
 
-			int numPoints = 0;
-			bool hasPowderPoints = this->Properties()->Get("powdersamplingpoints", numPoints);
-			if (!hasPowderPoints)
-			{
-				this->Log() << "No powdersamplingpoints provided. Powder averaging is disabled by default." << std::endl;
-				numPoints = 0;
-			}
-			if (numPoints < 1)
-			{
-				numPoints = 0;
-				if (hasPowderPoints)
-				{
-					this->Log() << "Powder averaging disabled (powdersamplingpoints <= 0)." << std::endl;
-				}
-			}
-
 			std::vector<std::tuple<double, double, double>> grid;
-			if (numPoints > 0)
+			int numPoints = 0;
+			bool explicitPowderGrid = this->CreateExplicitPowderGrid(grid);
+			if (explicitPowderGrid)
 			{
-				if (!this->CreateUniformGrid(numPoints, grid))
-				{
-					this->Log() << "Failed to obtain a powder grid." << std::endl;
-				}
-				else if (numPoints > 1)
-				{
-					this->Log() << "Using powder averaging with " << numPoints << " orientations." << std::endl;
-				}
+				numPoints = static_cast<int>(grid.size());
 			}
 			else
 			{
+				bool hasPowderPoints = this->Properties()->Get("powdersamplingpoints", numPoints);
+				if (!hasPowderPoints)
+				{
+					this->Log() << "No powdersamplingpoints provided. Powder averaging is disabled by default." << std::endl;
+					numPoints = 0;
+				}
+				if (numPoints < 1)
+				{
+					numPoints = 0;
+					if (hasPowderPoints)
+					{
+						this->Log() << "Powder averaging disabled (powdersamplingpoints <= 0)." << std::endl;
+					}
+				}
+
+				if (numPoints > 0)
+				{
+					if (!this->CreateUniformGrid(numPoints, grid))
+					{
+						this->Log() << "Failed to obtain a powder grid." << std::endl;
+					}
+					else if (numPoints > 1)
+					{
+						this->Log() << "Using powder averaging with " << numPoints << " orientations." << std::endl;
+					}
+				}
+			}
+			if (grid.empty())
+			{
 				grid.push_back({0.0, 0.0, 1.0});
+				numPoints = 0;
 			}
 
 			std::vector<std::string> HamiltonianH0list;
@@ -876,7 +1065,7 @@ namespace RunSection
 				const auto &grid_point = grid[grid_num];
 				double theta, phi, weight;
 				std::tie(theta, phi, weight) = grid_point;
-				if (grid_size <= 1)
+				if (grid_size <= 1 && !explicitPowderGrid)
 				{
 					// A single point means "no powder average" for this task.
 					// Keep the identity orientation and unit weight so that HS
@@ -893,20 +1082,22 @@ namespace RunSection
 					this->Log() << "Failed to obtain rotation matrix for powder orientation." << std::endl;
 				}
 
-				arma::sp_cx_mat H;
-				if (hasH0list)
-				{
-					arma::sp_cx_mat H0;
-					if (!space_thread.BaseHamiltonianRotated_SA(HamiltonianH0list, Rot_mat, H0))
+					arma::sp_cx_mat H;
+					arma::sp_cx_mat relaxation_basis_hamiltonian;
+					if (hasH0list)
+					{
+						arma::sp_cx_mat H0;
+						if (!space_thread.BaseHamiltonianRotated_SA(HamiltonianH0list, Rot_mat, H0))
 					{
 						this->Log() << "Failed to obtain rotated Hamiltonian for SpinSystem \"" << (*i)->Name() << "\"." << std::endl;
-						continue;
-					}
-					H = H0;
+							continue;
+						}
+						H = H0;
+						relaxation_basis_hamiltonian = H0;
 
-					if (hasH1list)
-					{
-						arma::sp_cx_mat H1;
+						if (hasH1list)
+						{
+							arma::sp_cx_mat H1;
 						if (!space_thread.ThermalHamiltonian(HamiltonianH1list, H1))
 						{
 							this->Log() << "Failed to obtain Hamiltonian H1 in Hilbert Space." << std::endl;
@@ -919,29 +1110,38 @@ namespace RunSection
 				else
 				{
 					if (!space_thread.Hamiltonian(H))
+						{
+							this->Log() << "Failed to obtain the Hamiltonian in Hilbert Space." << std::endl;
+							continue;
+						}
+						relaxation_basis_hamiltonian = H;
+					}
+
+					arma::cx_mat rho_initial;
+					if (!BuildOrientedInitialDensity(space_thread, rho0, Rot_mat, initialStateFrame, dephaseInitialState, initialStateHamiltonianList, rho_initial, this->Log()))
 					{
-						this->Log() << "Failed to obtain the Hamiltonian in Hilbert Space." << std::endl;
 						continue;
 					}
-				}
 
-				arma::cx_mat rho_initial;
-				if (!BuildOrientedInitialDensity(space_thread, rho0, Rot_mat, initialStateFrame, dephaseInitialState, initialStateHamiltonianList, rho_initial, this->Log()))
-				{
-					continue;
-				}
+					arma::cx_mat phenomenological_basis_eigenvectors;
+					if (use_phenomenological_relaxation &&
+						!DiagonalizeRelaxationBasis(relaxation_basis_hamiltonian, phenomenological_basis_eigenvectors, this->Log()))
+					{
+						continue;
+					}
 
 				if (use_density_matrix)
 				{
 					arma::cx_mat rho = rho_initial;
 					int dim = static_cast<int>(rho.n_rows);
 
-					arma::cx_mat work_left(dim, dim, arma::fill::zeros);
-					arma::cx_mat work_right(dim, dim, arma::fill::zeros);
-					arma::cx_mat relax(dim, dim, arma::fill::zeros);
-					arma::cx_mat k1(dim, dim, arma::fill::zeros);
-					arma::cx_mat k2(dim, dim, arma::fill::zeros);
-					arma::cx_mat k3(dim, dim, arma::fill::zeros);
+						arma::cx_mat work_left(dim, dim, arma::fill::zeros);
+						arma::cx_mat work_right(dim, dim, arma::fill::zeros);
+						arma::cx_mat relax(dim, dim, arma::fill::zeros);
+						arma::cx_mat phenomenological_relax(dim, dim, arma::fill::zeros);
+						arma::cx_mat k1(dim, dim, arma::fill::zeros);
+						arma::cx_mat k2(dim, dim, arma::fill::zeros);
+						arma::cx_mat k3(dim, dim, arma::fill::zeros);
 					arma::cx_mat k4(dim, dim, arma::fill::zeros);
 					arma::cx_mat tmp_state(dim, dim, arma::fill::zeros);
 					arma::cx_mat rk_accum(dim, dim, arma::fill::zeros);
@@ -988,13 +1188,18 @@ namespace RunSection
 						}
 						out = -imag_unit * (work_left - work_right);
 						work_left = K * state;
-						work_right = state * K;
-						out -= (work_left + work_right);
-						space_thread.ApplyRelaxationHilbert(relaxation_cache, state, relax);
-						out += relax;
-					};
+							work_right = state * K;
+							out -= (work_left + work_right);
+							space_thread.ApplyRelaxationHilbert(relaxation_cache, state, relax);
+							if (use_phenomenological_relaxation)
+							{
+								ApplyPhenomenologicalRelaxationInBasis(phenomenological_relaxation_terms, phenomenological_basis_eigenvectors, state, phenomenological_relax);
+								relax += phenomenological_relax;
+							}
+							out += relax;
+						};
 
-					auto rk4_step = [&](arma::cx_mat &state, const arma::sp_cx_mat &H_total, const arma::cx_mat *H_dense_ptr, double step_dt) {
+						auto rk4_step = [&](arma::cx_mat &state, const arma::sp_cx_mat &H_total, const arma::cx_mat *H_dense_ptr, double step_dt) {
 						drho(state, H_total, H_dense_ptr, k1);
 						tmp_state = state;
 						tmp_state += (0.5 * step_dt) * k1;
@@ -1012,9 +1217,14 @@ namespace RunSection
 						state += (step_dt / 6.0) * rk_accum;
 					};
 
-					auto relax_rhs = [&](const arma::cx_mat &state, arma::cx_mat &out) {
-						space_thread.ApplyRelaxationHilbert(relaxation_cache, state, out);
-					};
+						auto relax_rhs = [&](const arma::cx_mat &state, arma::cx_mat &out) {
+							space_thread.ApplyRelaxationHilbert(relaxation_cache, state, out);
+							if (use_phenomenological_relaxation)
+							{
+								ApplyPhenomenologicalRelaxationInBasis(phenomenological_relaxation_terms, phenomenological_basis_eigenvectors, state, phenomenological_relax);
+								out += phenomenological_relax;
+							}
+						};
 
 					auto rk4_relax_step = [&](arma::cx_mat &state, double step_dt) {
 						relax_rhs(state, k1);
@@ -1037,7 +1247,7 @@ namespace RunSection
 					auto build_unitary_half = [&](const arma::cx_mat &H_total_dense, double step_dt, arma::cx_mat &U_half, arma::cx_mat &U_half_st) {
 						arma::cx_mat A_dense = -imag_unit * H_total_dense - K_dense;
 						U_half = arma::expmat(A_dense * (0.5 * step_dt));
-						U_half_st = U_half.st();
+						U_half_st = U_half.t();
 					};
 
 					auto apply_unitary_half = [&](arma::cx_mat &state, const arma::cx_mat &U_half, const arma::cx_mat &U_half_st) {
@@ -1095,7 +1305,7 @@ namespace RunSection
 											continue;
 										}
 										arma::cx_mat U = arma::cx_mat(pulse_operator);
-										rho = U * rho * U.st();
+										rho = U * rho * U.t();
 									}
 									else if ((*pulse)->Type() == SpinAPI::PulseType::LongPulseStaticField)
 									{
@@ -1293,17 +1503,32 @@ namespace RunSection
 						}
 					}
 
-					if (method_timeinf)
-					{
-						arma::cx_mat rho0mat = rho;
-						arma::cx_mat A_dense = -arma::cx_double(0.0, 1.0) * arma::cx_mat(H) - arma::cx_mat(K);
-
-						arma::cx_mat L = arma::kron(A_dense, Iden_dense) + arma::kron(Iden_dense, arma::conj(A_dense));
-						if (!relaxation_super.is_empty())
+						if (method_timeinf)
 						{
-							L += relaxation_super;
-						}
-						arma::cx_vec rhs;
+							arma::cx_mat rho0mat = rho;
+							arma::cx_mat A_dense = -arma::cx_double(0.0, 1.0) * arma::cx_mat(H) - arma::cx_mat(K);
+
+							arma::cx_mat L = arma::kron(A_dense, Iden_dense) + arma::kron(Iden_dense, arma::conj(A_dense));
+							arma::cx_mat relaxation_super_orientation = relaxation_super;
+							if (use_phenomenological_relaxation)
+							{
+								arma::cx_mat phenomenological_super;
+								if (!BuildPhenomenologicalRelaxationSuperoperator(space_thread, phenomenological_relaxation_terms, phenomenological_basis_eigenvectors, phenomenological_super))
+								{
+									this->Log() << "Failed to construct phenomenological relaxation superoperator for this powder orientation." << std::endl;
+									continue;
+								}
+
+								if (relaxation_super_orientation.is_empty())
+									relaxation_super_orientation = phenomenological_super;
+								else
+									relaxation_super_orientation += phenomenological_super;
+							}
+							if (!relaxation_super_orientation.is_empty())
+							{
+								L += relaxation_super_orientation;
+							}
+							arma::cx_vec rhs;
 						if (!space_thread.OperatorToSuperspace(-rho0mat, rhs))
 						{
 							this->Log() << "Failed to convert Hilbert timeinf right-hand side to superspace convention." << std::endl;
@@ -1626,7 +1851,7 @@ namespace RunSection
 				{
 					// Compute integrated density matrix in Hilbert space via Sylvester/Lyapunov:
 					// A_state X + X A_state^† = -rho0, with A_state = -i H - K
-					arma::cx_mat rho0mat = B * B.st();
+					arma::cx_mat rho0mat = B * B.t();
 					arma::cx_mat A_dense = -arma::cx_double(0.0, 1.0) * arma::cx_mat(H) - arma::cx_mat(K);
 
 					// Solve using MolSpin's row-major superspace convention, vec(X^T).
@@ -1820,6 +2045,12 @@ namespace RunSection
 		auto systems = this->SpinSystems();
 		for (auto i = systems.cbegin(); i != systems.cend(); i++)
 		{
+			bool transitionYields = false;
+			if (this->Properties()->Get("transitionyields", transitionYields) && transitionYields)
+			{
+				WriteTransitionYieldHeader((*i), _stream);
+				continue;
+			}
 
 			if (this->Properties()->GetList("spinlist", spinList, ','))
 			{
@@ -1934,6 +2165,58 @@ namespace RunSection
 			_uniformGrid[i] = {theta[i], phi[i], weight[i]};
 		}
 
+		return true;
+	}
+
+	bool TaskStaticHSDirectSpectra::CreateExplicitPowderGrid(std::vector<std::tuple<double, double, double>> &_grid)
+	{
+		// External drivers such as VIKING can request exactly one MolSpin
+		// powder orientation per input file. The tuple is theta, phi, weight
+		// in radians and MolSpin's hemisphere integration convention. This
+		// keeps Hamiltonian rotation and molecular-frame initial-density
+		// rotation inside MolSpin instead of duplicating that logic outside.
+		arma::vec orientation;
+		if (this->Properties()->Get("powderorientation", orientation) ||
+			this->Properties()->Get("powder_orientation", orientation))
+		{
+			if (orientation.n_elem < 2)
+			{
+				this->Log() << "Explicit powder orientation requires at least theta and phi." << std::endl;
+				return false;
+			}
+			double weight = (orientation.n_elem > 2) ? orientation(2) : 1.0;
+			_grid.clear();
+			_grid.push_back({orientation(0), orientation(1), weight});
+			this->Log() << "Using explicit powder orientation theta=" << orientation(0)
+						<< ", phi=" << orientation(1)
+						<< ", weight=" << weight << "." << std::endl;
+			return true;
+		}
+
+		double theta = 0.0;
+		double phi = 0.0;
+		double weight = 1.0;
+		bool hasTheta = this->Properties()->Get("powdertheta", theta) ||
+						this->Properties()->Get("powder_theta", theta);
+		bool hasPhi = this->Properties()->Get("powderphi", phi) ||
+					  this->Properties()->Get("powder_phi", phi);
+		bool hasWeight = this->Properties()->Get("powderweight", weight) ||
+						 this->Properties()->Get("powder_weight", weight);
+		if (!(hasTheta || hasPhi || hasWeight))
+		{
+			return false;
+		}
+		if (!(hasTheta && hasPhi))
+		{
+			this->Log() << "Explicit powder orientation requires powdertheta and powderphi." << std::endl;
+			return false;
+		}
+
+		_grid.clear();
+		_grid.push_back({theta, phi, weight});
+		this->Log() << "Using explicit powder orientation theta=" << theta
+					<< ", phi=" << phi
+					<< ", weight=" << weight << "." << std::endl;
 		return true;
 	}
 

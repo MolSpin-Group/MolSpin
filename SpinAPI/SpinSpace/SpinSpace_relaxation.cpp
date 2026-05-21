@@ -1412,17 +1412,15 @@ namespace SpinAPI
 			_out = P;
 		}
 		else if (_operator->Type() == OperatorType::RelaxationPhenomenological)
-			{
-				arma::cx_mat Rlab;
-				arma::cx_mat Reig;
-				if (!PhenomenologicalRelaxationOperator(this->HilbertSpaceDimensions(), _operator->Rate1(), _operator->Rate2(), Rlab))
-					return false;
-				// In powder/NZ calculations the phenomenological model is
-				// normally defined in the current Hamiltonian eigenbasis.
-				if (!TransformSuperoperatorToEigenbasis(Rlab, _rotationmatrix, Reig))
-					return false;
-				_out = Reig;
-			}
+		{
+			// Phenomenological relaxation is basis-local: population
+			// exchange and coherence damping are defined in the basis in
+			// which the caller will propagate. The frame-change variants
+			// therefore return the canonical matrix for that active basis
+			// instead of transforming a lab-basis phenomenological model.
+			if (!PhenomenologicalRelaxationOperator(this->HilbertSpaceDimensions(), _operator->Rate1(), _operator->Rate2(), _out))
+				return false;
+		}
 		else if (_operator->Type() == OperatorType::Unspecified)
 			{
 				// Cannot construct operator if the type is not specified
@@ -1746,15 +1744,10 @@ namespace SpinAPI
 			_out = P;
 		}
 		else if (_operator->Type() == OperatorType::RelaxationPhenomenological)
-			{
-				arma::cx_mat Rlab;
-				arma::cx_mat Reig;
-				if (!PhenomenologicalRelaxationOperator(this->HilbertSpaceDimensions(), _operator->Rate1(), _operator->Rate2(), Rlab))
-					return false;
-				if (!TransformSuperoperatorToEigenbasis(Rlab, _rotationmatrix, Reig))
-					return false;
-				_out = arma::conv_to<arma::sp_cx_mat>::from(Reig);
-			}
+		{
+			if (!PhenomenologicalRelaxationOperator(this->HilbertSpaceDimensions(), _operator->Rate1(), _operator->Rate2(), _out))
+				return false;
+		}
 		else if (_operator->Type() == OperatorType::Unspecified)
 			{
 				// Cannot construct operator if the type is not specified
@@ -2078,15 +2071,10 @@ namespace SpinAPI
 			_out = P;
 		}
 		else if (_operator->Type() == OperatorType::RelaxationPhenomenological)
-			{
-				arma::cx_mat Rlab;
-				arma::cx_mat Reig;
-				if (!PhenomenologicalRelaxationOperator(this->HilbertSpaceDimensions(), _operator->Rate1(), _operator->Rate2(), Rlab))
-					return false;
-				if (!TransformSuperoperatorToEigenbasis(Rlab, arma::cx_mat(_rotationmatrix), Reig))
-					return false;
-				_out = arma::conv_to<arma::sp_cx_mat>::from(Reig);
-			}
+		{
+			if (!PhenomenologicalRelaxationOperator(this->HilbertSpaceDimensions(), _operator->Rate1(), _operator->Rate2(), _out))
+				return false;
+		}
 		else if (_operator->Type() == OperatorType::Unspecified)
 			{
 				// Cannot construct operator if the type is not specified

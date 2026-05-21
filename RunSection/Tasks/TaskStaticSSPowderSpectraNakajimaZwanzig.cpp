@@ -7,6 +7,7 @@
 /////////////////////////////////////////////////////////////////////////
 #include <iostream>
 #include <iomanip>
+#include <cmath>
 #include "TaskStaticSSPowderSpectraNakajimaZwanzig.h"
 #include "Transition.h"
 #include "Settings.h"
@@ -23,6 +24,43 @@ namespace RunSection
 {
 	namespace
 	{
+		void WriteTransitionYieldHeader(const SpinAPI::system_ptr &_system, std::ostream &_stream)
+		{
+			auto transitions = _system->Transitions();
+			for (auto transition = transitions.cbegin(); transition != transitions.cend(); ++transition)
+			{
+				if ((*transition)->SourceState() == nullptr)
+					continue;
+				_stream << _system->Name() << "." << (*transition)->Name() << ".yield ";
+			}
+		}
+
+		bool ProjectTransitionYields(const SpinAPI::system_ptr &_system,
+									 SpinAPI::SpinSpace &_space,
+									 const arma::cx_mat &_rho,
+									 std::ostream &_datastream,
+									 std::ostream &_logstream)
+		{
+			arma::cx_mat P;
+			auto transitions = _system->Transitions();
+			for (auto transition = transitions.cbegin(); transition != transitions.cend(); ++transition)
+			{
+				if ((*transition)->SourceState() == nullptr)
+					continue;
+
+				if (!_space.GetState((*transition)->SourceState(), P))
+				{
+					_logstream << "Failed to obtain projection matrix onto state \""
+							   << (*transition)->Name() << "\" of SpinSystem \""
+							   << _system->Name() << "\"." << std::endl;
+					return false;
+				}
+
+				_datastream << std::setprecision(12) << (*transition)->Rate() * std::abs(arma::trace(P * _rho)) << " ";
+			}
+			return true;
+		}
+
 		bool BuildOrientedInitialDensity(SpinAPI::SpinSpace &space,
 										 const arma::cx_mat &referenceDensity,
 										 const arma::mat &orientationRotation,
@@ -130,9 +168,9 @@ namespace RunSection
 			return {T0_rank_0, T0_rank_2, -Tm1, -Tp1, Tm2, Tp2};
 		}
 
-		std::vector<arma::cx_mat> DoubleSpinSphericalTensors(const std::vector<arma::cx_mat> &spin1_operators,
-															 const std::vector<arma::cx_mat> &spin2_operators)
-		{
+			std::vector<arma::cx_mat> DoubleSpinSphericalTensors(const std::vector<arma::cx_mat> &spin1_operators,
+																 const std::vector<arma::cx_mat> &spin2_operators)
+			{
 			const arma::cx_double im(0.0, 1.0);
 			const arma::cx_mat &S1x = spin1_operators[0];
 			const arma::cx_mat &S1y = spin1_operators[1];
@@ -148,9 +186,31 @@ namespace RunSection
 			arma::cx_mat Tp2 = 0.5 * (S1x * S2x - S1y * S2y + im * (S1x * S2y + S1y * S2x));
 			arma::cx_mat Tm2 = 0.5 * (S1x * S2x - S1y * S2y - im * (S1x * S2y + S1y * S2x));
 
-			return {T0_rank_0, T0_rank_2, -Tm1, -Tp1, Tm2, Tp2};
+				return {T0_rank_0, T0_rank_2, -Tm1, -Tp1, Tm2, Tp2};
+			}
+
+			bool TransformSuperoperatorBetweenEigenbases(SpinAPI::SpinSpace &space,
+														 const arma::cx_mat &sourceEigenvectors,
+														 const arma::cx_mat &targetEigenvectors,
+														 const arma::cx_mat &sourceSuperoperator,
+														 arma::cx_mat &targetSuperoperator)
+			{
+				// sourceEigenvectors and targetEigenvectors both map their local
+				// eigenbasis coordinates to the lab basis. W maps target-basis
+				// density matrices into source-basis coordinates.
+				const arma::cx_mat W = sourceEigenvectors.t() * targetEigenvectors;
+				arma::cx_mat targetToSource;
+				arma::cx_mat sourceToTarget;
+				if (!space.SuperoperatorFromOperators(W, W.t(), targetToSource) ||
+					!space.SuperoperatorFromOperators(W.t(), W, sourceToTarget))
+				{
+					return false;
+				}
+
+				targetSuperoperator = sourceToTarget * sourceSuperoperator * targetToSource;
+				return true;
+			}
 		}
-	}
 
 	// -----------------------------------------------------
 	// TaskStaticSSPowderSpectraNakajimaZwanzig Constructors and Destructor
@@ -163,7 +223,7 @@ namespace RunSection
 	{
 	}
 
-	bool TaskStaticSSPowderSpectraNakajimaZwanzig::BuildNakajimaZwanzigLiouvillian(auto &_i, SpinAPI::SpinSpace &_space, const arma::cx_mat &_H, const arma::mat &_rotationmatrix, arma::cx_mat &_A, arma::cx_mat &_eigenvec)
+	bool TaskStaticSSPowderSpectraNakajimaZwanzig::BuildNakajimaZwanzigLiouvillian(auto &_i, SpinAPI::SpinSpace &_space, const arma::cx_mat &_H, const arma::cx_mat &_relaxationBasisHamiltonian, const arma::mat &_rotationmatrix, arma::cx_mat &_A, arma::cx_mat &_eigenvec)
 	{
 		_space.UseSuperoperatorSpace(false);
 
@@ -180,7 +240,15 @@ namespace RunSection
 		R.set_size(arma::size(lambda));
 		R.zeros();
 
-			auto accumulate_terms = [&](const std::vector<arma::cx_mat> &tensors, const std::vector<double> &input_ampl, const std::vector<double> &input_tau, int terms, int def_g) -> bool {
+		arma::vec relaxationBasisEigenvalues;
+		arma::cx_mat relaxationBasisEigenvectors;
+		if (!arma::eig_sym(relaxationBasisEigenvalues, relaxationBasisEigenvectors, _relaxationBasisHamiltonian))
+		{
+			this->Log() << "Failed to diagonalize the Hamiltonian used for phenomenological relaxation." << std::endl;
+			return false;
+		}
+
+		auto accumulate_terms = [&](const std::vector<arma::cx_mat> &tensors, const std::vector<double> &input_ampl, const std::vector<double> &input_tau, int terms, int def_g) -> bool {
 			if (tensors.empty())
 				return true;
 
@@ -620,7 +688,19 @@ namespace RunSection
 		for (auto t = (*_i)->operators_cbegin(); t != (*_i)->operators_cend(); t++)
 		{
 			_space.UseSuperoperatorSpace(true);
-			if (_space.RelaxationOperatorFrameChange((*t), _eigenvec, O_SS))
+			bool gotOperator = false;
+			if ((*t)->Type() == SpinAPI::OperatorType::RelaxationPhenomenological)
+			{
+				arma::cx_mat O_relaxationBasis;
+				gotOperator = _space.RelaxationOperator((*t), O_relaxationBasis) &&
+							  TransformSuperoperatorBetweenEigenbases(_space, relaxationBasisEigenvectors, _eigenvec, O_relaxationBasis, O_SS);
+			}
+			else
+			{
+				gotOperator = _space.RelaxationOperatorFrameChange((*t), _eigenvec, O_SS);
+			}
+
+			if (gotOperator)
 			{
 				_A += O_SS;
 			}
@@ -796,18 +876,26 @@ namespace RunSection
 				this->Log() << "Failed to obtain an input for a CIDSP. Plese use cidsp = true/false. Using cidsp = false by default. " << std::endl;
 			}
 
-			int numPoints = 1000;
-			if (!this->Properties()->Get("powdersamplingpoints", numPoints))
-			{
-				this->Log() << "Failed to obtain an input for a number of sampling points. Plese use powdersamplingpoints = N. Using powdersamplingpoints = 1000 by default. " << std::endl;
-			}
-
 			double Printedtime = 0.0;
 
 			std::vector<std::tuple<double, double, double>> grid;
-			if (!this->CreateUniformGrid(numPoints, grid))
+			int numPoints = 1000;
+			bool explicitPowderGrid = this->CreateExplicitPowderGrid(grid);
+			if (explicitPowderGrid)
 			{
-				this->Log() << "Failed to obtain an Uniform grid." << std::endl;
+				numPoints = static_cast<int>(grid.size());
+			}
+			else
+			{
+				if (!this->Properties()->Get("powdersamplingpoints", numPoints))
+				{
+					this->Log() << "Failed to obtain an input for a number of sampling points. Plese use powdersamplingpoints = N. Using powdersamplingpoints = 1000 by default. " << std::endl;
+				}
+
+				if (!this->CreateUniformGrid(numPoints, grid))
+				{
+					this->Log() << "Failed to obtain an Uniform grid." << std::endl;
+				}
 			}
 
 			std::string Timewindow;
@@ -878,7 +966,7 @@ namespace RunSection
 			for (int grid_num = 0; grid_num < numPoints; ++grid_num)
 			{
 				auto [theta, phi, weight] = grid[grid_num];
-				if (numPoints <= 1)
+				if (numPoints <= 1 && !explicitPowderGrid)
 				{
 					// Single orientation is the non-powdered limit. Use unit
 					// weight to keep the task normalization consistent.
@@ -913,9 +1001,10 @@ namespace RunSection
 				}
 
 				arma::cx_mat H = arma::conv_to<arma::cx_mat>::from(H0 + H1);
+				arma::cx_mat relaxationBasisHamiltonian = arma::conv_to<arma::cx_mat>::from(H0);
 				arma::cx_mat A_nz;
 				arma::cx_mat eigen_vec;
-				if (!this->BuildNakajimaZwanzigLiouvillian(i, space, H, Rot_mat, A_nz, eigen_vec))
+				if (!this->BuildNakajimaZwanzigLiouvillian(i, space, H, relaxationBasisHamiltonian, Rot_mat, A_nz, eigen_vec))
 				{
 					this->Log() << "Failed to build NZ Liouvillian for powder orientation " << grid_num << "." << std::endl;
 					continue;
@@ -1499,6 +1588,12 @@ namespace RunSection
 		auto systems = this->SpinSystems();
 		for (auto i = systems.cbegin(); i != systems.cend(); i++)
 		{
+			bool transitionYields = false;
+			if (this->Properties()->Get("transitionyields", transitionYields) && transitionYields)
+			{
+				WriteTransitionYieldHeader((*i), _stream);
+				continue;
+			}
 
 			if (this->Properties()->GetList("spinlist", spinList, ','))
 			{
@@ -1646,6 +1741,17 @@ namespace RunSection
 		_datastream << std::setprecision(12) << _printedtime + (_n * _timestep) << " ";
 		this->WriteStandardOutput(_datastream);
 
+		bool transitionYields = false;
+		if (this->Properties()->Get("transitionyields", transitionYields) && transitionYields)
+		{
+			if (!ProjectTransitionYields((*_i), _space, rho0, _datastream, _logstream))
+			{
+				return false;
+			}
+			_datastream << std::endl;
+			return true;
+		}
+
 		if (this->Properties()->GetList("spinlist", spinList, ','))
 		{
 
@@ -1760,6 +1866,17 @@ namespace RunSection
 		// Save the current time
 		_datastream << "inf" << " ";
 		this->WriteStandardOutput(_datastream);
+
+		bool transitionYields = false;
+		if (this->Properties()->Get("transitionyields", transitionYields) && transitionYields)
+		{
+			if (!ProjectTransitionYields((*_i), _space, rho0, _datastream, _logstream))
+			{
+				return false;
+			}
+			_datastream << std::endl;
+			return true;
+		}
 
 		if (this->Properties()->GetList("spinlist", spinList, ','))
 		{
@@ -1887,6 +2004,58 @@ namespace RunSection
 			_uniformGrid[i] = {theta[i], phi[i], weight[i]};
 		}
 
+		return true;
+	}
+
+	bool TaskStaticSSPowderSpectraNakajimaZwanzig::CreateExplicitPowderGrid(std::vector<std::tuple<double, double, double>> &_grid)
+	{
+		// External powder averaging can be decomposed into one MolSpin task
+		// per orientation. The explicit orientation is theta, phi, weight in
+		// radians and MolSpin's hemisphere integration convention. MolSpin
+		// still constructs the rotated Hamiltonian, NZ relaxation tensor, and
+		// molecular-frame initial density matrix for this single orientation.
+		arma::vec orientation;
+		if (this->Properties()->Get("powderorientation", orientation) ||
+			this->Properties()->Get("powder_orientation", orientation))
+		{
+			if (orientation.n_elem < 2)
+			{
+				this->Log() << "Explicit powder orientation requires at least theta and phi." << std::endl;
+				return false;
+			}
+			double weight = (orientation.n_elem > 2) ? orientation(2) : 1.0;
+			_grid.clear();
+			_grid.push_back({orientation(0), orientation(1), weight});
+			this->Log() << "Using explicit powder orientation theta=" << orientation(0)
+						<< ", phi=" << orientation(1)
+						<< ", weight=" << weight << "." << std::endl;
+			return true;
+		}
+
+		double theta = 0.0;
+		double phi = 0.0;
+		double weight = 1.0;
+		bool hasTheta = this->Properties()->Get("powdertheta", theta) ||
+						this->Properties()->Get("powder_theta", theta);
+		bool hasPhi = this->Properties()->Get("powderphi", phi) ||
+					  this->Properties()->Get("powder_phi", phi);
+		bool hasWeight = this->Properties()->Get("powderweight", weight) ||
+						 this->Properties()->Get("powder_weight", weight);
+		if (!(hasTheta || hasPhi || hasWeight))
+		{
+			return false;
+		}
+		if (!(hasTheta && hasPhi))
+		{
+			this->Log() << "Explicit powder orientation requires powdertheta and powderphi." << std::endl;
+			return false;
+		}
+
+		_grid.clear();
+		_grid.push_back({theta, phi, weight});
+		this->Log() << "Using explicit powder orientation theta=" << theta
+					<< ", phi=" << phi
+					<< ", weight=" << weight << "." << std::endl;
 		return true;
 	}
 

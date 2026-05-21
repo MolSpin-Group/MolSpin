@@ -40,6 +40,7 @@ namespace RunSection
 		bool GetEigenvectors_H0_Thermal(SpinAPI::SpinSpace &_space, std::vector<std::string> &_thermalhamiltonian_list, arma::vec &_eigen_val, arma::sp_cx_mat &_eigen_vec_sp) const;
 		bool CreateRotationMatrix(double &_alpha, double &_beta, double &_gamma, arma::mat &_R) const;
 		bool CreateUniformGrid(int &_Npoints, std::vector<std::tuple<double, double, double>> &_uniformGrid) const;
+		bool CreateExplicitPowderGrid(std::vector<std::tuple<double, double, double>> &_grid);
 		bool CreateCustomGrid(int &_Npoints, std::vector<std::tuple<double, double, double>> &_Grid) const;
 
 		bool Create_A_for_current_orientation(auto &_i, SpinAPI::SpinSpace &_space, double &_theta, double &_phi, arma::sp_cx_mat &_A, std::ostream &_logstream) const;
