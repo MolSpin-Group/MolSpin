@@ -37,8 +37,8 @@ SpinSystem GS
         group2 = N14;
         tensor = matrix("-2.70 0 0; 0 -2.70 0; 0 0 -2.14"); //Mhz
         prefactor = 0.035682426404996e-3;
-        tensortype = "monochromatic";
-        frequency = 0.0;
+        //tensortype = "monochromatic";
+        //frequency = 0.0;
     }
 
     Interaction N14nqp
@@ -59,7 +59,7 @@ SpinSystem GS
         type = singlespin;
         spins = e1;
         //field = "0.0 0.0 0.0101";
-        field = "0.0 0.0 0.0";
+        field = "0.0 0.0 0.101";
     }
     
     Interaction nuclearzeeman
@@ -67,10 +67,19 @@ SpinSystem GS
         type = singlespin;
         spins = N14;
         //field = "0.0 0.0 0.101";
-        //field = "0.0 0.0 0.095";
-        field = "0.0 0.0 0.0";
+        field = "0.0 0.0 0.101";
+        //field = "0.0 0.0 0.0";
         prefactor = -0.019327078; //g_n = 3.076Mhz/T -> 19.327078Mrad/sT -> 0.019327078rad/(ns)T
         commonprefactor = false;
+    }
+
+    Interaction strain
+    {
+        type = strain;
+        group1 = e1;
+        E = "1e-3 1e-3 1e-3";
+        D = "13.3 21.5 20";
+        prefactor = 0.035682426404996;
     }
 
 //States
@@ -150,8 +159,8 @@ SpinSystem ES
         group2 = N14;
         tensor = matrix("40 0 0; 0 40 0; 0 0 -23"); //Mhz
         prefactor = 0.035682426404996e-3;
-        tensortype = "monochromatic";
-        frequency = 0.0;
+        //tensortype = "monochromatic";
+        //frequency = 0.0;
     }
 
     Interaction N14nqp
@@ -169,8 +178,8 @@ SpinSystem ES
         type = singlespin;
         spins = e1;
         //field = "0.0 0.0 0.02";
-        //field = "0.0 0.0 0.095";
-        field = "0.0 0.0 0.0";
+        field = "0.0 0.0 0.101";
+        //field = "0.0 0.0 0.0";
     }
     
     Interaction nuclearzeeman
@@ -178,10 +187,19 @@ SpinSystem ES
         type = singlespin;
         spins = N14;
         //field = "0.0 0.0 0.02";
-        //field = "0.0 0.0 0.095";
-        field = "0.0 0.0 0.0";
+        field = "0.0 0.0 0.101";
+        //field = "0.0 0.0 0.0";
         prefactor = -0.019327078; //g_n = 3.076Mhz/T -> 19.327078Mrad/sT -> 0.019327078rad/(ns)T
         commonprefactor = false;
+    }
+
+    Interaction strain
+    {
+        type = strain;
+        group1 = e1;
+        E = "1e-3 1e-3 1e-3";
+        D = "13.3 21.5 20";
+        prefactor = 0.48171275646745; //1/28.024 * ~13.5 (the strain succeptibilty is around 13.5+-0.5 times stronger in the ES than the GS)
     }
 
 //States
@@ -215,35 +233,48 @@ SpinSystem ES
     Transition TDDRD{source = TD_D; targetsystem = GS; targetstate = TD_D; rate = 0.077;}
 
     //NonRadiativeDecay
-    Transition T0UT0UD{source = T0_U; targetsystem = GS; targetstate = T0_U; rate = 0.00425;}
-    Transition T0ZT0ZD{source = T0_Z; targetsystem = GS; targetstate = T0_Z; rate = 0.00425;}
-    Transition T0DT0DD{source = T0_D; targetsystem = GS; targetstate = T0_D; rate = 0.00425;}
-    Transition T0UTPUD{source = T0_U; targetsystem = GS; targetstate = TP_U; rate = 0.000375;}
-    Transition T0ZTPZD{source = T0_Z; targetsystem = GS; targetstate = TP_Z; rate = 0.000375;}
-    Transition T0DTPDD{source = T0_D; targetsystem = GS; targetstate = TP_D; rate = 0.000375;}
-    Transition T0UTDUD{source = T0_U; targetsystem = GS; targetstate = TD_U; rate = 0.000375;}
-    Transition T0ZTDZD{source = T0_Z; targetsystem = GS; targetstate = TD_Z; rate = 0.000375;}
-    Transition T0DTDDD{source = T0_D; targetsystem = GS; targetstate = TD_D; rate = 0.000375;}
+    //Transition T0UT0UD{source = T0_U; targetsystem = GS; targetstate = T0_U; rate = 0.00425;}
+    //Transition T0ZT0ZD{source = T0_Z; targetsystem = GS; targetstate = T0_Z; rate = 0.00425;}
+    //Transition T0DT0DD{source = T0_D; targetsystem = GS; targetstate = T0_D; rate = 0.00425;}
+    //Transition T0UTPUD{source = T0_U; targetsystem = GS; targetstate = TP_U; rate = 0.000375;}
+    //Transition T0ZTPZD{source = T0_Z; targetsystem = GS; targetstate = TP_Z; rate = 0.000375;}
+    //Transition T0DTPDD{source = T0_D; targetsystem = GS; targetstate = TP_D; rate = 0.000375;}
+    //Transition T0UTDUD{source = T0_U; targetsystem = GS; targetstate = TD_U; rate = 0.000375;}
+    //Transition T0ZTDZD{source = T0_Z; targetsystem = GS; targetstate = TD_Z; rate = 0.000375;}
+    //Transition T0DTDDD{source = T0_D; targetsystem = GS; targetstate = TD_D; rate = 0.000375;}
+//
+    //Transition TPUT0UD{source = TP_U; targetsystem = GS; targetstate = T0_U; rate = 0.051;}
+    //Transition TPZT0ZD{source = TP_Z; targetsystem = GS; targetstate = T0_Z; rate = 0.051;}
+    //Transition TPDT0DD{source = TP_D; targetsystem = GS; targetstate = T0_D; rate = 0.051;}
+    //Transition TPUTPUD{source = TP_U; targetsystem = GS; targetstate = TP_U; rate = 0.0045;}
+    //Transition TPZTPZD{source = TP_Z; targetsystem = GS; targetstate = TP_Z; rate = 0.0045;}
+    //Transition TPDTPDD{source = TP_D; targetsystem = GS; targetstate = TP_D; rate = 0.0045;}
+    //Transition TPUTDUD{source = TP_U; targetsystem = GS; targetstate = TD_U; rate = 0.0045;}
+    //Transition TPZTDZD{source = TP_Z; targetsystem = GS; targetstate = TD_Z; rate = 0.0045;}
+    //Transition TPDTDDD{source = TP_D; targetsystem = GS; targetstate = TD_D; rate = 0.0045;}
+//
+    //Transition TDUT0UD{source = TD_U; targetsystem = GS; targetstate = T0_U; rate = 0.051;}
+    //Transition TDZT0ZD{source = TD_Z; targetsystem = GS; targetstate = T0_Z; rate = 0.051;}
+    //Transition TDDT0DD{source = TD_D; targetsystem = GS; targetstate = T0_D; rate = 0.051;}
+    //Transition TDUTPUD{source = TD_U; targetsystem = GS; targetstate = TP_U; rate = 0.0045;}
+    //Transition TDZTPZD{source = TD_Z; targetsystem = GS; targetstate = TP_Z; rate = 0.0045;}
+    //Transition TDDTPDD{source = TD_D; targetsystem = GS; targetstate = TP_D; rate = 0.0045;}
+    //Transition TDUTDUD{source = TD_U; targetsystem = GS; targetstate = TD_U; rate = 0.0045;}
+    //Transition TDZTDZD{source = TD_Z; targetsystem = GS; targetstate = TD_Z; rate = 0.0045;}
+    //Transition TDDTDDD{source = TD_D; targetsystem = GS; targetstate = TD_D; rate = 0.0045;}
 
-    Transition TPUT0UD{source = TP_U; targetsystem = GS; targetstate = T0_U; rate = 0.051;}
-    Transition TPZT0ZD{source = TP_Z; targetsystem = GS; targetstate = T0_Z; rate = 0.051;}
-    Transition TPDT0DD{source = TP_D; targetsystem = GS; targetstate = T0_D; rate = 0.051;}
-    Transition TPUTPUD{source = TP_U; targetsystem = GS; targetstate = TP_U; rate = 0.0045;}
-    Transition TPZTPZD{source = TP_Z; targetsystem = GS; targetstate = TP_Z; rate = 0.0045;}
-    Transition TPDTPDD{source = TP_D; targetsystem = GS; targetstate = TP_D; rate = 0.0045;}
-    Transition TPUTDUD{source = TP_U; targetsystem = GS; targetstate = TD_U; rate = 0.0045;}
-    Transition TPZTDZD{source = TP_Z; targetsystem = GS; targetstate = TD_Z; rate = 0.0045;}
-    Transition TPDTDDD{source = TP_D; targetsystem = GS; targetstate = TD_D; rate = 0.0045;}
+    Transition T0UISC{source = T0_U; targetsystem = MS; targetstate = I; rate = 0.001;}
+    Transition T0ZISC{source = T0_Z; targetsystem = MS; targetstate = I; rate = 0.001;}
+    Transition T0DISC{source = T0_D; targetsystem = MS; targetstate = I; rate = 0.001;}
 
-    Transition TDUT0UD{source = TD_U; targetsystem = GS; targetstate = T0_U; rate = 0.051;}
-    Transition TDZT0ZD{source = TD_Z; targetsystem = GS; targetstate = T0_Z; rate = 0.051;}
-    Transition TDDT0DD{source = TD_D; targetsystem = GS; targetstate = T0_D; rate = 0.051;}
-    Transition TDUTPUD{source = TD_U; targetsystem = GS; targetstate = TP_U; rate = 0.0045;}
-    Transition TDZTPZD{source = TD_Z; targetsystem = GS; targetstate = TP_Z; rate = 0.0045;}
-    Transition TDDTPDD{source = TD_D; targetsystem = GS; targetstate = TP_D; rate = 0.0045;}
-    Transition TDUTDUD{source = TD_U; targetsystem = GS; targetstate = TD_U; rate = 0.0045;}
-    Transition TDZTDZD{source = TD_Z; targetsystem = GS; targetstate = TD_Z; rate = 0.0045;}
-    Transition TDDTDDD{source = TD_D; targetsystem = GS; targetstate = TD_D; rate = 0.0045;}
+    Transition TPUISC{source = TP_U; targetsystem = MS; targetstate = I; rate = 0.083;}
+    Transition TPZISC{source = TP_Z; targetsystem = MS; targetstate = I; rate = 0.083;}
+    Transition TPDISC{source = TP_D; targetsystem = MS; targetstate = I; rate = 0.083;}
+
+    Transition TDUISC{source = TD_U; targetsystem = MS; targetstate = I; rate = 0.083;}
+    Transition TDZISC{source = TD_Z; targetsystem = MS; targetstate = I; rate = 0.083;}
+    Transition TDDISC{source = TD_D; targetsystem = MS; targetstate = I; rate = 0.083;}
+
 
     State Identity
     {
@@ -254,14 +285,32 @@ SpinSystem ES
 	}
 }
 
+SpinSystem MS
+{
+    State I
+    {
+
+    }
+
+    Transition MSGST0U{source = I; targetsystem = GS; targetstate = T0_U; rate = 0.0033;}
+    Transition MSGST0Z{source = I; targetsystem = GS; targetstate = T0_Z; rate = 0.0033;}
+    Transition MSGST0D{source = I; targetsystem = GS; targetstate = T0_D; rate = 0.0033;}
+    Transition MSGSTPU{source = I; targetsystem = GS; targetstate = TP_U; rate = 0.001;}
+    Transition MSGSTPZ{source = I; targetsystem = GS; targetstate = TP_Z; rate = 0.001;}
+    Transition MSGSTPD{source = I; targetsystem = GS; targetstate = TP_D; rate = 0.001;}
+    Transition MSGSTDP{source = I; targetsystem = GS; targetstate = TD_U; rate = 0.001;}
+    Transition MSGSTDZ{source = I; targetsystem = GS; targetstate = TD_Z; rate = 0.001;}
+    Transition MSGSTDD{source = I; targetsystem = GS; targetstate = TD_D; rate = 0.001;}
+}
+
 Run
 {
     Task TE
     {
         type       = MultiStaticSS-timeevolution;
         //type = MultiDynamicHS-timeevolution;
-        logfile    = "NV_centre_N14_GSLAC-SS-4.log";
-        datafile   = "NV_centre_N14_GSLAC-SS-4.dat";
+        logfile    = "NV_Centre_N14_results/NV_centre_N14_GSLAC-PL-5.log";
+        datafile   = "NV_Centre_N14_results/NV_centre_N14_GSLAC-PL-5.dat";
         ReactionOperator = Haberkorn;
         transitionyields = false;
         //propagator = RK45;
@@ -284,7 +333,9 @@ Settings
 		//steps = 20541;
         //steps = 1;
         //steps = 10521;
-        steps = 75651;
+        //steps = 75651;
+        //steps = 241;
+        steps = 300;
 	}
 
     Output fieldstrength
@@ -293,34 +344,34 @@ Settings
         vector = GS.zeeman.field;
     }
 
-    Output hyperfinefrequency
-    {
-        type = scalar;
-        scalar = GS.E1N14.frequency;
-    }
+    //Output hyperfinefrequency
+    //{
+    //    type = scalar;
+    //    scalar = GS.E1N14.frequency;
+    //}
 
-    Action increasefreq1
-    {
-        type = addscalar;
-        scalar = GS.E1N14.frequency;
-        value = 0.002;
-        first = 1;
-        //last = 600;
-        last = 501;
-        //last = 6;
-        loop = true;
-    }
-
-    Action increasefreq2
-    {
-        type = addscalar;
-        scalar = ES.E1N14.frequency;
-        value = 0.002;
-        first = 1;
-        //last = 600;
-        last = 501;
-        loop = true;
-    }
+    //Action increasefreq1
+    //{
+    //    type = addscalar;
+    //    scalar = GS.E1N14.frequency;
+    //    value = 0.002;
+    //    first = 1;
+    //    //last = 600;
+    //    last = 501;
+    //    //last = 6;
+    //    loop = true;
+    //}
+//
+    //Action increasefreq2
+    //{
+    //    type = addscalar;
+    //    scalar = ES.E1N14.frequency;
+    //    value = 0.002;
+    //    first = 1;
+    //    //last = 600;
+    //    last = 501;
+    //    loop = true;
+    //}
 
     Action increasefieldstrength1
 	{
@@ -329,9 +380,9 @@ Settings
 		direction = "0 0 1";
         //value = 50e-9;
         //value = 50e-6;
-        //value = 0.005;
-        value = 0.01;
-        period = 501;
+        value = 1e-5;
+        //value = 0.01;
+        //period = 501;
         //period = 6;
         //period = 600;
         //period = 51;
@@ -345,10 +396,8 @@ Settings
 		direction = "0 0 1"; 
         //value = 50e-9;
         //value = 50e-6;
-        //value = 0.005;
-        value = 0.01;
-        period = 501;
-        //period = 51;
+        value = 1e-5;
+        //value = 0.01;
 	}
 
     Action increasefieldstrength3
@@ -357,10 +406,7 @@ Settings
 		vector = ES.zeeman.field;
 		direction = "0 0 1";
         //value = 10e-7;
-        //value = 0.005;
-        value = 0.01;
-        period = 501;
-        //period = 51;
+        value = 1e-5;
 	}
 
     Action increasefieldstrength4
@@ -369,9 +415,9 @@ Settings
 		vector = ES.nuclearzeeman.field;
 		direction = "0 0 1"; 
         //value = 10e-7;
-        //value = 0.005;
-        value = 0.01;
-        period = 501;
+        value = 1e-5;
+        //value = 0.01;
+        //period = 501;
         //period = 51;
 	}
 }

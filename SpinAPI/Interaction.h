@@ -44,6 +44,8 @@ namespace SpinAPI
 		arma::vec field;				// Field vector for one-spin interactions, i.e. "B" in "S1 * B". Example: Magnetic field in Zeeman interaction.
 		double dvalue, evalue;			// D and E value for zero-field splitting
 		bool EnergyShift;
+		std::vector<double> strain_components; //Strain components - {epsilon_x, epsilon_y, epsilon_z}
+		std::vector<double> strain_succeptability; //strain succeptibility components - {D_||, D_⊥, D_⊥'}
 		std::vector<spin_ptr> group1;	// Spins to use for one-spin interaction and left-hand-side of two-spin interaction
 		std::vector<spin_ptr> group2;	// Spins to use on right-hand-side of coupling tensor in two-spin interaction
 		InteractionType type;			// Interaction type (one-spin / two-spin)
@@ -89,6 +91,8 @@ namespace SpinAPI
 		double tdAmp;
 		bool tdPrintTensor;
 		bool tdPrintField;
+		bool tdPhaseDrift;
+		double RWDiffusionCoefficient;
 
 		//Special data members for Semi-Classical
 		std::vector<SCHyperfineField> hffield;
@@ -154,6 +158,8 @@ namespace SpinAPI
 		const double Dvalue() const;
 		const double Evalue() const;
 		const bool ES() const {return this->EnergyShift; };
+		const std::vector<double> Strain_Components() const { return this->strain_components; };
+		const std::vector<double> Strain_Succeptability() const { return this->strain_succeptability; };
 		//const double Hfiamplitude() const;
 		const std::vector<SCHyperfineField> Hfiamplitude() const;
 		const int Orientations() const;

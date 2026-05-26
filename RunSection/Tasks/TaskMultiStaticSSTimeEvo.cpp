@@ -16,6 +16,8 @@
 #include "Utility.h"
 #include "Operator.h"
 
+#include <ctime>
+
 namespace RunSection
 {
 	// -----------------------------------------------------
@@ -319,6 +321,10 @@ namespace RunSection
 	
 	
 		this->Log() << "Starting time evolution with timestep: " << this->timestep << ", total time: " << this->totaltime << ", minimum timestep: " << MinTimeStep << ", maximum timestep: " << MaxTimeStep << std::endl;
+
+		auto now = std::chrono::high_resolution_clock::now();
+
+		int step = 0;
 		while (CurrentTime < this->totaltime)
 		{
 			// Propagate
@@ -359,6 +365,15 @@ namespace RunSection
 				return false;
 			// Terminate the line in the data file after iteration through all spin systems
 			this->Data() << std::endl;
+
+			step = floor(CurrentTime);
+			if(step % 1000 == 0 && step != 0)
+			{
+				auto now2 = std::chrono::high_resolution_clock::now();
+				auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(now2-now);
+				now = now2;
+				this->Log() << "Time to step " << step << " : " << duration.count() << "(ms)" << std::endl;
+			}
 		}
 		this->Log() << "Done with calculation." << std::endl;
 		this->timestep = InitialTimeStep;

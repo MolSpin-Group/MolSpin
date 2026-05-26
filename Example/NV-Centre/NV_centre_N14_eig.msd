@@ -37,8 +37,8 @@ SpinSystem GS
         group2 = N14;
         tensor = matrix("-2.70 0 0; 0 -2.70 0; 0 0 -2.14"); //Mhz
         prefactor = 0.035682426404996e-3;
-        tensortype = "monochromatic";
-        frequency = 0.0;
+        //tensortype = "monochromatic";
+        //frequency = 0.0;
     }
 
     Interaction N14nqp
@@ -60,7 +60,8 @@ SpinSystem GS
         spins = e1;
         //field = "0.0 0.0 0.0101";
         //field = "0.0 0.0 0.05";
-        field = "0.0 0.0 0.1";
+        field = "0.0 0.0 0.102";
+        //field = "0.0 0.0 0.0";
     }
     
     Interaction nuclearzeeman
@@ -70,9 +71,31 @@ SpinSystem GS
         //field = "0.0 0.0 0.101";
         //field = "0.0 0.0 0.095";
         //field = "0.0 0.0 0.05";
-        field = "0.0 0.0 0.1";
+        //field = "0.0 0.0 0.1";
+        //field = "0.0 0.0 0.0";
+        field = "0.0 0.0 0.102";
         prefactor = -0.019327078; //g_n = 3.076Mhz/T -> 19.327078Mrad/sT -> 0.019327078rad/(ns)T
         commonprefactor = false;
+    }
+
+    Interaction strain
+    {
+        type = strain;
+        group1 = e1;
+        E = "1e-6 1e-6 1e-6";
+        D = "13.3 21.5 20";
+        prefactor = 0.035682426404996;
+    }
+
+    Interaction strain_mod
+    {
+        type = strain;
+        group1 = e1;
+        E = "1e-2 1e-2 1e-2";
+        D = "13.3 21.5 20";
+        prefactor = 0.035682426404996;
+        tensortype = "monochromatic";
+        frequency = 0.0;
     }
 
 //States
@@ -152,8 +175,8 @@ SpinSystem ES
         group2 = N14;
         tensor = matrix("40 0 0; 0 40 0; 0 0 -23"); //Mhz
         prefactor = 0.035682426404996e-3;
-        tensortype = "monochromatic";
-        frequency = 0.0;
+        //tensortype = "monochromatic";
+        //frequency = 0.0;
     }
 
     Interaction N14nqp
@@ -173,7 +196,9 @@ SpinSystem ES
         //field = "0.0 0.0 0.02";
         //field = "0.0 0.0 0.095";
         //field = "0.0 0.0 0.05";
-        field = "0.0 0.0 0.1";
+        //field = "0.0 0.0 0.1";
+        //field = "0.0 0.0 0.0";
+        field = "0.0 0.0 0.102";
     }
     
     Interaction nuclearzeeman
@@ -183,9 +208,31 @@ SpinSystem ES
         //field = "0.0 0.0 0.02";
         //field = "0.0 0.0 0.095";
         //field = "0.0 0.0 0.05";
-        field = "0.0 0.0 0.1";
+        //field = "0.0 0.0 0.1";
+        //field = "0.0 0.0 0.0";
+        field = "0.0 0.0 0.102";
         prefactor = -0.019327078; //g_n = 3.076Mhz/T -> 19.327078Mrad/sT -> 0.019327078rad/(ns)T
         commonprefactor = false;
+    }
+
+    Interaction strain
+    {
+        type = strain;
+        group1 = e1;
+        E = "1e-6 1e-6 1e-6";
+        D = "13.3 21.5 20";
+        prefactor = 0.48171275646745; //1/28.024 * ~13.5 (the strain succeptibilty is around 13.5+-0.5 times stronger in the ES than the GS)
+    }
+
+    Interaction strain_mod
+    {
+        type = strain;
+        group1 = e1;
+        E = "1e-2 1e-2 1e-2";
+        D = "13.3 21.5 20";
+        prefactor = 0.48171275646745;
+        tensortype = "monochromatic";
+        frequency = 0.0;
     }
 
 //States
@@ -265,8 +312,8 @@ Run
         type = eigenvalues;
         //Hamiltonian = true;
         refstates = T0_U, T0_Z, T0_D, TP_U, TP_Z, TP_D, TD_U, TD_Z, TD_D;
-        logfile    = "NV_Centre_N14_results/NV_centre_N14_GLASC_Z_eig.log";
-        datafile   = "NV_Centre_N14_results/NV_centre_N14_GLASC_Z_eig.dat";
+        logfile    = "NV_Centre_N14_results/NV_centre_N14_GLASC_Z_eig_strain_mod.log";
+        datafile   = "NV_Centre_N14_results/NV_centre_N14_GLASC_Z_eig_strain_mod.dat";
         //ReactionOperator = Haberkorn;
         //transitionyields = false;
         //propagator = RK45;
@@ -289,41 +336,43 @@ Settings
 		//steps = 20541;
         //steps = 1;
         //steps = 10521;
-        steps = 21;
+        //steps = 21;
+        //steps = 15001;
+        steps = 101
 	}
 
-    Output fieldstrength
-    {
-        type = length;
-        vector = GS.zeeman.field;
-    }
+    //Output fieldstrength
+    //{
+    //    type = length;
+    //    vector = GS.zeeman.field;
+    //}
 
     Output hyperfinefrequency
     {
         type = scalar;
-        scalar = GS.E1N14.frequency;
+        scalar = ES.strain_mod.frequency;
     }
 
     Action increasefreq1
     {
         type = addscalar;
-        scalar = GS.E1N14.frequency;
-        value = 0.05;
+        scalar = GS.strain_mod.frequency;
+        value = 0.5;
         first = 1;
         //last = 600;
-        last = 101;
+        //last = 101;
         //last = 6;
-        loop = true;
+        //loop = true;
     }
-
+//
     Action increasefreq2
     {
         type = addscalar;
-        scalar = ES.E1N14.frequency;
-        value = 0.05;
+        scalar = ES.strain_mod.frequency;
+        value = 0.5;
         first = 1;
         //last = 600;
-        last = 101;
+        //last = 101;
         loop = true;
     }
 
@@ -335,11 +384,12 @@ Settings
     //    //value = 50e-9;
     //    //value = 50e-6;
     //    //value = 0.005;
-    //    value = 0.05;
-    //    period = 501;
+    //    //value = 0.05;
+    //    //period = 501;
     //    //period = 6;
     //    //period = 600;
     //    //period = 51;
+    //    value = 0.00001;
     //    
 	//}
 //
@@ -351,9 +401,10 @@ Settings
     //    //value = 50e-9;
     //    //value = 50e-6;
     //    //value = 0.005;
-    //    value = 0.05;
-    //    period = 501;
+    //    //value = 0.05;
+    //    //period = 501;
     //    //period = 51;
+    //    value = 0.00001;
 	//}
 //
     //Action increasefieldstrength3
@@ -363,9 +414,10 @@ Settings
 	//	direction = "0 0 1";
     //    //value = 10e-7;
     //    //value = 0.005;
-    //    value = 0.05;
-    //    period = 501;
+    //    //value = 0.05;
+    //    //period = 501;
     //    //period = 51;
+    //    value = 0.00001;
 	//}
 //
     //Action increasefieldstrength4
@@ -375,8 +427,9 @@ Settings
 	//	direction = "0 0 1"; 
     //    //value = 10e-7;
     //    //value = 0.005;
-    //    value = 0.05;
-    //    period = 501;
+    //    //value = 0.05;
+    //    //period = 501;
     //    //period = 51;
+    //    value = 0.00001;
 	//}
 }

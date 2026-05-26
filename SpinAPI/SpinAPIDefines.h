@@ -36,7 +36,8 @@ namespace SpinAPI
 		QuadraticSpin,
 		Exchange,
 		Zfs,
-		SemiClassicalField
+		SemiClassicalField,
+		Strain
 	};
 
 	// Used by the Interaction class to determine the time-dependence of the field for SingleSpin interactions

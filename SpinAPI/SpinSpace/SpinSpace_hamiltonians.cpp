@@ -283,6 +283,54 @@ namespace SpinAPI
 
 			InternalCreateSCCompositeMatrix(_interaction, n, tmp);
 		}
+		else if (_interaction->Type() == InteractionType::Strain)
+		{
+			auto spins1 = _interaction->Group1();
+			arma::cx_mat Sx;
+			arma::cx_mat Sy;
+			arma::cx_mat Sz;
+			// Fill the matrix with the sum of all the interactions
+			for (auto i = spins1.cbegin(); i != spins1.cend(); i++)
+			{
+				// Obtain the magnetic moment operators within the Hilbert space
+				double divider = 1.0;
+				if (_interaction->IgnoreTensors())
+				{
+					this->CreateOperator(arma::conv_to<arma::cx_mat>::from((*i)->Sx()), (*i), Sx);
+					this->CreateOperator(arma::conv_to<arma::cx_mat>::from((*i)->Sy()), (*i), Sy);
+					this->CreateOperator(arma::conv_to<arma::cx_mat>::from((*i)->Sz()), (*i), Sz);
+
+				}
+				else
+				{
+					this->CreateOperator(arma::conv_to<arma::cx_mat>::from((*i)->Tx()), (*i), Sx);
+					this->CreateOperator(arma::conv_to<arma::cx_mat>::from((*i)->Ty()), (*i), Sy);
+					this->CreateOperator(arma::conv_to<arma::cx_mat>::from((*i)->Tz()), (*i), Sz);
+					divider = 1.0  / (*i)->GetTensor().Isotropic();
+				}
+				
+				auto A = ATensor->LabFrame();
+				double Ex = A(0, 0);
+				double Ey = A(1,1);
+				double Ez = A(2,2);
+
+				double D_parallel = _interaction->Strain_Succeptability()[0];
+				double D_perpendicular = _interaction->Strain_Succeptability()[1];
+				double D_off_diagonal = _interaction->Strain_Succeptability()[2];
+				
+				auto AntiCommutator = [](arma::cx_mat A, arma::cx_mat B) {
+					return (A * B) + (B * A);
+				};
+
+				{
+					arma::cx_mat H_parallel = D_parallel * Ez * (Sz * Sz) * divider;
+					arma::cx_mat H_perpendicular = D_perpendicular * (((Sx * Sx) - (Sy * Sy)) * Ex * divider + AntiCommutator(Sx, Sy) * Ey * divider);
+					arma::cx_mat H_off_diagonal = D_off_diagonal * (AntiCommutator(Sx, Sz) * Ex * divider + AntiCommutator(Sy, Sz) * Ey * divider);
+					tmp += H_parallel + H_perpendicular + H_off_diagonal;
+				}
+
+			}
+		}
 		else
 		{
 			// The interaction type was not recognized
@@ -290,7 +338,7 @@ namespace SpinAPI
 		}
 
 		// Multiply by the isotropic value, if the tensor was isotropic
-		if (ATensor != nullptr && IsIsotropic(*ATensor))
+		if (ATensor != nullptr && IsIsotropic(*ATensor) && _interaction->Type() != InteractionType::Strain)
 			tmp *= ATensor->Isotropic();
 
 		// Multiply with the given prefactor (or 1.0 if none was specified)
@@ -325,6 +373,7 @@ namespace SpinAPI
 		{
 			// We already have the result in the Hilbert space
 			_out = tmp;
+
 		}
 
 		return true;
@@ -605,6 +654,55 @@ namespace SpinAPI
 
 			InternalCreateSCCompositeMatrix(_interaction, n, tmp);
 		}
+		else if (_interaction->Type() == InteractionType::Strain)
+		{
+			auto spins1 = _interaction->Group1();
+			arma::sp_cx_mat Sx;
+			arma::sp_cx_mat Sy;
+			arma::sp_cx_mat Sz;
+			// Fill the matrix with the sum of all the interactions
+			for (auto i = spins1.cbegin(); i != spins1.cend(); i++)
+			{
+				// Obtain the magnetic moment operators within the Hilbert space
+				double divider = 1.0;
+				if (_interaction->IgnoreTensors())
+				{
+					this->CreateOperator((*i)->Sx(), (*i), Sx);
+					this->CreateOperator((*i)->Sy(), (*i), Sy);
+					this->CreateOperator((*i)->Sz(), (*i), Sz);
+
+				}
+				else
+				{
+					this->CreateOperator((*i)->Tx(), (*i), Sx);
+					this->CreateOperator((*i)->Ty(), (*i), Sy);
+					this->CreateOperator((*i)->Tz(), (*i), Sz);
+					divider = 1.0 / (*i)->GetTensor().Isotropic();
+				}
+
+				auto A = ATensor->LabFrame();
+				double Ex = A(0, 0);
+				double Ey = A(1,1);
+				double Ez = A(2,2);
+
+				double D_parallel = _interaction->Strain_Succeptability()[0];
+				double D_perpendicular = _interaction->Strain_Succeptability()[1];
+				double D_off_diagonal = _interaction->Strain_Succeptability()[2];
+				
+				auto AntiCommutator = [](arma::sp_cx_mat A, arma::sp_cx_mat B) {
+					arma::sp_cx_mat abba = A*B + B*A;
+					return abba;
+				};
+
+				{
+					arma::sp_cx_mat H_parallel = D_parallel * Ez * (Sz * Sz) * divider;
+					arma::sp_cx_mat H_perpendicular = D_perpendicular * (((Sx * Sx) - (Sy * Sy)) * Ex * divider + AntiCommutator(Sx, Sy) * Ey * divider);
+					arma::sp_cx_mat H_off_diagonal = D_off_diagonal * (AntiCommutator(Sx, Sz) * Ex * divider + AntiCommutator(Sy, Sz) * Ey * divider);
+					tmp += H_parallel + H_perpendicular + H_off_diagonal;
+				}
+
+			}
+		}
 		else
 		{
 			// The interaction type was not recognized
@@ -612,7 +710,7 @@ namespace SpinAPI
 		}
 
 		// Multiply by the isotropic value, if the tensor was isotropic
-		if (ATensor != nullptr && IsIsotropic(*ATensor))
+		if (ATensor != nullptr && IsIsotropic(*ATensor) && _interaction->Type() != InteractionType::Strain)
 			tmp *= ATensor->Isotropic();
 
 		// Multiply with the given prefactor (or 1.0 if none was specified)

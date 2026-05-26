@@ -26,7 +26,7 @@ namespace SpinAPI
 																		 trjHasTime(false), trjHasField(false), trjHasTensor(false), trjHasPrefactor(false), trjTime(0), trjFieldX(0), trjFieldY(0), trjFieldZ(0), trjPrefactor(0),
 																		 tdFrequency(1.0), tdPhase(0.0), tdAxis("0 0 1"), tdPerpendicularOscillation(false), tdInitialField({0, 0, 0}), tensorType(InteractionTensorType::Static), tdTimestep(0),
 																		 tdInitialTensor(3, 3, arma::fill::zeros), tdMinFreq(0.0), tdMaxFreq(0.0), tdFreqs(), tdAmps(), tdPhases(), tdComponents(0), tdRandOrients(false), tdThetas(), tdPhis(), tdCorrTime(0.0),
-																		 tdPrintTensor(false), tdPrintField(false), hffield(), orientations(0), OriWeights(), BondLengths(), Spacing(), tau(0.0), dist(), tdSeed(0), tdAutoseed(false), tdGenerator(1), framelist({0, 0, 0}), f()
+																		 tdPrintTensor(false), tdPrintField(false), hffield(), orientations(0), OriWeights(), BondLengths(), Spacing(), tau(0.0), dist(), tdSeed(0), tdAutoseed(false), tdGenerator(1), framelist({0, 0, 0}), f(), tdPhaseDrift(false), RWDiffusionCoefficient(0.0)
 	{
 		// Is a trajectory specified?
 		std::string str;
@@ -313,6 +313,119 @@ namespace SpinAPI
 					double exp1 = -0.25 * this->tau;
 					this->f = FreelyJointedPolymerD(prefactor, exp1);
 				}
+			}
+			else if(str.compare("strain") == 0)
+			{
+				this->type = InteractionType::Strain;
+				std::vector<double> E;
+				this->Properties()->GetList("e", E, ' ');
+				if (E.size() == 1)
+				{
+					double temp_E = E[0];
+					E = {temp_E, temp_E, temp_E};
+				}
+				else if (E.size() != 3)
+				{
+					std::cerr << "Error: E array must contain either 1 or 3 comma-separated values like 'E = Eiso;' or 'E = Ex, Ey, Ez;'. " << std::endl;
+				}
+				this->strain_components = E;
+
+				std::vector<double> D; //strain succeptibility components - {D_||, D_⊥, D_⊥'}
+				this->Properties()->GetList("d", D, ' ');
+				if (D.size() == 1)
+				{
+					double temp_D = D[0];
+					D = {temp_D, temp_D, temp_D}; 
+				}
+				else if (D.size() != 3)
+				{
+					std::cerr << "Error: D array must contain either 1 or 3 comma-separated values like 'D = Diso;' or 'D = Dx, Dy, Dz;'. " << std::endl;
+				}
+				this->strain_succeptability = D;
+
+				arma::mat inTensor = arma::zeros<arma::mat>(3, 3);
+				inTensor(0,0) = this->strain_components[0];
+				inTensor(1,1) = this->strain_components[1];
+				inTensor(2,2) = this->strain_components[2];
+
+				if (this->properties->Get("tensortype", str))
+				{
+					this->tdInitialTensor = inTensor;
+					// some tensortypes require a seed to be specified for random number generation
+					if (str.compare("broadband") == 0 || str.compare("ougeneral") == 0)
+					{
+						// Random Number Generator Preparation
+						std::random_device rand_dev;						 // random number generator
+						this->tdGenerator.seed(rand_dev());					 // automatic seed
+						this->properties->Get("autoseed", this->tdAutoseed); // seed can also be specified by the user
+						if (!this->tdAutoseed)
+						{
+							std::cout << "Autoseed is off." << std::endl;
+							this->properties->Get("seed", this->tdSeed);
+							if (this->tdSeed != 0)
+							{
+								this->tdGenerator.seed(this->tdSeed);
+								std::cout << "Seed number is " << this->tdSeed << "." << std::endl;
+							}
+							else
+							{
+								std::cout << "# ERROR: undefined seed number in Interaction " << this->Name() << ". Setting to default of 1." << std::endl;
+								this->tdSeed = 1;
+							}
+						}
+					}
+					if (str.compare("monochromatic") == 0)
+					{
+						this->tensorType = InteractionTensorType::Monochromatic;
+						this->properties->Get("frequency", this->tdFrequency);
+						this->properties->Get("phase", this->tdPhase);
+						this->properties->Get("printtensor", this->tdPrintTensor);
+					}
+					else if (str.compare("broadband") == 0)
+					{
+						this->tensorType = InteractionTensorType::Broadband;
+						this->properties->Get("minfreq", this->tdMinFreq);
+						this->properties->Get("maxfreq", this->tdMaxFreq);
+						this->properties->Get("components", this->tdComponents);
+						this->properties->Get("printtensor", this->tdPrintTensor);
+						double rwd;
+						if(this->properties->Get("rwdcoeff", rwd))
+						{
+							this->RWDiffusionCoefficient = rwd;
+						}
+						else
+						{
+							this->RWDiffusionCoefficient = 1;
+						}
+						
+						// define all the distributions for broadband noise and fill out vectors
+						std::normal_distribution<double> amp_dist(0.0, 1.0);
+						std::uniform_real_distribution<double> phase_dist(0, 2.0 * M_PI);
+						std::uniform_real_distribution<double> freq_dist(this->tdMinFreq, this->tdMaxFreq);
+						
+						this->tdAmps.set_size(this->tdComponents, 6);
+						this->tdFreqs.set_size(this->tdComponents, 6);
+						this->tdPhases.set_size(this->tdComponents, 6);
+						this->tdPhaseDrift = true;
+						this->RWDiffusionCoefficient = 10;
+						
+						// generate all the required random numbers for the 6 unique tensor components
+						for (int j_tens = 0; j_tens < 6; j_tens++)
+						{
+							for (int i_comp = 0; i_comp < this->tdComponents; i_comp++)
+							{
+								double phase = phase_dist(this->tdGenerator);
+								double freq = freq_dist(this->tdGenerator);
+								double amp = amp_dist(this->tdGenerator);
+							
+								this->tdPhases(i_comp, j_tens) = phase;
+								this->tdFreqs(i_comp, j_tens) = freq;
+								this->tdAmps(i_comp, j_tens) = amp;
+							}
+						}
+					}
+				}
+				this->couplingTensor = std::make_shared<Tensor>(inTensor);
 			}
 		}
 
@@ -716,7 +829,7 @@ namespace SpinAPI
 																tdComponents(_interaction.tdComponents), tdRandOrients(_interaction.tdRandOrients), tdThetas(_interaction.tdThetas), tdPhis(_interaction.tdPhis), tdCorrTime(_interaction.tdCorrTime),
 																tdPrintTensor(_interaction.tdPrintTensor), tdPrintField(_interaction.tdPrintField), hffield(_interaction.hffield), orientations(_interaction.orientations),
 																OriWeights(_interaction.OriWeights), BondLengths(_interaction.BondLengths), Spacing(_interaction.Spacing), tau(_interaction.tau), dist(_interaction.dist),
-																tdSeed(_interaction.tdSeed), tdAutoseed(_interaction.tdAutoseed), tdGenerator(_interaction.tdGenerator), framelist(_interaction.framelist), f(_interaction.f)
+																tdSeed(_interaction.tdSeed), tdAutoseed(_interaction.tdAutoseed), tdGenerator(_interaction.tdGenerator), framelist(_interaction.framelist), f(_interaction.f), strain_components(_interaction.strain_components), strain_succeptability(_interaction.strain_succeptability), tdPhaseDrift(_interaction.tdPhaseDrift), RWDiffusionCoefficient(_interaction.RWDiffusionCoefficient)
 
 	{
 	}
@@ -738,6 +851,8 @@ namespace SpinAPI
 		this->hffield = _interaction.hffield;
 		this->orientations = _interaction.orientations;
 		this->BondLengths = _interaction.BondLengths;
+		this->strain_components = _interaction.strain_components;
+		this->strain_succeptability = _interaction.strain_succeptability;
 		this->tau = _interaction.tau;
 		this->OriWeights = _interaction.OriWeights;
 		this->Spacing = _interaction.Spacing;
@@ -783,6 +898,8 @@ namespace SpinAPI
 		this->tdAutoseed = _interaction.tdAutoseed;
 		this->tdGenerator = _interaction.tdGenerator;
 		this->framelist = _interaction.framelist;
+		this->tdPhaseDrift = _interaction.tdPhaseDrift;
+		this->RWDiffusionCoefficient = _interaction.RWDiffusionCoefficient;
 
 		return (*this);
 	}
@@ -812,6 +929,8 @@ namespace SpinAPI
 		else if (this->type == InteractionType::Zfs && !this->group1.empty())
 			return true;
 		else if (this->type == InteractionType::SemiClassicalField && !this->group1.empty() && !this->hffield.empty())
+			return true;
+		else if (this->type == InteractionType::Strain && !this->group1.empty() && !this->strain_components.empty() && !this->strain_succeptability.empty())
 			return true;
 
 		return false;
@@ -1072,7 +1191,7 @@ namespace SpinAPI
 	{
 		bool createdSpinLists = false;
 
-		if (this->type == InteractionType::SingleSpin || this->type == InteractionType::Zfs || this->type == InteractionType::SemiClassicalField || this->type == InteractionType::QuadraticSpin)
+		if (this->type == InteractionType::SingleSpin || this->type == InteractionType::Zfs || this->type == InteractionType::SemiClassicalField || this->type == InteractionType::QuadraticSpin || this->type == InteractionType::Strain)
 		{
 			// Attempt to get a list of spins from the input file
 			std::string str;
@@ -1335,6 +1454,44 @@ namespace SpinAPI
 					scalars.push_back(RunSection::NamedActionScalar(_system + "." + this->Name() + ".phase", phaseScalar));
 				}
 			}
+
+			if(this->type == InteractionType::Strain)
+			{
+				RunSection::ActionScalar ex = RunSection::ActionScalar(this->strain_components[0], nullptr);
+				scalars.push_back(RunSection::NamedActionScalar(_system + "." + this->Name() + ".ex", ex));
+				RunSection::ActionScalar ey = RunSection::ActionScalar(this->strain_components[1], nullptr);
+				scalars.push_back(RunSection::NamedActionScalar(_system + "." + this->Name() + ".ey", ey));
+				RunSection::ActionScalar ez = RunSection::ActionScalar(this->strain_components[2], nullptr);
+				scalars.push_back(RunSection::NamedActionScalar(_system + "." + this->Name() + ".ez", ez));
+
+				RunSection::ActionScalar d1 = RunSection::ActionScalar(this->strain_succeptability[0], nullptr);
+				scalars.push_back(RunSection::NamedActionScalar(_system + "." + this->Name() + ".d1", d1));
+				RunSection::ActionScalar d2 = RunSection::ActionScalar(this->strain_succeptability[1], nullptr);
+				scalars.push_back(RunSection::NamedActionScalar(_system + "." + this->Name() + ".d2", d2));
+				RunSection::ActionScalar d3 = RunSection::ActionScalar(this->strain_succeptability[2], nullptr);
+				scalars.push_back(RunSection::NamedActionScalar(_system + "." + this->Name() + ".d3", d3));
+
+
+				if(this->tensorType == InteractionTensorType::Monochromatic)
+				{
+					RunSection::ActionScalar frequencyScalar = RunSection::ActionScalar(this->tdFrequency, nullptr);
+					scalars.push_back(RunSection::NamedActionScalar(_system + "." + this->Name() + ".frequency", frequencyScalar));
+
+					RunSection::ActionScalar phaseScalar = RunSection::ActionScalar(this->tdPhase, nullptr);
+					scalars.push_back(RunSection::NamedActionScalar(_system + "." + this->Name() + ".phase", phaseScalar));
+				}
+				if(this->tensorType == InteractionTensorType::Broadband)
+				{
+					RunSection::ActionScalar minfrequencyScalar = RunSection::ActionScalar(this->tdMinFreq, nullptr);
+					scalars.push_back(RunSection::NamedActionScalar(_system + "." + this->Name() + ".minfreq", minfrequencyScalar));
+
+					RunSection::ActionScalar maxfrequencyScalar = RunSection::ActionScalar(this->tdMaxFreq, nullptr);
+					scalars.push_back(RunSection::NamedActionScalar(_system + "." + this->Name() + ".maxfreq", maxfrequencyScalar));
+
+					RunSection::ActionScalar RWDiffusionCoefficientScalar = RunSection::ActionScalar(this->RWDiffusionCoefficient, nullptr);
+					scalars.push_back(RunSection::NamedActionScalar(_system + "." + this->Name() + ".rwdcoeff", RWDiffusionCoefficientScalar));
+				}
+			}
 		}
 
 		return scalars;
@@ -1374,6 +1531,7 @@ namespace SpinAPI
 	}
 
 	// Applies broadband noise to the specified tensor components
+	static double previous_time = 0.0;
 	void Interaction::TensorTimeDependenceBroadband(arma::mat _m, double _time, arma::mat _freqs, arma::mat _amps, arma::mat _phases, int _comps)
 	{
 
@@ -1391,6 +1549,22 @@ namespace SpinAPI
 		// loop through all of the noise components to generate independent noise for each tensor component
 		if (_comps > 0)
 		{
+			if(tdPhaseDrift)
+			{
+				static std::default_random_engine phase_generator;
+				double dt = _time - previous_time;
+				std::normal_distribution<double> dist(0.0, std::sqrt(2.0 * RWDiffusionCoefficient * dt));
+				for (int j_tens = 0; j_tens < 6; j_tens++)
+				{
+					for (int comp = 0; comp < _comps; comp++)
+					{
+						_phases(comp, j_tens) += dist(phase_generator);
+						//std::cout << _phases(comp, j_tens) << " , ";
+					}
+					//std::cout << std::endl;
+				}
+				//td::cout << "\n" << std::endl;
+			}			
 			for (int j_tens = 0; j_tens < 6; j_tens++)
 			{
 				for (int comp = 0; comp < _comps; comp++)
