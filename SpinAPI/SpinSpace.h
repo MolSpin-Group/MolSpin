@@ -326,6 +326,18 @@ namespace SpinAPI
 		bool RelaxationOperatorFrameChange(const operator_ptr &_operator, arma::cx_mat _rotationmatrix, arma::cx_mat &_out) const;
 		bool RelaxationOperatorFrameChange(const operator_ptr &_operator, arma::cx_mat _rotationmatrix, arma::sp_cx_mat &_out) const;
 		bool RelaxationOperatorFrameChange(const operator_ptr &_operator, arma::sp_cx_mat _rotationmatrix, arma::sp_cx_mat &_out) const;
+		// Powder tasks need two rotations: a spatial powder-frame rotation of
+		// Cartesian relaxation axes, followed by the usual Hilbert-basis change.
+		bool RelaxationOperatorFrameChangeRotated(const operator_ptr &_operator, arma::cx_mat _rotationmatrix, arma::mat _spatialrotation, arma::cx_mat &_out) const;
+		bool RelaxationOperatorFrameChangeRotated(const operator_ptr &_operator, arma::cx_mat _rotationmatrix, arma::mat _spatialrotation, arma::sp_cx_mat &_out) const;
+		// Powder relaxation helper: construct every supported relaxation operator
+		// in the orientation-specific H0 eigenbasis after applying the spatial
+		// powder rotation. The second overload transforms that eigenbasis
+		// superoperator back to the current propagation basis.
+		bool PowderRelaxationOperatorEigenbasis(const operator_ptr &_operator, arma::cx_mat _eigenvectors, arma::mat _spatialrotation, arma::cx_mat &_out) const;
+		bool PowderRelaxationOperatorEigenbasis(const operator_ptr &_operator, arma::cx_mat _eigenvectors, arma::mat _spatialrotation, arma::sp_cx_mat &_out) const;
+		bool PowderRelaxationOperator(const operator_ptr &_operator, arma::cx_mat _eigenvectors, arma::mat _spatialrotation, arma::cx_mat &_out) const;
+		bool PowderRelaxationOperator(const operator_ptr &_operator, arma::cx_mat _eigenvectors, arma::mat _spatialrotation, arma::sp_cx_mat &_out) const;
 
 		// ------------------------------------------------
 		// Pulse operators (SpinSpace_pulses.cpp)
@@ -366,6 +378,18 @@ namespace SpinAPI
 		bool InternalCreateSCCompositeMatrix(const SpinAPI::interaction_ptr&, int, arma::sp_cx_mat&) const;
 		bool InternalCreateSCCompositeMatrix(const SpinAPI::interaction_ptr&, int, arma::cx_mat&) const;
 		bool SCSupportedTasks(int tasknum) const; //refer to BasicTask.cpp for tasknum conversion 
+		bool CreateSpinOperatorTriplet(const spin_ptr &_spin, arma::cx_mat &_Sx, arma::cx_mat &_Sy, arma::cx_mat &_Sz) const;
+		bool CreateSpinOperatorTriplet(const spin_ptr &_spin, arma::sp_cx_mat &_Sx, arma::sp_cx_mat &_Sy, arma::sp_cx_mat &_Sz) const;
+		template <typename MatrixType>
+		bool RotateCartesianOperatorTriplet(const arma::mat &_spatialrotation, MatrixType &_Sx, MatrixType &_Sy, MatrixType &_Sz) const;
+		template <typename MatrixType>
+		void TransformOperatorToBasis(const arma::cx_mat &_basisrotation, MatrixType &_operator) const;
+		template <typename MatrixType>
+		bool CreateRotatedSpinTripletInBasis(const spin_ptr &_spin, const arma::cx_mat &_basisrotation, const arma::mat &_spatialrotation, MatrixType &_Sx, MatrixType &_Sy, MatrixType &_Sz) const;
+		template <typename MatrixType>
+		bool CreateRotatedSpinPlusMinusInBasis(const spin_ptr &_spin, const arma::cx_mat &_basisrotation, const arma::mat &_spatialrotation, MatrixType &_Splus, MatrixType &_Sminus) const;
+		template <typename MatrixType>
+		bool RelaxationOperatorFrameChangeRotatedInternal(const operator_ptr &_operator, const arma::cx_mat &_basisrotation, const arma::mat &_spatialrotation, MatrixType &_out) const;
 
 	};
 

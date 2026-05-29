@@ -101,6 +101,367 @@ namespace SpinAPI
 		return true;
 	}
 
+	bool TransformSuperoperatorFromEigenbasis(const SpinSpace &_space, const arma::cx_mat &_eigenvectors, const arma::sp_cx_mat &_superoperatorEigenbasis, arma::sp_cx_mat &_out)
+	{
+		// Powder spectra propagate in the lab basis, but relaxation is defined
+		// in the orientation-specific Hamiltonian eigenbasis. This converts the
+		// relaxation superoperator back without reimplementing the superspace
+		// vectorization convention here.
+		if (_eigenvectors.n_rows != _eigenvectors.n_cols)
+			return false;
+		if (_superoperatorEigenbasis.n_rows != _superoperatorEigenbasis.n_cols)
+			return false;
+		if (_superoperatorEigenbasis.n_rows != _eigenvectors.n_rows * _eigenvectors.n_rows)
+			return false;
+
+		arma::cx_mat eigenvectors = _eigenvectors;
+		arma::cx_mat eigenvectorsDag = eigenvectors.t();
+		arma::cx_mat fromEigenbasis;
+		arma::cx_mat toEigenbasis;
+		if (!_space.SuperoperatorFromOperators(eigenvectors, eigenvectorsDag, fromEigenbasis) ||
+			!_space.SuperoperatorFromOperators(eigenvectorsDag, eigenvectors, toEigenbasis))
+		{
+			return false;
+		}
+
+		_out = arma::sp_cx_mat(fromEigenbasis) * _superoperatorEigenbasis * arma::sp_cx_mat(toEigenbasis);
+		return true;
+	}
+
+	template <typename MatrixType>
+	bool AddLindbladDissipator(const SpinSpace &_space, const MatrixType &_jump, const MatrixType &_jumpDagger, double _rate, MatrixType &_out)
+	{
+		if (_rate == 0.0)
+			return true;
+
+		MatrixType PB;
+		MatrixType PL;
+		MatrixType PR;
+		const MatrixType jumpDaggerJump = _jumpDagger * _jump;
+		if (!_space.SuperoperatorFromOperators(_jump, _jumpDagger, PB) ||
+			!_space.SuperoperatorFromLeftOperator(jumpDaggerJump, PL) ||
+			!_space.SuperoperatorFromRightOperator(jumpDaggerJump, PR))
+		{
+			return false;
+		}
+
+		_out += _rate * (PB - (PL + PR) / 2.0);
+		return true;
+	}
+
+	bool SpinSpace::CreateSpinOperatorTriplet(const spin_ptr &_spin, arma::cx_mat &_Sx, arma::cx_mat &_Sy, arma::cx_mat &_Sz) const
+	{
+		return this->CreateOperator(arma::conv_to<arma::cx_mat>::from(_spin->Sx()), _spin, _Sx) &&
+			   this->CreateOperator(arma::conv_to<arma::cx_mat>::from(_spin->Sy()), _spin, _Sy) &&
+			   this->CreateOperator(arma::conv_to<arma::cx_mat>::from(_spin->Sz()), _spin, _Sz);
+	}
+
+	bool SpinSpace::CreateSpinOperatorTriplet(const spin_ptr &_spin, arma::sp_cx_mat &_Sx, arma::sp_cx_mat &_Sy, arma::sp_cx_mat &_Sz) const
+	{
+		return this->CreateOperator(_spin->Sx(), _spin, _Sx) &&
+			   this->CreateOperator(_spin->Sy(), _spin, _Sy) &&
+			   this->CreateOperator(_spin->Sz(), _spin, _Sz);
+	}
+
+	template <typename MatrixType>
+	bool SpinSpace::RotateCartesianOperatorTriplet(const arma::mat &_spatialrotation, MatrixType &_Sx, MatrixType &_Sy, MatrixType &_Sz) const
+	{
+		if (_spatialrotation.n_rows != 3 || _spatialrotation.n_cols != 3)
+			return false;
+
+		std::vector<MatrixType> original = {_Sx, _Sy, _Sz};
+		std::vector<MatrixType> rotated(3);
+		for (unsigned int axis = 0; axis < 3; ++axis)
+		{
+			rotated[axis].zeros(original[0].n_rows, original[0].n_cols);
+			for (unsigned int lab_axis = 0; lab_axis < 3; ++lab_axis)
+			{
+				rotated[axis] += _spatialrotation(lab_axis, axis) * original[lab_axis];
+			}
+		}
+
+		_Sx = rotated[0];
+		_Sy = rotated[1];
+		_Sz = rotated[2];
+		return true;
+	}
+
+	template <typename MatrixType>
+	void SpinSpace::TransformOperatorToBasis(const arma::cx_mat &_basisrotation, MatrixType &_operator) const
+	{
+		_operator = _basisrotation.t() * _operator * _basisrotation;
+	}
+
+	template <typename MatrixType>
+	bool SpinSpace::CreateRotatedSpinTripletInBasis(const spin_ptr &_spin, const arma::cx_mat &_basisrotation, const arma::mat &_spatialrotation, MatrixType &_Sx, MatrixType &_Sy, MatrixType &_Sz) const
+	{
+		if (!this->CreateSpinOperatorTriplet(_spin, _Sx, _Sy, _Sz))
+			return false;
+
+		// Spatial powder rotation is applied before the Hilbert-basis
+		// transformation. This treats anisotropic Lindblad/T1/T2 axes as
+		// molecular-frame axes for the current powder orientation.
+		if (!this->RotateCartesianOperatorTriplet(_spatialrotation, _Sx, _Sy, _Sz))
+			return false;
+
+		this->TransformOperatorToBasis(_basisrotation, _Sx);
+		this->TransformOperatorToBasis(_basisrotation, _Sy);
+		this->TransformOperatorToBasis(_basisrotation, _Sz);
+		return true;
+	}
+
+	template <typename MatrixType>
+	bool SpinSpace::CreateRotatedSpinPlusMinusInBasis(const spin_ptr &_spin, const arma::cx_mat &_basisrotation, const arma::mat &_spatialrotation, MatrixType &_Splus, MatrixType &_Sminus) const
+	{
+		MatrixType Sx;
+		MatrixType Sy;
+		MatrixType Sz;
+		if (!this->CreateRotatedSpinTripletInBasis(_spin, _basisrotation, _spatialrotation, Sx, Sy, Sz))
+			return false;
+
+		const arma::cx_double im(0.0, 1.0);
+		_Splus = Sx + im * Sy;
+		_Sminus = Sx - im * Sy;
+		return true;
+	}
+
+	template <typename MatrixType>
+	bool SpinSpace::RelaxationOperatorFrameChangeRotatedInternal(const operator_ptr &_operator, const arma::cx_mat &_basisrotation, const arma::mat &_spatialrotation, MatrixType &_out) const
+	{
+		if (_operator->Type() == OperatorType::RelaxationLindblad)
+		{
+			auto spins = _operator->Spins();
+
+			MatrixType Sx;
+			MatrixType Sy;
+			MatrixType Sz;
+			MatrixType P;
+			MatrixType PB;
+			MatrixType PL;
+			MatrixType PR;
+			P.zeros(this->SpaceDimensions(), this->SpaceDimensions());
+
+			for (auto i = spins.cbegin(); i != spins.cend(); i++)
+			{
+				if (!this->Contains(*i))
+					continue;
+
+				if (!this->CreateRotatedSpinTripletInBasis((*i), _basisrotation, _spatialrotation, Sx, Sy, Sz))
+					return false;
+
+				if (!this->SuperoperatorFromOperators(Sx, Sx.t(), PB) || !this->SuperoperatorFromLeftOperator(Sx.t() * Sx, PL) || !this->SuperoperatorFromRightOperator(Sx.t() * Sx, PR))
+					return false;
+				P += (PB - (PL + PR) / 2.0) * _operator->Rate1();
+
+				if (!this->SuperoperatorFromOperators(Sy, Sy.t(), PB) || !this->SuperoperatorFromLeftOperator(Sy.t() * Sy, PL) || !this->SuperoperatorFromRightOperator(Sy.t() * Sy, PR))
+					return false;
+				P += (PB - (PL + PR) / 2.0) * _operator->Rate2();
+
+				if (!this->SuperoperatorFromOperators(Sz, Sz.t(), PB) || !this->SuperoperatorFromLeftOperator(Sz.t() * Sz, PL) || !this->SuperoperatorFromRightOperator(Sz.t() * Sz, PR))
+					return false;
+				P += (PB - (PL + PR) / 2.0) * _operator->Rate3();
+			}
+
+			_out = P;
+		}
+		else if (_operator->Type() == OperatorType::RelaxationLindbladDoubleSpin)
+		{
+			auto spins = _operator->Spins();
+			std::vector<MatrixType> Sp_operators;
+			std::vector<MatrixType> Sm_operators;
+
+			for (auto i = spins.cbegin(); i != spins.cend(); i++)
+			{
+				if (!this->Contains(*i))
+					continue;
+
+				MatrixType Sptmp;
+				MatrixType Smtmp;
+				if (!this->CreateRotatedSpinPlusMinusInBasis((*i), _basisrotation, _spatialrotation, Sptmp, Smtmp))
+					return false;
+
+				Sp_operators.push_back(Sptmp);
+				Sm_operators.push_back(Smtmp);
+			}
+
+			MatrixType P;
+			MatrixType PB;
+			MatrixType PL;
+			MatrixType PR;
+			P.zeros(this->SpaceDimensions(), this->SpaceDimensions());
+
+			for (size_t it1 = 0; it1 < Sp_operators.size(); ++it1)
+			{
+				for (size_t it2 = 0; it2 < Sp_operators.size(); ++it2)
+				{
+					if (it1 == it2)
+						continue;
+
+					MatrixType L_minus = Sm_operators[it1] * Sp_operators[it2];
+					MatrixType L_plus = Sp_operators[it1] * Sm_operators[it2];
+
+					if (!this->SuperoperatorFromOperators(L_minus, L_minus.t(), PB) || !this->SuperoperatorFromLeftOperator(L_minus.t() * L_minus, PL) || !this->SuperoperatorFromRightOperator(L_minus.t() * L_minus, PR))
+						return false;
+					P += (PB - (PL + PR) / 2.0) * _operator->Rate1();
+
+					if (!this->SuperoperatorFromOperators(L_plus, L_plus.t(), PB) || !this->SuperoperatorFromLeftOperator(L_plus.t() * L_plus, PL) || !this->SuperoperatorFromRightOperator(L_plus.t() * L_plus, PR))
+						return false;
+					P += (PB - (PL + PR) / 2.0) * _operator->Rate1();
+				}
+			}
+
+			_out = P;
+		}
+		else if (_operator->Type() == OperatorType::RelaxationDephasing)
+		{
+			auto spins = _operator->Spins();
+
+			std::vector<MatrixType> Sx_operators;
+			std::vector<MatrixType> Sy_operators;
+			std::vector<MatrixType> Sz_operators;
+
+			for (auto i = spins.cbegin(); i != spins.cend(); i++)
+			{
+				if (!this->Contains(*i))
+					continue;
+
+				MatrixType Sxtmp;
+				MatrixType Sytmp;
+				MatrixType Sztmp;
+				if (!this->CreateRotatedSpinTripletInBasis((*i), _basisrotation, _spatialrotation, Sxtmp, Sytmp, Sztmp))
+					return false;
+
+				Sx_operators.push_back(Sxtmp);
+				Sy_operators.push_back(Sytmp);
+				Sz_operators.push_back(Sztmp);
+			}
+
+			if (Sx_operators.size() < 2)
+				return false;
+
+			MatrixType E;
+			E.eye(Sx_operators[0].n_rows, Sx_operators[0].n_cols);
+			MatrixType Psinglet = (1.0 / 4.0) * E - (Sx_operators[0] * Sx_operators[1] + Sy_operators[0] * Sy_operators[1] + Sz_operators[0] * Sz_operators[1]);
+			MatrixType Ptriplet = E - Psinglet;
+
+			MatrixType PLsinglet;
+			MatrixType PRsinglet;
+			MatrixType PLtriplet;
+			MatrixType PRtriplet;
+			if (!this->SuperoperatorFromLeftOperator(Psinglet, PLsinglet) || !this->SuperoperatorFromLeftOperator(Ptriplet, PLtriplet) || !this->SuperoperatorFromRightOperator(Psinglet, PRsinglet) || !this->SuperoperatorFromRightOperator(Ptriplet, PRtriplet))
+				return false;
+
+			_out = -1.0 * _operator->Rate1() * (PLsinglet * PRtriplet + PLtriplet * PRsinglet);
+		}
+		else if (_operator->Type() == OperatorType::RelaxationRandomFields)
+		{
+			auto spins = _operator->Spins();
+
+			MatrixType Sx;
+			MatrixType Sy;
+			MatrixType Sz;
+			MatrixType P;
+			MatrixType E;
+			MatrixType PB;
+			P.zeros(this->SpaceDimensions(), this->SpaceDimensions());
+			E.eye(this->SpaceDimensions(), this->SpaceDimensions());
+
+			for (auto i = spins.cbegin(); i != spins.cend(); i++)
+			{
+				if (!this->Contains(*i))
+					continue;
+
+				if (!this->CreateRotatedSpinTripletInBasis((*i), _basisrotation, _spatialrotation, Sx, Sy, Sz))
+					return false;
+
+				if (!this->SuperoperatorFromOperators(Sx, Sx.t(), PB))
+					return false;
+				P += -1.0 * _operator->Rate1() * (E - PB);
+
+				if (!this->SuperoperatorFromOperators(Sy, Sy.t(), PB))
+					return false;
+				P += -1.0 * _operator->Rate2() * (E - PB);
+
+				if (!this->SuperoperatorFromOperators(Sz, Sz.t(), PB))
+					return false;
+				P += -1.0 * _operator->Rate3() * (E - PB);
+			}
+
+			_out = P;
+		}
+		else if (_operator->Type() == OperatorType::RelaxationT1)
+		{
+			auto spins = _operator->Spins();
+
+			MatrixType P;
+			MatrixType S_plus;
+			MatrixType S_minus;
+			P.zeros(this->SpaceDimensions(), this->SpaceDimensions());
+
+			for (auto i = spins.cbegin(); i != spins.cend(); i++)
+			{
+				if (!this->Contains(*i))
+					continue;
+
+				if (!this->CreateRotatedSpinPlusMinusInBasis((*i), _basisrotation, _spatialrotation, S_plus, S_minus))
+					return false;
+
+				const double channelRate = 0.5 * _operator->Rate1();
+				if (!AddLindbladDissipator(*this, S_plus, S_minus, channelRate, P) ||
+					!AddLindbladDissipator(*this, S_minus, S_plus, channelRate, P))
+				{
+					return false;
+				}
+			}
+
+			_out = P;
+		}
+		else if (_operator->Type() == OperatorType::RelaxationT2)
+		{
+			auto spins = _operator->Spins();
+
+			MatrixType Sx;
+			MatrixType Sy;
+			MatrixType Sz;
+			MatrixType P;
+			MatrixType PB;
+			MatrixType PL;
+			MatrixType PR;
+			P.zeros(this->SpaceDimensions(), this->SpaceDimensions());
+
+			for (auto i = spins.cbegin(); i != spins.cend(); i++)
+			{
+				if (!this->Contains(*i))
+					continue;
+
+				if (!this->CreateRotatedSpinTripletInBasis((*i), _basisrotation, _spatialrotation, Sx, Sy, Sz))
+					return false;
+
+				if (!this->SuperoperatorFromOperators(Sz, Sz.t(), PB) || !this->SuperoperatorFromLeftOperator(Sz.t() * Sz, PL) || !this->SuperoperatorFromRightOperator(Sz.t() * Sz, PR))
+					return false;
+				P += (PB - (PL + PR) / 2.0) * _operator->Rate1();
+			}
+
+			_out = P;
+		}
+		else if (_operator->Type() == OperatorType::RelaxationPhenomenological)
+		{
+			if (!PhenomenologicalRelaxationOperator(this->HilbertSpaceDimensions(), _operator->Rate1(), _operator->Rate2(), _out))
+				return false;
+		}
+		else if (_operator->Type() == OperatorType::Unspecified)
+		{
+			return false;
+		}
+		else
+		{
+			std::cout << "Cannot construct relaxation operator for Operator " << _operator->Name() << "!" << std::endl;
+			return false;
+		}
+
+		return true;
+	}
+
 	// -----------------------------------------------------
 	// Relaxation operators
 	// -----------------------------------------------------
@@ -325,9 +686,6 @@ namespace SpinAPI
 			arma::cx_mat P = arma::zeros<arma::cx_mat>(this->SpaceDimensions(), this->SpaceDimensions()); // Total operator
 			arma::cx_mat S_plus;
 			arma::cx_mat S_minus;
-			arma::cx_mat PB; // Operator from both sides (P * . * conj(P))
-			arma::cx_mat PL; // The left-hand operator (conj(P)*P * .)
-			arma::cx_mat PR; // The right-hand operator (. * conj(P)*P)
 
 			for (auto i = spins.cbegin(); i != spins.cend(); i++)
 			{
@@ -339,12 +697,12 @@ namespace SpinAPI
 				this->CreateOperator(arma::conv_to<arma::cx_mat>::from((*i)->Sp()), (*i), S_plus);
 				this->CreateOperator(arma::conv_to<arma::cx_mat>::from((*i)->Sm()), (*i), S_minus);
 
-				// Get the contribution from T1 relaxation
-				if (!this->SuperoperatorFromOperators(S_plus, S_minus.t(), PB) || !this->SuperoperatorFromLeftOperator(S_minus.t() * S_plus, PL) || !this->SuperoperatorFromRightOperator(S_minus.t() * S_plus, PR))
+				const double channelRate = 0.5 * _operator->Rate1();
+				if (!AddLindbladDissipator(*this, S_plus, S_minus, channelRate, P) ||
+					!AddLindbladDissipator(*this, S_minus, S_plus, channelRate, P))
+				{
 					return false;
-
-				// \mathcal{L}_{T1}(\rho) = \frac{1}{T1} (2S_+ \rho S_- - \{S_-S_+, \rho\})
-				P += (PB - (PL + PR) / 2.0) * _operator->Rate1();
+				}
 			}
 
 			// Set the resulting operator
@@ -626,9 +984,6 @@ namespace SpinAPI
 			arma::sp_cx_mat P = arma::zeros<arma::sp_cx_mat>(this->SpaceDimensions(), this->SpaceDimensions()); // Total operator
 			arma::sp_cx_mat S_plus;
 			arma::sp_cx_mat S_minus;
-			arma::sp_cx_mat PB; // Operator from both sides (P * . * conj(P))
-			arma::sp_cx_mat PL; // The left-hand operator (conj(P)*P * .)
-			arma::sp_cx_mat PR; // The right-hand operator (. * conj(P)*P)
 
 			for (auto i = spins.cbegin(); i != spins.cend(); i++)
 			{
@@ -640,12 +995,12 @@ namespace SpinAPI
 				this->CreateOperator((*i)->Sp(), (*i), S_plus);
 				this->CreateOperator((*i)->Sm(), (*i), S_minus);
 
-				// Get the contribution from T1 relaxation
-				if (!this->SuperoperatorFromOperators(S_plus, S_minus.t(), PB) || !this->SuperoperatorFromLeftOperator(S_minus.t() * S_plus, PL) || !this->SuperoperatorFromRightOperator(S_minus.t() * S_plus, PR))
+				const double channelRate = 0.5 * _operator->Rate1();
+				if (!AddLindbladDissipator(*this, S_plus, S_minus, channelRate, P) ||
+					!AddLindbladDissipator(*this, S_minus, S_plus, channelRate, P))
+				{
 					return false;
-
-				// \mathcal{L}_{T1}(\rho) = \frac{1}{T1} (2S_+ \rho S_- - \{S_-S_+, \rho\})
-				P += (PB - (PL + PR) / 2.0) * _operator->Rate1();
+				}
 			}
 
 			// Set the resulting operator
@@ -720,10 +1075,6 @@ namespace SpinAPI
 			term.L = L;
 			term.R = R;
 			term.M = R * L;
-			term.L_dag = term.L.st();
-			term.R_t = term.R.t();
-			term.M_t = term.M.t();
-			term.M_dag = term.M.st();
 			term.rate = rate;
 			_out.lindblad_terms.push_back(term);
 			return true;
@@ -914,7 +1265,9 @@ namespace SpinAPI
 					continue;
 				}
 
-				added = add_lindblad(Sp, Sm.t(), _operator->Rate1()) || added;
+				const double channelRate = 0.5 * _operator->Rate1();
+				added = add_lindblad(Sp, Sm, channelRate) || added;
+				added = add_lindblad(Sm, Sp, channelRate) || added;
 			}
 		}
 		else if (_operator->Type() == OperatorType::RelaxationT2)
@@ -947,9 +1300,9 @@ namespace SpinAPI
 			if (term.rate == 0.0)
 				continue;
 
-			arma::cx_mat PB = term.R_t * _rho * term.L_dag;
-			arma::cx_mat PL = _rho * term.M_dag;
-			arma::cx_mat PR = term.M_t * _rho;
+			arma::cx_mat PB = term.L * _rho * term.R;
+			arma::cx_mat PL = term.M * _rho;
+			arma::cx_mat PR = _rho * term.M;
 			_out += term.rate * (PB - 0.5 * (PL + PR));
 		}
 
@@ -1035,17 +1388,17 @@ namespace SpinAPI
 			if (term.rate == 0.0)
 				continue;
 
-			arma::cx_mat L = arma::cx_mat(term.L);
-			arma::cx_mat R = arma::cx_mat(term.R);
-			arma::cx_mat M = arma::cx_mat(term.M);
+			arma::sp_cx_mat PB;
+			arma::sp_cx_mat PL;
+			arma::sp_cx_mat PR;
+			if (!this->SuperoperatorFromOperators(term.L, term.R, PB) ||
+				!this->SuperoperatorFromLeftOperator(term.M, PL) ||
+				!this->SuperoperatorFromRightOperator(term.M, PR))
+			{
+				return false;
+			}
 
-			arma::cx_mat L_conj = arma::conj(L);
-			arma::cx_mat R_t = R.t();
-			arma::cx_mat M_conj = arma::conj(M);
-			arma::cx_mat M_t = M.t();
-
-			_out += term.rate * (arma::kron(L_conj, R_t) -
-								 0.5 * (arma::kron(M_conj, Iden) + arma::kron(Iden, M_t)));
+			_out += term.rate * arma::cx_mat(PB - 0.5 * (PL + PR));
 		}
 
 		for (const auto &term : _cache.dephasing_terms)
@@ -1104,6 +1457,100 @@ namespace SpinAPI
 	// --------------------------------------------------------------
 	// Relaxation operators when a unitary transformation is required
 	// --------------------------------------------------------------
+
+	bool SpinSpace::RelaxationOperatorFrameChangeRotated(const operator_ptr &_operator, arma::cx_mat _rotationmatrix, arma::mat _spatialrotation, arma::cx_mat &_out) const
+	{
+		if (_operator == nullptr || !_operator->IsValid())
+			return false;
+
+		if (!this->useSuperspace)
+			return false;
+
+		if (_rotationmatrix.n_rows != this->HilbertSpaceDimensions() || _rotationmatrix.n_cols != this->HilbertSpaceDimensions())
+			return false;
+
+		return this->RelaxationOperatorFrameChangeRotatedInternal(_operator, _rotationmatrix, _spatialrotation, _out);
+	}
+
+	bool SpinSpace::RelaxationOperatorFrameChangeRotated(const operator_ptr &_operator, arma::cx_mat _rotationmatrix, arma::mat _spatialrotation, arma::sp_cx_mat &_out) const
+	{
+		if (_operator == nullptr || !_operator->IsValid())
+			return false;
+
+		if (!this->useSuperspace)
+			return false;
+
+		if (_rotationmatrix.n_rows != this->HilbertSpaceDimensions() || _rotationmatrix.n_cols != this->HilbertSpaceDimensions())
+			return false;
+
+		return this->RelaxationOperatorFrameChangeRotatedInternal(_operator, _rotationmatrix, _spatialrotation, _out);
+	}
+
+	bool SpinSpace::PowderRelaxationOperatorEigenbasis(const operator_ptr &_operator, arma::cx_mat _eigenvectors, arma::mat _spatialrotation, arma::cx_mat &_out) const
+	{
+		if (_operator == nullptr || !_operator->IsValid())
+			return false;
+
+		if (!this->useSuperspace)
+			return false;
+
+		if (_eigenvectors.n_rows != this->HilbertSpaceDimensions() || _eigenvectors.n_cols != this->HilbertSpaceDimensions())
+			return false;
+
+		// Phenomenological relaxation is already defined directly in the
+		// caller-supplied Hamiltonian eigenbasis. Spin-operator relaxation is
+		// first powder-rotated in space and then represented in that same
+		// eigenbasis.
+		if (_operator->Type() == OperatorType::RelaxationPhenomenological)
+			return this->RelaxationOperatorFrameChange(_operator, _eigenvectors, _out);
+
+		return this->RelaxationOperatorFrameChangeRotated(_operator, _eigenvectors, _spatialrotation, _out);
+	}
+
+	bool SpinSpace::PowderRelaxationOperatorEigenbasis(const operator_ptr &_operator, arma::cx_mat _eigenvectors, arma::mat _spatialrotation, arma::sp_cx_mat &_out) const
+	{
+		if (_operator == nullptr || !_operator->IsValid())
+			return false;
+
+		if (!this->useSuperspace)
+			return false;
+
+		if (_eigenvectors.n_rows != this->HilbertSpaceDimensions() || _eigenvectors.n_cols != this->HilbertSpaceDimensions())
+			return false;
+
+		if (_operator->Type() == OperatorType::RelaxationPhenomenological)
+			return this->RelaxationOperatorFrameChange(_operator, _eigenvectors, _out);
+
+		return this->RelaxationOperatorFrameChangeRotated(_operator, _eigenvectors, _spatialrotation, _out);
+	}
+
+	bool SpinSpace::PowderRelaxationOperator(const operator_ptr &_operator, arma::cx_mat _eigenvectors, arma::mat _spatialrotation, arma::cx_mat &_out) const
+	{
+		arma::sp_cx_mat sparse_out;
+		if (!this->PowderRelaxationOperator(_operator, _eigenvectors, _spatialrotation, sparse_out))
+			return false;
+
+		_out = arma::cx_mat(sparse_out);
+		return true;
+	}
+
+	bool SpinSpace::PowderRelaxationOperator(const operator_ptr &_operator, arma::cx_mat _eigenvectors, arma::mat _spatialrotation, arma::sp_cx_mat &_out) const
+	{
+		if (_operator == nullptr || !_operator->IsValid())
+			return false;
+
+		if (!this->useSuperspace)
+			return false;
+
+		if (_eigenvectors.n_rows != this->HilbertSpaceDimensions() || _eigenvectors.n_cols != this->HilbertSpaceDimensions())
+			return false;
+
+		arma::sp_cx_mat eigenbasisRelaxation;
+		if (!this->PowderRelaxationOperatorEigenbasis(_operator, _eigenvectors, _spatialrotation, eigenbasisRelaxation))
+			return false;
+
+		return TransformSuperoperatorFromEigenbasis(*this, _eigenvectors, eigenbasisRelaxation, _out);
+	}
 
 	bool SpinSpace::RelaxationOperatorFrameChange(const operator_ptr &_operator, arma::cx_mat _rotationmatrix, arma::cx_mat &_out) const
 	{
@@ -1361,12 +1808,12 @@ namespace SpinAPI
 				S_plus = _rotationmatrix.t() * S_plus * _rotationmatrix;
 				S_minus = _rotationmatrix.t() * S_minus * _rotationmatrix;
 
-				// Get the contribution from T1 relaxation
-				if (!this->SuperoperatorFromOperators(S_plus, S_minus.t(), PB) || !this->SuperoperatorFromLeftOperator(S_minus.t() * S_plus, PL) || !this->SuperoperatorFromRightOperator(S_minus.t() * S_plus, PR))
+				const double channelRate = 0.5 * _operator->Rate1();
+				if (!AddLindbladDissipator(*this, S_plus, S_minus, channelRate, P) ||
+					!AddLindbladDissipator(*this, S_minus, S_plus, channelRate, P))
+				{
 					return false;
-
-				// \mathcal{L}_{T1}(\rho) = \frac{1}{T1} (2S_+ \rho S_- - \{S_-S_+, \rho\})
-				P += (PB - (PL + PR) / 2.0) * _operator->Rate1();
+				}
 			}
 
 			// Set the resulting operator
@@ -1693,12 +2140,12 @@ namespace SpinAPI
 				S_plus = _rotationmatrix.t() * S_plus * _rotationmatrix;
 				S_minus = _rotationmatrix.t() * S_minus * _rotationmatrix;
 
-				// Get the contribution from T1 relaxation
-				if (!this->SuperoperatorFromOperators(S_plus, S_minus.t(), PB) || !this->SuperoperatorFromLeftOperator(S_minus.t() * S_plus, PL) || !this->SuperoperatorFromRightOperator(S_minus.t() * S_plus, PR))
+				const double channelRate = 0.5 * _operator->Rate1();
+				if (!AddLindbladDissipator(*this, S_plus, S_minus, channelRate, P) ||
+					!AddLindbladDissipator(*this, S_minus, S_plus, channelRate, P))
+				{
 					return false;
-
-				// \mathcal{L}_{T1}(\rho) = \frac{1}{T1} (2S_+ \rho S_- - \{S_-S_+, \rho\})
-				P += (PB - (PL + PR) / 2.0) * _operator->Rate1();
+				}
 			}
 
 			// Set the resulting operator
@@ -2020,12 +2467,12 @@ namespace SpinAPI
 				S_plus = _rotationmatrix.t() * S_plus * _rotationmatrix;
 				S_minus = _rotationmatrix.t() * S_minus * _rotationmatrix;
 
-				// Get the contribution from T1 relaxation
-				if (!this->SuperoperatorFromOperators(S_plus, S_minus.t(), PB) || !this->SuperoperatorFromLeftOperator(S_minus.t() * S_plus, PL) || !this->SuperoperatorFromRightOperator(S_minus.t() * S_plus, PR))
+				const double channelRate = 0.5 * _operator->Rate1();
+				if (!AddLindbladDissipator(*this, S_plus, S_minus, channelRate, P) ||
+					!AddLindbladDissipator(*this, S_minus, S_plus, channelRate, P))
+				{
 					return false;
-
-				// \mathcal{L}_{T1}(\rho) = \frac{1}{T1} (2S_+ \rho S_- - \{S_-S_+, \rho\})
-				P += (PB - (PL + PR) / 2.0) * _operator->Rate1();
+				}
 			}
 
 			// Set the resulting operator

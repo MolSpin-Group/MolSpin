@@ -22,53 +22,51 @@
 
 namespace RunSection
 {
-	namespace
+	void TaskStaticSSPowderSpectraNakajimaZwanzig::WriteTransitionYieldHeader(const SpinAPI::system_ptr &_system, std::ostream &_stream) const
 	{
-		void WriteTransitionYieldHeader(const SpinAPI::system_ptr &_system, std::ostream &_stream)
+		auto transitions = _system->Transitions();
+		for (auto transition = transitions.cbegin(); transition != transitions.cend(); ++transition)
 		{
-			auto transitions = _system->Transitions();
-			for (auto transition = transitions.cbegin(); transition != transitions.cend(); ++transition)
-			{
-				if ((*transition)->SourceState() == nullptr)
-					continue;
-				_stream << _system->Name() << "." << (*transition)->Name() << ".yield ";
-			}
+			if ((*transition)->SourceState() == nullptr)
+				continue;
+			_stream << _system->Name() << "." << (*transition)->Name() << ".yield ";
 		}
+	}
 
-		bool ProjectTransitionYields(const SpinAPI::system_ptr &_system,
-									 SpinAPI::SpinSpace &_space,
-									 const arma::cx_mat &_rho,
-									 std::ostream &_datastream,
-									 std::ostream &_logstream)
+	bool TaskStaticSSPowderSpectraNakajimaZwanzig::ProjectTransitionYields(const SpinAPI::system_ptr &_system,
+																		   SpinAPI::SpinSpace &_space,
+																		   const arma::cx_mat &_rho,
+																		   std::ostream &_datastream,
+																		   std::ostream &_logstream) const
+	{
+		arma::cx_mat P;
+		auto transitions = _system->Transitions();
+		for (auto transition = transitions.cbegin(); transition != transitions.cend(); ++transition)
 		{
-			arma::cx_mat P;
-			auto transitions = _system->Transitions();
-			for (auto transition = transitions.cbegin(); transition != transitions.cend(); ++transition)
+			if ((*transition)->SourceState() == nullptr)
+				continue;
+
+			if (!_space.GetState((*transition)->SourceState(), P))
 			{
-				if ((*transition)->SourceState() == nullptr)
-					continue;
-
-				if (!_space.GetState((*transition)->SourceState(), P))
-				{
-					_logstream << "Failed to obtain projection matrix onto state \""
-							   << (*transition)->Name() << "\" of SpinSystem \""
-							   << _system->Name() << "\"." << std::endl;
-					return false;
-				}
-
-				_datastream << std::setprecision(12) << (*transition)->Rate() * std::abs(arma::trace(P * _rho)) << " ";
+				_logstream << "Failed to obtain projection matrix onto state \""
+						   << (*transition)->Name() << "\" of SpinSystem \""
+						   << _system->Name() << "\"." << std::endl;
+				return false;
 			}
-			return true;
-		}
 
-		bool BuildOrientedInitialDensity(SpinAPI::SpinSpace &space,
-										 const arma::cx_mat &referenceDensity,
-										 const arma::mat &orientationRotation,
-										 SpinAPI::StateFrame stateFrame,
-										 bool discardHamiltonianCoherences,
-										 const std::vector<std::string> &dephasingHamiltonian,
-										 arma::cx_mat &orientedDensity,
-										 std::ostream &log_stream)
+			_datastream << std::setprecision(12) << (*transition)->Rate() * std::abs(arma::trace(P * _rho)) << " ";
+		}
+		return true;
+	}
+
+	bool TaskStaticSSPowderSpectraNakajimaZwanzig::BuildOrientedInitialDensity(SpinAPI::SpinSpace &space,
+																			   const arma::cx_mat &referenceDensity,
+																			   const arma::mat &orientationRotation,
+																			   SpinAPI::StateFrame stateFrame,
+																			   bool discardHamiltonianCoherences,
+																			   const std::vector<std::string> &dephasingHamiltonian,
+																			   arma::cx_mat &orientedDensity,
+																			   std::ostream &log_stream) const
 		{
 			orientedDensity = referenceDensity;
 
@@ -106,8 +104,8 @@ namespace RunSection
 			return true;
 		}
 
-		std::vector<arma::cx_mat> RotateRank1OperatorBasis(const std::vector<arma::cx_mat> &cartesian_operators,
-														   const arma::mat &frame_to_lab)
+	std::vector<arma::cx_mat> TaskStaticSSPowderSpectraNakajimaZwanzig::RotateRank1OperatorBasis(const std::vector<arma::cx_mat> &cartesian_operators,
+																								  const arma::mat &frame_to_lab) const
 		{
 			// Rotate a vector-operator basis, e.g. {Sx, Sy, Sz}, into the
 			// tensor frame used for this powder orientation.
@@ -123,8 +121,8 @@ namespace RunSection
 			return rotated;
 		}
 
-		std::vector<arma::cx_mat> RotateRank2OperatorBasis(const std::vector<arma::cx_mat> &cartesian_operators,
-														   const arma::mat &frame_to_lab)
+	std::vector<arma::cx_mat> TaskStaticSSPowderSpectraNakajimaZwanzig::RotateRank2OperatorBasis(const std::vector<arma::cx_mat> &cartesian_operators,
+																								  const arma::mat &frame_to_lab) const
 		{
 			// Rank-2 operators transform on both Cartesian indices. The
 			// flattened order is (xx, xy, xz, yx, ..., zz).
@@ -150,8 +148,8 @@ namespace RunSection
 			return rotated;
 		}
 
-		std::vector<arma::cx_mat> SingleSpinSphericalTensors(const std::vector<arma::cx_mat> &spin_operators,
-															 const arma::cx_vec &field)
+	std::vector<arma::cx_mat> TaskStaticSSPowderSpectraNakajimaZwanzig::SingleSpinSphericalTensors(const std::vector<arma::cx_mat> &spin_operators,
+																								   const arma::cx_vec &field) const
 		{
 			const arma::cx_double im(0.0, 1.0);
 			const arma::cx_mat &Sx = spin_operators[0];
@@ -168,9 +166,9 @@ namespace RunSection
 			return {T0_rank_0, T0_rank_2, -Tm1, -Tp1, Tm2, Tp2};
 		}
 
-			std::vector<arma::cx_mat> DoubleSpinSphericalTensors(const std::vector<arma::cx_mat> &spin1_operators,
-																 const std::vector<arma::cx_mat> &spin2_operators)
-			{
+	std::vector<arma::cx_mat> TaskStaticSSPowderSpectraNakajimaZwanzig::DoubleSpinSphericalTensors(const std::vector<arma::cx_mat> &spin1_operators,
+																								   const std::vector<arma::cx_mat> &spin2_operators) const
+	{
 			const arma::cx_double im(0.0, 1.0);
 			const arma::cx_mat &S1x = spin1_operators[0];
 			const arma::cx_mat &S1y = spin1_operators[1];
@@ -186,31 +184,30 @@ namespace RunSection
 			arma::cx_mat Tp2 = 0.5 * (S1x * S2x - S1y * S2y + im * (S1x * S2y + S1y * S2x));
 			arma::cx_mat Tm2 = 0.5 * (S1x * S2x - S1y * S2y - im * (S1x * S2y + S1y * S2x));
 
-				return {T0_rank_0, T0_rank_2, -Tm1, -Tp1, Tm2, Tp2};
-			}
+		return {T0_rank_0, T0_rank_2, -Tm1, -Tp1, Tm2, Tp2};
+	}
 
-			bool TransformSuperoperatorBetweenEigenbases(SpinAPI::SpinSpace &space,
-														 const arma::cx_mat &sourceEigenvectors,
-														 const arma::cx_mat &targetEigenvectors,
-														 const arma::cx_mat &sourceSuperoperator,
-														 arma::cx_mat &targetSuperoperator)
-			{
-				// sourceEigenvectors and targetEigenvectors both map their local
-				// eigenbasis coordinates to the lab basis. W maps target-basis
-				// density matrices into source-basis coordinates.
-				const arma::cx_mat W = sourceEigenvectors.t() * targetEigenvectors;
-				arma::cx_mat targetToSource;
-				arma::cx_mat sourceToTarget;
-				if (!space.SuperoperatorFromOperators(W, W.t(), targetToSource) ||
-					!space.SuperoperatorFromOperators(W.t(), W, sourceToTarget))
-				{
-					return false;
-				}
-
-				targetSuperoperator = sourceToTarget * sourceSuperoperator * targetToSource;
-				return true;
-			}
+	bool TaskStaticSSPowderSpectraNakajimaZwanzig::TransformSuperoperatorBetweenEigenbases(SpinAPI::SpinSpace &space,
+																						   const arma::cx_mat &sourceEigenvectors,
+																						   const arma::cx_mat &targetEigenvectors,
+																						   const arma::cx_mat &sourceSuperoperator,
+																						   arma::cx_mat &targetSuperoperator) const
+	{
+		// sourceEigenvectors and targetEigenvectors both map their local
+		// eigenbasis coordinates to the lab basis. W maps target-basis
+		// density matrices into source-basis coordinates.
+		const arma::cx_mat W = sourceEigenvectors.t() * targetEigenvectors;
+		arma::cx_mat targetToSource;
+		arma::cx_mat sourceToTarget;
+		if (!space.SuperoperatorFromOperators(W, W.t(), targetToSource) ||
+			!space.SuperoperatorFromOperators(W.t(), W, sourceToTarget))
+		{
+			return false;
 		}
+
+		targetSuperoperator = sourceToTarget * sourceSuperoperator * targetToSource;
+		return true;
+	}
 
 	// -----------------------------------------------------
 	// TaskStaticSSPowderSpectraNakajimaZwanzig Constructors and Destructor
@@ -697,7 +694,7 @@ namespace RunSection
 			}
 			else
 			{
-				gotOperator = _space.RelaxationOperatorFrameChange((*t), _eigenvec, O_SS);
+				gotOperator = _space.PowderRelaxationOperatorEigenbasis((*t), _eigenvec, _rotationmatrix, O_SS);
 			}
 
 			if (gotOperator)

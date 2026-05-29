@@ -10,6 +10,7 @@
 #include "SpinAPIDefines.h"
 #include "Spin.h"
 #include "Interaction.h"
+#include "Operator.h"
 #include "State.h"
 #include "Transition.h"
 #include "SpinSystem.h"
@@ -1951,6 +1952,50 @@ bool test_spinapi_rotate_state_maps_z_population_to_x_population()
 }
 //////////////////////////////////////////////////////////////////////////////
 
+bool test_spinapi_rotate_state_singlet_invariant_triplet_t0_rotates()
+{
+	auto spin1 = std::make_shared<SpinAPI::Spin>("E1", "spin=1/2;");
+	auto spin2 = std::make_shared<SpinAPI::Spin>("E2", "spin=1/2;");
+	auto singlet = std::make_shared<SpinAPI::State>("S", "spins(E1,E2)=|1/2,-1/2>-|-1/2,1/2>;");
+	auto tripletT0 = std::make_shared<SpinAPI::State>("T0", "spins(E1,E2)=|1/2,-1/2>+|-1/2,1/2>;");
+
+	SpinAPI::SpinSystem spinsys("System");
+	spinsys.Add(spin1);
+	spinsys.Add(spin2);
+
+	bool isCorrect = true;
+	isCorrect &= singlet->ParseFromSystem(spinsys);
+	isCorrect &= tripletT0->ParseFromSystem(spinsys);
+
+	SpinAPI::SpinSpace space(spinsys);
+	space.UseSuperoperatorSpace(false);
+
+	arma::cx_mat Psinglet;
+	arma::cx_mat PT0;
+	isCorrect &= space.GetState(singlet, Psinglet);
+	isCorrect &= space.GetState(tripletT0, PT0);
+
+	// Generic non-trivial powder rotation. The electron singlet is a scalar
+	// under global spin rotation, while the triplet T0 component is not.
+	const double beta = M_PI / 2.0;
+	arma::mat rotation = {
+		{std::cos(beta), 0.0, std::sin(beta)},
+		{0.0, 1.0, 0.0},
+		{-std::sin(beta), 0.0, std::cos(beta)}};
+
+	arma::cx_mat rotatedSinglet;
+	arma::cx_mat rotatedT0;
+	isCorrect &= space.RotateState(Psinglet, rotation, rotatedSinglet);
+	isCorrect &= space.RotateState(PT0, rotation, rotatedT0);
+
+	isCorrect &= equal_matrices(rotatedSinglet, Psinglet, 1e-12);
+	isCorrect &= (arma::norm(rotatedT0 - PT0, "fro") > 1e-3);
+	isCorrect &= (std::abs(arma::trace(Psinglet * rotatedT0)) < 1e-12);
+
+	return isCorrect;
+}
+//////////////////////////////////////////////////////////////////////////////
+
 bool test_spinapi_dephase_state_in_eigenbasis_removes_hamiltonian_coherences()
 {
 	auto spin = std::make_shared<SpinAPI::Spin>("E", "spin=1/2;");
@@ -1973,6 +2018,77 @@ bool test_spinapi_dephase_state_in_eigenbasis_removes_hamiltonian_coherences()
 
 	arma::cx_mat expected = 0.5 * arma::eye<arma::cx_mat>(2, 2);
 	isCorrect &= equal_matrices(dephased, expected, 1e-12);
+
+	return isCorrect;
+}
+//////////////////////////////////////////////////////////////////////////////
+
+bool test_spinapi_relaxation_t1_spin_one_population_exchange()
+{
+	auto spin = std::make_shared<SpinAPI::Spin>("T", "type=electron;spin=1;tensor=isotropic(2);");
+	auto relax = std::make_shared<SpinAPI::Operator>("T1", "type=relaxationt1;spins=T;rate=1.0;");
+
+	auto spinsys = std::make_shared<SpinAPI::SpinSystem>("System");
+	spinsys->Add(spin);
+	spinsys->Add(relax);
+	std::vector<std::shared_ptr<SpinAPI::SpinSystem>> systems = {spinsys};
+
+	bool isCorrect = (spinsys->ValidateOperators(systems).size() == 0);
+
+	SpinAPI::SpinSpace ss_space(*spinsys);
+	ss_space.UseSuperoperatorSpace(true);
+
+	arma::sp_cx_mat R;
+	isCorrect &= ss_space.RelaxationOperator(relax, R);
+
+	auto apply_superspace = [&](const arma::cx_mat &rho, arma::cx_mat &out) -> bool {
+		arma::cx_vec rho_vec;
+		if (!ss_space.OperatorToSuperspace(rho, rho_vec))
+			return false;
+		return ss_space.OperatorFromSuperspace(R * rho_vec, out);
+	};
+
+	arma::cx_mat rho_top = arma::zeros<arma::cx_mat>(3, 3);
+	rho_top(0, 0) = 1.0;
+	arma::cx_mat expected_top = arma::zeros<arma::cx_mat>(3, 3);
+	expected_top(0, 0) = -1.0;
+	expected_top(1, 1) = 1.0;
+
+	arma::cx_mat rho_middle = arma::zeros<arma::cx_mat>(3, 3);
+	rho_middle(1, 1) = 1.0;
+	arma::cx_mat expected_middle = arma::zeros<arma::cx_mat>(3, 3);
+	expected_middle(0, 0) = 1.0;
+	expected_middle(1, 1) = -2.0;
+	expected_middle(2, 2) = 1.0;
+
+	arma::cx_mat rho_bottom = arma::zeros<arma::cx_mat>(3, 3);
+	rho_bottom(2, 2) = 1.0;
+	arma::cx_mat expected_bottom = arma::zeros<arma::cx_mat>(3, 3);
+	expected_bottom(1, 1) = 1.0;
+	expected_bottom(2, 2) = -1.0;
+
+	arma::cx_mat out_top;
+	arma::cx_mat out_middle;
+	arma::cx_mat out_bottom;
+	isCorrect &= apply_superspace(rho_top, out_top);
+	isCorrect &= apply_superspace(rho_middle, out_middle);
+	isCorrect &= apply_superspace(rho_bottom, out_bottom);
+	isCorrect &= equal_matrices(out_top, expected_top, 1e-12);
+	isCorrect &= equal_matrices(out_middle, expected_middle, 1e-12);
+	isCorrect &= equal_matrices(out_bottom, expected_bottom, 1e-12);
+
+	SpinAPI::SpinSpace hs_space(*spinsys);
+	hs_space.UseSuperoperatorSpace(false);
+	SpinAPI::HilbertRelaxationCache cache;
+	arma::cx_mat hs_out;
+	isCorrect &= hs_space.RelaxationOperator(relax, cache);
+	isCorrect &= hs_space.ApplyRelaxationHilbert(cache, rho_middle, hs_out);
+	isCorrect &= equal_matrices(hs_out, expected_middle, 1e-12);
+
+	arma::cx_mat identity = arma::eye<arma::cx_mat>(3, 3);
+	arma::cx_mat identity_out;
+	isCorrect &= hs_space.ApplyRelaxationHilbert(cache, identity, identity_out);
+	isCorrect &= equal_matrices(identity_out, arma::zeros<arma::cx_mat>(3, 3), 1e-12);
 
 	return isCorrect;
 }
@@ -2031,6 +2147,8 @@ void AddSpinAPITests(std::vector<test_case> &_cases)
 	_cases.push_back(test_case("SpinSpace::Phenomenological relaxation operator", test_spinapi_phenomenological_relaxation_operator));
 	_cases.push_back(test_case("SpinSpace::Phenomenological relaxation frame change is basis-local", test_spinapi_phenomenological_relaxation_framechange_is_basis_local));
 	_cases.push_back(test_case("SpinSpace::RotateState maps z population to x population", test_spinapi_rotate_state_maps_z_population_to_x_population));
+	_cases.push_back(test_case("SpinSpace::RotateState leaves singlet invariant and rotates T0", test_spinapi_rotate_state_singlet_invariant_triplet_t0_rotates));
 	_cases.push_back(test_case("SpinSpace::DephaseStateInEigenbasis removes Hamiltonian coherences", test_spinapi_dephase_state_in_eigenbasis_removes_hamiltonian_coherences));
+	_cases.push_back(test_case("SpinSpace::T1 relaxation exchanges spin-1 populations", test_spinapi_relaxation_t1_spin_one_population_exchange));
 }
 //////////////////////////////////////////////////////////////////////////////

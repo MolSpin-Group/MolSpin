@@ -31,6 +31,8 @@ namespace RunSection
 
 		void WriteHeader(std::ostream &); // Write header for the output file
 		static arma::cx_vec ComputeRhoDot(double t, arma::sp_cx_mat& L, arma::cx_vec& K, arma::cx_vec RhoNaught);
+		void WriteTransitionYieldHeader(const SpinAPI::system_ptr &_system, std::ostream &_stream) const;
+		bool ProjectTransitionYields(const SpinAPI::system_ptr &_system, SpinAPI::SpinSpace &_space, const arma::cx_mat &_rho, std::ostream &_datastream, std::ostream &_logstream) const;
 		bool ProjectAndPrintOutputLine(auto &_i, SpinAPI::SpinSpace &_space, arma::cx_vec &_rhovec, double &_printedtime, double _timestep, unsigned int &_n, bool &_cidsp, std::ostream &_datastream, std::ostream &_logstream);
 		bool ProjectAndPrintOutputLine(auto &_i, SpinAPI::SpinSpace &_space, arma::cx_vec &_rhovec, arma::sp_cx_mat &_eigen_vec, double &_printedtime, double _timestep, unsigned int &_n, bool &_cidsp, std::ostream &_datastream, std::ostream &_logstream);
 		bool ProjectAndPrintOutputLineInf(auto &_i, SpinAPI::SpinSpace &_space, arma::cx_vec &_rhovec, double &_printedtime, double _timestep, bool &_cidsp, std::ostream &_datastream, std::ostream &_logstream);

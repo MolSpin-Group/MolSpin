@@ -15,6 +15,7 @@
 
 #include "Operator.h"
 #include "RunSection.h"
+#include "SpinSpace.h"
 #include "TaskStaticHSDirectSpectra.h"
 #include "TaskStaticSSPowderSpectra.h"
 
@@ -556,6 +557,77 @@ bool test_task_staticpowder_timeevo_ss_hs_agree()
 	}
 
 	//////////////////////////////////////////////////////////////////////////////
+	// Powder rotations must rotate anisotropic relaxation axes before the basis
+	// transform. A z-axis Lindblad term at beta=pi/2 should become the same
+	// superoperator as an unrotated x-axis Lindblad term.
+	bool test_task_staticpowder_lindblad_relaxation_axes_follow_orientation()
+	{
+		auto spin = std::make_shared<SpinAPI::Spin>("E", "type=electron;spin=1/2;tensor=isotropic(2);");
+		auto spinsys = std::make_shared<SpinAPI::SpinSystem>("System");
+		spinsys->Add(spin);
+
+		auto relax_z = std::make_shared<SpinAPI::Operator>(
+			"Rz",
+			"type=relaxationlindblad;spins=E;rate1=0.0;rate2=0.0;rate3=1.0;");
+		auto relax_x = std::make_shared<SpinAPI::Operator>(
+			"Rx",
+			"type=relaxationlindblad;spins=E;rate1=1.0;rate2=0.0;rate3=0.0;");
+		auto t2_z = std::make_shared<SpinAPI::Operator>(
+			"T2z",
+			"type=relaxationt2;spins=E;rate=1.0;");
+		spinsys->Add(relax_z);
+		spinsys->Add(relax_x);
+		spinsys->Add(t2_z);
+
+		std::vector<std::shared_ptr<SpinAPI::SpinSystem>> spinsystems = {spinsys};
+		bool ok = (spinsys->ValidateOperators(spinsystems).size() == 0);
+
+		SpinAPI::SpinSpace space(*spinsys);
+		space.UseSuperoperatorSpace(true);
+
+		arma::cx_mat basis;
+		basis.eye(space.HilbertSpaceDimensions(), space.HilbertSpaceDimensions());
+
+		arma::mat identity;
+		identity.eye(3, 3);
+
+		arma::mat beta90;
+		const double beta = M_PI / 2.0;
+		beta90 = {
+			{std::cos(beta), 0.0, std::sin(beta)},
+			{0.0, 1.0, 0.0},
+			{-std::sin(beta), 0.0, std::cos(beta)}};
+
+		arma::sp_cx_mat rotated_z;
+		arma::sp_cx_mat unrotated_z;
+		arma::sp_cx_mat expected_x;
+		arma::sp_cx_mat rotated_t2_z;
+		arma::sp_cx_mat powder_t2_eigenbasis;
+		arma::sp_cx_mat powder_t2_propagationbasis;
+		ok &= space.RelaxationOperatorFrameChangeRotated(relax_z, basis, beta90, rotated_z);
+		ok &= space.RelaxationOperatorFrameChangeRotated(relax_z, basis, identity, unrotated_z);
+		ok &= space.RelaxationOperatorFrameChange(relax_x, basis, expected_x);
+		ok &= space.RelaxationOperatorFrameChangeRotated(t2_z, basis, beta90, rotated_t2_z);
+		ok &= space.PowderRelaxationOperatorEigenbasis(t2_z, basis, beta90, powder_t2_eigenbasis);
+		ok &= space.PowderRelaxationOperator(t2_z, basis, beta90, powder_t2_propagationbasis);
+
+		arma::cx_mat rotated_z_dense(rotated_z);
+		arma::cx_mat unrotated_z_dense(unrotated_z);
+		arma::cx_mat expected_x_dense(expected_x);
+		arma::cx_mat rotated_t2_z_dense(rotated_t2_z);
+		arma::cx_mat powder_t2_eigenbasis_dense(powder_t2_eigenbasis);
+		arma::cx_mat powder_t2_propagationbasis_dense(powder_t2_propagationbasis);
+
+		ok &= (arma::norm(rotated_z_dense - expected_x_dense, "fro") < 1e-10);
+		ok &= (arma::norm(rotated_t2_z_dense - expected_x_dense, "fro") < 1e-10);
+		ok &= (arma::norm(powder_t2_eigenbasis_dense - expected_x_dense, "fro") < 1e-10);
+		ok &= (arma::norm(powder_t2_propagationbasis_dense - expected_x_dense, "fro") < 1e-10);
+		ok &= (arma::norm(rotated_z_dense - unrotated_z_dense, "fro") > 1e-3);
+
+		return ok;
+	}
+
+	//////////////////////////////////////////////////////////////////////////////
 	// Time-evo powder CW: HS direct spectra should also work for a non-RP one-electron system.
 	bool test_task_staticpowder_timeevo_oneelectron_hs_ss_agree()
 	{
@@ -731,6 +803,7 @@ void AddTaskStaticPowderSpectraTests(std::vector<test_case> &_cases)
 	_cases.push_back(test_case("Task StaticPowderSpectra timeevo SS/HS agree", test_task_staticpowder_timeevo_ss_hs_agree));
 	_cases.push_back(test_case("Task StaticPowderSpectra timeevo relaxation HS/SS agree", test_task_staticpowder_timeevo_relaxation_hs_ss_agree));
 	_cases.push_back(test_case("Task StaticPowderSpectra phenomenological relaxation eigenbasis across tasks", test_task_staticpowder_phenomenological_relaxation_eigenbasis_three_tasks));
+	_cases.push_back(test_case("Task StaticPowderSpectra Lindblad relaxation axes follow orientation", test_task_staticpowder_lindblad_relaxation_axes_follow_orientation));
 	_cases.push_back(test_case("Task StaticPowderSpectra timeevo one-electron HS/SS agree", test_task_staticpowder_timeevo_oneelectron_hs_ss_agree));
 	_cases.push_back(test_case("Task StaticPowderSpectra timeevo one-electron thermal HS/SS agree", test_task_staticpowder_timeevo_oneelectron_thermal_hs_ss_agree));
 	_cases.push_back(test_case("Task StaticPowderSpectra pulse one-electron thermal HS/SS agree", test_task_staticpowder_pulse_oneelectron_thermal_hs_ss_agree));

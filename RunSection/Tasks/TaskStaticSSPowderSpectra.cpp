@@ -25,63 +25,41 @@
 
 namespace RunSection
 {
-	namespace
+	void TaskStaticSSPowderSpectra::WriteTransitionYieldHeader(const SpinAPI::system_ptr &_system, std::ostream &_stream) const
 	{
-		bool TransformSuperoperatorFromEigenbasis(SpinAPI::SpinSpace &_space, const arma::cx_mat &_eigenvectors, const arma::sp_cx_mat &_relaxationEigenbasis, arma::sp_cx_mat &_out)
+		auto transitions = _system->Transitions();
+		for (auto transition = transitions.cbegin(); transition != transitions.cend(); ++transition)
 		{
-			// Phenomenological relaxation is assembled in the H0 eigenbasis.
-			// Convert it back to the lab superspace before adding it to the
-			// orientation Liouvillian.
-			arma::cx_mat eigenvectors = _eigenvectors;
-			arma::cx_mat eigenvectorsDag = eigenvectors.t();
-			arma::cx_mat fromEigenbasis;
-			arma::cx_mat toEigenbasis;
-			if (!_space.SuperoperatorFromOperators(eigenvectors, eigenvectorsDag, fromEigenbasis) ||
-				!_space.SuperoperatorFromOperators(eigenvectorsDag, eigenvectors, toEigenbasis))
+			if ((*transition)->SourceState() == nullptr)
+				continue;
+			_stream << _system->Name() << "." << (*transition)->Name() << ".yield ";
+		}
+	}
+
+	bool TaskStaticSSPowderSpectra::ProjectTransitionYields(const SpinAPI::system_ptr &_system,
+															SpinAPI::SpinSpace &_space,
+															const arma::cx_mat &_rho,
+															std::ostream &_datastream,
+															std::ostream &_logstream) const
+	{
+		arma::cx_mat P;
+		auto transitions = _system->Transitions();
+		for (auto transition = transitions.cbegin(); transition != transitions.cend(); ++transition)
+		{
+			if ((*transition)->SourceState() == nullptr)
+				continue;
+
+			if (!_space.GetState((*transition)->SourceState(), P))
 			{
+				_logstream << "Failed to obtain projection matrix onto state \""
+						   << (*transition)->Name() << "\" of SpinSystem \""
+						   << _system->Name() << "\"." << std::endl;
 				return false;
 			}
 
-			_out = arma::sp_cx_mat(fromEigenbasis) * _relaxationEigenbasis * arma::sp_cx_mat(toEigenbasis);
-			return true;
+			_datastream << std::setprecision(12) << (*transition)->Rate() * std::abs(arma::trace(P * _rho)) << " ";
 		}
-
-		void WriteTransitionYieldHeader(const SpinAPI::system_ptr &_system, std::ostream &_stream)
-		{
-			auto transitions = _system->Transitions();
-			for (auto transition = transitions.cbegin(); transition != transitions.cend(); ++transition)
-			{
-				if ((*transition)->SourceState() == nullptr)
-					continue;
-				_stream << _system->Name() << "." << (*transition)->Name() << ".yield ";
-			}
-		}
-
-		bool ProjectTransitionYields(const SpinAPI::system_ptr &_system,
-									 SpinAPI::SpinSpace &_space,
-									 const arma::cx_mat &_rho,
-									 std::ostream &_datastream,
-									 std::ostream &_logstream)
-		{
-			arma::cx_mat P;
-			auto transitions = _system->Transitions();
-			for (auto transition = transitions.cbegin(); transition != transitions.cend(); ++transition)
-			{
-				if ((*transition)->SourceState() == nullptr)
-					continue;
-
-				if (!_space.GetState((*transition)->SourceState(), P))
-				{
-					_logstream << "Failed to obtain projection matrix onto state \""
-							   << (*transition)->Name() << "\" of SpinSystem \""
-							   << _system->Name() << "\"." << std::endl;
-					return false;
-				}
-
-				_datastream << std::setprecision(12) << (*transition)->Rate() * std::abs(arma::trace(P * _rho)) << " ";
-			}
-			return true;
-		}
+		return true;
 	}
 
 	// -----------------------------------------------------
@@ -2137,9 +2115,10 @@ namespace RunSection
 		}
 		_A -= K;
 
-		// Relaxation operators are additive Liouvillian terms. The
-		// phenomenological model is defined in the current H0 eigenbasis, so
-		// it needs one extra basis transformation before being added to A.
+		// Relaxation operators are additive Liouvillian terms. Powder
+		// relaxation is assembled through SpinSpace so that every supported
+		// operator is represented in the same orientation-specific H0
+		// eigenbasis before it is transformed back to the propagation basis.
 		arma::vec eigenvalues;
 		arma::cx_mat eigenvectors;
 		bool eigenbasisReady = false;
@@ -2163,26 +2142,15 @@ namespace RunSection
 		arma::sp_cx_mat R;
 		for (auto j = (*_i)->operators_cbegin(); j != (*_i)->operators_cend(); j++)
 		{
-			if ((*j)->Type() == SpinAPI::OperatorType::RelaxationPhenomenological)
+			if (!loadEigenbasis() ||
+				!_space.PowderRelaxationOperator((*j), eigenvectors, Rot_mat, R))
 			{
-				arma::sp_cx_mat R_eigenbasis;
-				arma::sp_cx_mat R_propagationbasis;
-				if (!loadEigenbasis() ||
-					!_space.RelaxationOperatorFrameChange((*j), eigenvectors, R_eigenbasis) ||
-					!TransformSuperoperatorFromEigenbasis(_space, eigenvectors, R_eigenbasis, R_propagationbasis))
-				{
-					_logstream << "Failed to construct eigenbasis relaxation operator \"" << (*j)->Name() << "\"." << std::endl;
-					return false;
-				}
+				_logstream << "Failed to construct powder eigenbasis relaxation operator \"" << (*j)->Name() << "\"." << std::endl;
+				return false;
+			}
 
-				_A += R_propagationbasis;
-				_logstream << "Added eigenbasis relaxation operator \"" << (*j)->Name() << "\" to the Liouvillian.\n";
-			}
-			else if (_space.RelaxationOperator((*j), R))
-			{
-				_A += R;
-				_logstream << "Added relaxation operator \"" << (*j)->Name() << "\" to the Liouvillian.\n";
-			}
+			_A += R;
+			_logstream << "Added powder eigenbasis relaxation operator \"" << (*j)->Name() << "\" to the Liouvillian.\n";
 		}
 
 		return true;
