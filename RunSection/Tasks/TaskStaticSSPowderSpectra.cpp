@@ -2150,7 +2150,7 @@ namespace RunSection
 			}
 
 			_A += R;
-			_logstream << "Added powder eigenbasis relaxation operator \"" << (*j)->Name() << "\" to the Liouvillian.\n";
+			// _logstream << "Added powder eigenbasis relaxation operator \"" << (*j)->Name() << "\" to the Liouvillian.\n";
 		}
 
 		return true;
