@@ -1920,6 +1920,177 @@ bool test_spinapi_phenomenological_relaxation_framechange_is_basis_local()
 }
 //////////////////////////////////////////////////////////////////////////////
 
+bool test_spinapi_phenomenological_rate2_preserves_populations_and_trace()
+{
+	auto spin = std::make_shared<SpinAPI::Spin>("E", "spin=1/2;");
+	auto relax = std::make_shared<SpinAPI::Operator>("R", "type=relaxationphenomenological;rate1=0.0;rate2=0.75;");
+
+	auto spinsys = std::make_shared<SpinAPI::SpinSystem>("System");
+	spinsys->Add(spin);
+	spinsys->Add(relax);
+	std::vector<std::shared_ptr<SpinAPI::SpinSystem>> systems = {spinsys};
+
+	bool isCorrect = (spinsys->ValidateOperators(systems).size() == 0);
+
+	SpinAPI::SpinSpace space(*spinsys);
+	space.UseSuperoperatorSpace(true);
+
+	arma::cx_mat R;
+	isCorrect &= space.RelaxationOperator(relax, R);
+
+	arma::cx_mat rho = arma::zeros<arma::cx_mat>(2, 2);
+	rho(0, 0) = 0.75;
+	rho(1, 1) = 0.25;
+	rho(0, 1) = arma::cx_double(0.2, 0.1);
+	rho(1, 0) = std::conj(rho(0, 1));
+
+	arma::cx_vec rhoVec;
+	arma::cx_mat derivative;
+	isCorrect &= space.OperatorToSuperspace(rho, rhoVec);
+	isCorrect &= space.OperatorFromSuperspace(R * rhoVec, derivative);
+
+	arma::cx_mat expected = arma::zeros<arma::cx_mat>(2, 2);
+	expected(0, 1) = -0.75 * rho(0, 1);
+	expected(1, 0) = -0.75 * rho(1, 0);
+
+	isCorrect &= equal_matrices(derivative, expected, 1e-12);
+	isCorrect &= (std::abs(arma::trace(derivative)) < 1e-12);
+
+	return isCorrect;
+}
+//////////////////////////////////////////////////////////////////////////////
+
+bool test_spinapi_powder_phenomenological_rate2_uses_supplied_eigenbasis()
+{
+	auto spin = std::make_shared<SpinAPI::Spin>("E", "spin=1/2;");
+	auto relax = std::make_shared<SpinAPI::Operator>("R", "type=relaxationphenomenological;rate1=0.0;rate2=0.75;");
+
+	auto spinsys = std::make_shared<SpinAPI::SpinSystem>("System");
+	spinsys->Add(spin);
+	spinsys->Add(relax);
+	std::vector<std::shared_ptr<SpinAPI::SpinSystem>> systems = {spinsys};
+
+	bool isCorrect = (spinsys->ValidateOperators(systems).size() == 0);
+
+	SpinAPI::SpinSpace space(*spinsys);
+	space.UseSuperoperatorSpace(true);
+
+	// Columns are the eigenvectors of Sx. A lab-frame |up_z><up_z| state
+	// contains coherence in this basis. Pure eigenbasis rate2 damping therefore
+	// changes its lab-frame diagonal elements while preserving trace.
+	const double invSqrt2 = 1.0 / std::sqrt(2.0);
+	arma::cx_mat xBasis = {
+		{arma::cx_double(invSqrt2, 0.0), arma::cx_double(invSqrt2, 0.0)},
+		{arma::cx_double(invSqrt2, 0.0), arma::cx_double(-invSqrt2, 0.0)}};
+	arma::mat spatialRotation = arma::eye<arma::mat>(3, 3);
+
+	arma::sp_cx_mat R;
+	isCorrect &= space.PowderRelaxationOperator(relax, xBasis, spatialRotation, R);
+
+	arma::cx_mat rho = arma::zeros<arma::cx_mat>(2, 2);
+	rho(0, 0) = 1.0;
+
+	arma::cx_vec rhoVec;
+	arma::cx_mat derivative;
+	isCorrect &= space.OperatorToSuperspace(rho, rhoVec);
+	isCorrect &= space.OperatorFromSuperspace(R * rhoVec, derivative);
+
+	arma::cx_mat expected = arma::zeros<arma::cx_mat>(2, 2);
+	expected(0, 0) = -0.375;
+	expected(1, 1) = 0.375;
+
+	isCorrect &= equal_matrices(derivative, expected, 1e-12);
+	isCorrect &= (std::abs(arma::trace(derivative)) < 1e-12);
+
+	return isCorrect;
+}
+//////////////////////////////////////////////////////////////////////////////
+
+bool test_spinapi_hilbert_phenomenological_rate2_uses_supplied_eigenbasis()
+{
+	auto spin = std::make_shared<SpinAPI::Spin>("E", "spin=1/2;");
+
+	SpinAPI::SpinSystem spinsys("System");
+	spinsys.Add(spin);
+
+	SpinAPI::SpinSpace space(spinsys);
+	space.UseSuperoperatorSpace(false);
+
+	const double invSqrt2 = 1.0 / std::sqrt(2.0);
+	arma::cx_mat xBasis = {
+		{arma::cx_double(invSqrt2, 0.0), arma::cx_double(invSqrt2, 0.0)},
+		{arma::cx_double(invSqrt2, 0.0), arma::cx_double(-invSqrt2, 0.0)}};
+	std::vector<SpinAPI::HilbertRelaxationPhenomenologicalTerm> terms(1);
+	terms[0].coherenceRate = 0.75;
+
+	arma::cx_mat rho = arma::zeros<arma::cx_mat>(2, 2);
+	rho(0, 0) = 1.0;
+
+	arma::cx_mat expected = arma::zeros<arma::cx_mat>(2, 2);
+	expected(0, 0) = -0.375;
+	expected(1, 1) = 0.375;
+
+	arma::cx_mat direct;
+	arma::cx_mat superoperator;
+	arma::cx_vec rhoVec;
+	arma::cx_mat fromSuperoperator;
+	bool isCorrect = true;
+	isCorrect &= space.ApplyPhenomenologicalRelaxationHilbert(terms, xBasis, rho, direct);
+	isCorrect &= space.PhenomenologicalRelaxationSuperoperatorHilbert(terms, xBasis, superoperator);
+	isCorrect &= space.OperatorToSuperspace(rho, rhoVec);
+	isCorrect &= space.OperatorFromSuperspace(superoperator * rhoVec, fromSuperoperator);
+	isCorrect &= equal_matrices(direct, expected, 1e-12);
+	isCorrect &= equal_matrices(fromSuperoperator, expected, 1e-12);
+	isCorrect &= (std::abs(arma::trace(direct)) < 1e-12);
+
+	return isCorrect;
+}
+//////////////////////////////////////////////////////////////////////////////
+
+bool test_spinapi_hilbert_phenomenological_finite_step_map_matches_superoperator()
+{
+	auto spin = std::make_shared<SpinAPI::Spin>("E", "spin=1/2;");
+
+	SpinAPI::SpinSystem spinsys("System");
+	spinsys.Add(spin);
+
+	SpinAPI::SpinSpace space(spinsys);
+	space.UseSuperoperatorSpace(false);
+
+	const double invSqrt2 = 1.0 / std::sqrt(2.0);
+	arma::cx_mat xBasis = {
+		{arma::cx_double(invSqrt2, 0.0), arma::cx_double(invSqrt2, 0.0)},
+		{arma::cx_double(invSqrt2, 0.0), arma::cx_double(-invSqrt2, 0.0)}};
+	std::vector<SpinAPI::HilbertRelaxationPhenomenologicalTerm> terms(2);
+	terms[0].populationRate = 0.20;
+	terms[0].coherenceRate = 0.35;
+	terms[1].populationRate = 0.15;
+	terms[1].coherenceRate = 0.40;
+	const double timestep = 0.625;
+
+	arma::cx_mat rho = {
+		{arma::cx_double(0.70, 0.0), arma::cx_double(0.20, 0.10)},
+		{arma::cx_double(0.20, -0.10), arma::cx_double(0.30, 0.0)}};
+	arma::cx_mat mapped = rho;
+	arma::cx_mat workspace;
+
+	SpinAPI::HilbertPhenomenologicalRelaxationMap map;
+	arma::cx_mat superoperator;
+	arma::cx_vec rhoVec;
+	arma::cx_mat fromSuperoperator;
+	bool isCorrect = true;
+	isCorrect &= space.CreatePhenomenologicalRelaxationMapHilbert(terms, xBasis, timestep, map);
+	isCorrect &= space.ApplyPhenomenologicalRelaxationMapHilbert(map, mapped, workspace);
+	isCorrect &= space.PhenomenologicalRelaxationSuperoperatorHilbert(terms, xBasis, superoperator);
+	isCorrect &= space.OperatorToSuperspace(rho, rhoVec);
+	isCorrect &= space.OperatorFromSuperspace(arma::expmat(superoperator * timestep) * rhoVec, fromSuperoperator);
+	isCorrect &= equal_matrices(mapped, fromSuperoperator, 1e-12);
+	isCorrect &= (std::abs(arma::trace(mapped) - arma::trace(rho)) < 1e-12);
+
+	return isCorrect;
+}
+//////////////////////////////////////////////////////////////////////////////
+
 bool test_spinapi_rotate_state_maps_z_population_to_x_population()
 {
 	auto spin = std::make_shared<SpinAPI::Spin>("E", "spin=1/2;");
@@ -2018,6 +2189,55 @@ bool test_spinapi_dephase_state_in_eigenbasis_removes_hamiltonian_coherences()
 
 	arma::cx_mat expected = 0.5 * arma::eye<arma::cx_mat>(2, 2);
 	isCorrect &= equal_matrices(dephased, expected, 1e-12);
+
+	return isCorrect;
+}
+//////////////////////////////////////////////////////////////////////////////
+
+bool test_spinapi_triplet_keep_retains_free_induction_dephase_removes_it()
+{
+	auto spin = std::make_shared<SpinAPI::Spin>("T", "type=electron;spin=1;tensor=isotropic(2);");
+
+	SpinAPI::SpinSystem spinsys("System");
+	spinsys.Add(spin);
+
+	SpinAPI::SpinSpace space(spinsys);
+	space.UseSuperoperatorSpace(false);
+
+	arma::cx_mat Sx;
+	arma::cx_mat Sy;
+	arma::cx_mat Sz;
+	bool isCorrect = true;
+	isCorrect &= space.CreateOperator(arma::conv_to<arma::cx_mat>::from(spin->Sx()), spin, Sx);
+	isCorrect &= space.CreateOperator(arma::conv_to<arma::cx_mat>::from(spin->Sy()), spin, Sy);
+	isCorrect &= space.CreateOperator(arma::conv_to<arma::cx_mat>::from(spin->Sz()), spin, Sz);
+
+	// Molecular Tz alignment rotated to a generic powder orientation. A secular
+	// high-field Hamiltonian containing ZFS keeps the retained zero-field
+	// coherences observable as free induction even without a microwave field.
+	arma::cx_mat rhoMolecular = arma::zeros<arma::cx_mat>(3, 3);
+	rhoMolecular(1, 1) = 1.0;
+	const double beta = 0.7;
+	arma::mat rotation = {
+		{std::cos(beta), 0.0, std::sin(beta)},
+		{0.0, 1.0, 0.0},
+		{-std::sin(beta), 0.0, std::cos(beta)}};
+	arma::cx_mat rhoOriented;
+	isCorrect &= space.RotateState(rhoMolecular, rotation, rhoOriented);
+
+	const arma::cx_mat H = 0.3 * Sz + 0.7 * Sz * Sz;
+	arma::cx_mat rhoDephased;
+	isCorrect &= space.DephaseStateInEigenbasis(rhoOriented, H, rhoDephased);
+
+	const arma::cx_mat U = arma::expmat(arma::cx_double(0.0, -0.7) * H);
+	const arma::cx_mat keepEvolved = U * rhoOriented * U.t();
+	const arma::cx_mat dephasedEvolved = U * rhoDephased * U.t();
+	const double keepTransverse = std::abs(arma::trace(Sx * keepEvolved)) + std::abs(arma::trace(Sy * keepEvolved));
+	const double dephasedTransverse = std::abs(arma::trace(Sx * dephasedEvolved)) + std::abs(arma::trace(Sy * dephasedEvolved));
+
+	isCorrect &= (keepTransverse > 1e-2);
+	isCorrect &= (dephasedTransverse < 1e-12);
+	isCorrect &= (std::abs(arma::trace(keepEvolved) - arma::trace(dephasedEvolved)) < 1e-12);
 
 	return isCorrect;
 }
@@ -2146,9 +2366,14 @@ void AddSpinAPITests(std::vector<test_case> &_cases)
 	_cases.push_back(test_case("SpinSpace::Rotated quadratic spin identity powder", test_spinapi_rotated_quadraticspin_matches_plain_for_identity_powder));
 	_cases.push_back(test_case("SpinSpace::Phenomenological relaxation operator", test_spinapi_phenomenological_relaxation_operator));
 	_cases.push_back(test_case("SpinSpace::Phenomenological relaxation frame change is basis-local", test_spinapi_phenomenological_relaxation_framechange_is_basis_local));
-	_cases.push_back(test_case("SpinSpace::RotateState maps z population to x population", test_spinapi_rotate_state_maps_z_population_to_x_population));
+	_cases.push_back(test_case("SpinSpace::Phenomenological rate2 preserves populations and trace", test_spinapi_phenomenological_rate2_preserves_populations_and_trace));
+		_cases.push_back(test_case("SpinSpace::Powder phenomenological rate2 uses supplied eigenbasis", test_spinapi_powder_phenomenological_rate2_uses_supplied_eigenbasis));
+		_cases.push_back(test_case("SpinSpace::Hilbert phenomenological rate2 uses supplied eigenbasis", test_spinapi_hilbert_phenomenological_rate2_uses_supplied_eigenbasis));
+		_cases.push_back(test_case("SpinSpace::Hilbert phenomenological finite-step map matches superoperator", test_spinapi_hilbert_phenomenological_finite_step_map_matches_superoperator));
+		_cases.push_back(test_case("SpinSpace::RotateState maps z population to x population", test_spinapi_rotate_state_maps_z_population_to_x_population));
 	_cases.push_back(test_case("SpinSpace::RotateState leaves singlet invariant and rotates T0", test_spinapi_rotate_state_singlet_invariant_triplet_t0_rotates));
 	_cases.push_back(test_case("SpinSpace::DephaseStateInEigenbasis removes Hamiltonian coherences", test_spinapi_dephase_state_in_eigenbasis_removes_hamiltonian_coherences));
+	_cases.push_back(test_case("SpinSpace::Triplet keep retains free induction while dephase removes it", test_spinapi_triplet_keep_retains_free_induction_dephase_removes_it));
 	_cases.push_back(test_case("SpinSpace::T1 relaxation exchanges spin-1 populations", test_spinapi_relaxation_t1_spin_one_population_exchange));
 }
 //////////////////////////////////////////////////////////////////////////////

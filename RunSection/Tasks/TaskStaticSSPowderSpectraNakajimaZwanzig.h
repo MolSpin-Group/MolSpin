@@ -39,7 +39,7 @@ namespace RunSection
 		std::vector<arma::cx_mat> SingleSpinSphericalTensors(const std::vector<arma::cx_mat> &spin_operators, const arma::cx_vec &field) const;
 		std::vector<arma::cx_mat> DoubleSpinSphericalTensors(const std::vector<arma::cx_mat> &spin1_operators, const std::vector<arma::cx_mat> &spin2_operators) const;
 		bool TransformSuperoperatorBetweenEigenbases(SpinAPI::SpinSpace &space, const arma::cx_mat &sourceEigenvectors, const arma::cx_mat &targetEigenvectors, const arma::cx_mat &sourceSuperoperator, arma::cx_mat &targetSuperoperator) const;
-		bool BuildNakajimaZwanzigLiouvillian(auto &_i, SpinAPI::SpinSpace &_space, const arma::cx_mat &_H, const arma::cx_mat &_relaxationBasisHamiltonian, const arma::mat &_rotationmatrix, arma::cx_mat &_A, arma::cx_mat &_eigenvec);
+		bool BuildNakajimaZwanzigLiouvillian(auto &_i, SpinAPI::SpinSpace &_space, const arma::cx_mat &_H, const arma::cx_mat &_relaxationBasisHamiltonian, const arma::mat &_rotationmatrix, arma::cx_mat &_A, arma::cx_mat &_eigenvec, bool _logdiagnostics);
 		bool ConvertSuperspaceToLab(auto &_space, const arma::cx_vec &_rho_vec_eig, const arma::cx_mat &_eigenvec, arma::cx_vec &_rho_vec_lab);
 		bool NakajimaZwanzigtensorSpectra(const arma::cx_mat &_op1, const arma::cx_mat &_op2, const arma::cx_mat &_specdens, arma::cx_mat &_NakajimaZwanzigtensor);
 		bool ConstructSpecDensGeneralSpectra(const std::vector<double> &_ampl_list, const std::vector<double> &_tau_c_list, const arma::cx_mat &_omega, arma::cx_mat &_specdens);

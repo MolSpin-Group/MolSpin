@@ -220,8 +220,11 @@ namespace RunSection
 	{
 	}
 
-	bool TaskStaticSSPowderSpectraNakajimaZwanzig::BuildNakajimaZwanzigLiouvillian(auto &_i, SpinAPI::SpinSpace &_space, const arma::cx_mat &_H, const arma::cx_mat &_relaxationBasisHamiltonian, const arma::mat &_rotationmatrix, arma::cx_mat &_A, arma::cx_mat &_eigenvec)
+	bool TaskStaticSSPowderSpectraNakajimaZwanzig::BuildNakajimaZwanzigLiouvillian(auto &_i, SpinAPI::SpinSpace &_space, const arma::cx_mat &_H, const arma::cx_mat &_relaxationBasisHamiltonian, const arma::mat &_rotationmatrix, arma::cx_mat &_A, arma::cx_mat &_eigenvec, bool _logdiagnostics)
 	{
+		// This helper is called for every powder orientation. Configuration
+		// diagnostics are invariant across that loop, so callers enable them only
+		// for the first orientation to keep user logs bounded.
 		_space.UseSuperoperatorSpace(false);
 
 		arma::vec eigenvalues;
@@ -241,7 +244,8 @@ namespace RunSection
 		arma::cx_mat relaxationBasisEigenvectors;
 		if (!arma::eig_sym(relaxationBasisEigenvalues, relaxationBasisEigenvectors, _relaxationBasisHamiltonian))
 		{
-			this->Log() << "Failed to diagonalize the Hamiltonian used for phenomenological relaxation." << std::endl;
+			if (_logdiagnostics)
+				this->Log() << "Failed to diagonalize the Hamiltonian used for phenomenological relaxation." << std::endl;
 			return false;
 		}
 
@@ -364,10 +368,11 @@ namespace RunSection
 				const int rows_tau = static_cast<int>(tau_c_mat.n_rows);
 				if (rows_ampl < expected_rows || rows_tau < expected_rows)
 				{
-					this->Log() << "NZ def_multexpo=1 for interaction \"" << interaction_name
-					            << "\" requires at least " << expected_rows << " rows in g/tau_c matrices, but got g="
-					            << rows_ampl << ", tau_c=" << rows_tau << ". Skipping this interaction contribution."
-					            << std::endl;
+						if (_logdiagnostics)
+							this->Log() << "NZ def_multexpo=1 for interaction \"" << interaction_name
+							            << "\" requires at least " << expected_rows << " rows in g/tau_c matrices, but got g="
+							            << rows_ampl << ", tau_c=" << rows_tau << ". Skipping this interaction contribution."
+							            << std::endl;
 					return true;
 				}
 
@@ -376,15 +381,17 @@ namespace RunSection
 				const int n_cols = (cols_ampl < cols_tau) ? cols_ampl : cols_tau;
 				if (n_cols < 1)
 				{
-					this->Log() << "NZ def_multexpo=1 for interaction \"" << interaction_name
-					            << "\" has empty g/tau_c matrices. Skipping this interaction contribution." << std::endl;
+						if (_logdiagnostics)
+							this->Log() << "NZ def_multexpo=1 for interaction \"" << interaction_name
+							            << "\" has empty g/tau_c matrices. Skipping this interaction contribution." << std::endl;
 					return true;
 				}
 				if (cols_ampl != cols_tau)
 				{
-					this->Log() << "NZ def_multexpo=1 for interaction \"" << interaction_name
-					            << "\" has different numbers of columns in g and tau_c matrices (g=" << cols_ampl
-					            << ", tau_c=" << cols_tau << "). Using the first " << n_cols << " columns." << std::endl;
+						if (_logdiagnostics)
+							this->Log() << "NZ def_multexpo=1 for interaction \"" << interaction_name
+							            << "\" has different numbers of columns in g and tau_c matrices (g=" << cols_ampl
+							            << ", tau_c=" << cols_tau << "). Using the first " << n_cols << " columns." << std::endl;
 				}
 
 				arma::cx_mat SpecDens;
@@ -445,8 +452,6 @@ namespace RunSection
 				return true;
 			};
 
-			this->Log() << "Starting NZ relaxation matrix construction for internal powder orientation." << std::endl;
-
 			for (auto interaction = (*_i)->interactions_cbegin(); interaction < (*_i)->interactions_cend(); interaction++)
 		{
 			bool interaction_relaxation = false;
@@ -474,12 +479,14 @@ namespace RunSection
 				{
 					if (!(*interaction)->Properties()->GetMatrix("tau_c", tau_c_mat))
 					{
-						this->Log() << "NZ interaction \"" << (*interaction)->Name() << "\" has def_multexpo=1 but no valid tau_c matrix; skipping." << std::endl;
+							if (_logdiagnostics)
+								this->Log() << "NZ interaction \"" << (*interaction)->Name() << "\" has def_multexpo=1 but no valid tau_c matrix; skipping." << std::endl;
 						continue;
 					}
 					if (!(*interaction)->Properties()->GetMatrix("g", ampl_mat))
 					{
-						this->Log() << "NZ interaction \"" << (*interaction)->Name() << "\" has def_multexpo=1 but no valid g matrix; skipping." << std::endl;
+							if (_logdiagnostics)
+								this->Log() << "NZ interaction \"" << (*interaction)->Name() << "\" has def_multexpo=1 but no valid g matrix; skipping." << std::endl;
 						continue;
 					}
 					use_multexpo = true;
@@ -488,12 +495,14 @@ namespace RunSection
 				{
 					if (!(*interaction)->Properties()->GetList("tau_c", tau_c_list))
 					{
-						this->Log() << "NZ interaction \"" << (*interaction)->Name() << "\" has no tau_c list; skipping." << std::endl;
+							if (_logdiagnostics)
+								this->Log() << "NZ interaction \"" << (*interaction)->Name() << "\" has no tau_c list; skipping." << std::endl;
 						continue;
 					}
 					if (!(*interaction)->Properties()->GetList("g", ampl_list))
 					{
-						this->Log() << "NZ interaction \"" << (*interaction)->Name() << "\" has no g list; skipping." << std::endl;
+							if (_logdiagnostics)
+								this->Log() << "NZ interaction \"" << (*interaction)->Name() << "\" has no g list; skipping." << std::endl;
 						continue;
 					}
 				}
@@ -674,7 +683,8 @@ namespace RunSection
 		arma::cx_mat Krhs;
 		if (!_space.TotalReactionOperator(K))
 		{
-			this->Log() << "Warning: Failed to obtain matrix representation of the reaction operators!" << std::endl;
+				if (_logdiagnostics)
+					this->Log() << "Warning: Failed to obtain matrix representation of the reaction operators!" << std::endl;
 		}
 		K = (_eigenvec.t() * K * _eigenvec);
 		_space.SuperoperatorFromLeftOperator(K, Klhs);
@@ -703,7 +713,8 @@ namespace RunSection
 			}
 			else
 			{
-				this->Log() << "There is a problem with operator \"" << (*t)->Name() << "\". Please check.\n";
+					if (_logdiagnostics)
+						this->Log() << "There is a problem with operator \"" << (*t)->Name() << "\". Please check.\n";
 			}
 			_space.UseSuperoperatorSpace(false);
 		}
@@ -881,6 +892,7 @@ namespace RunSection
 			if (explicitPowderGrid)
 			{
 				numPoints = static_cast<int>(grid.size());
+				this->Log() << "Using explicit single-orientation powder input. This is the external-distribution route; the supplied orientation and weight are preserved." << std::endl;
 			}
 			else
 			{
@@ -892,6 +904,13 @@ namespace RunSection
 				if (!this->CreateUniformGrid(numPoints, grid))
 				{
 					this->Log() << "Failed to obtain an Uniform grid." << std::endl;
+				}
+				else
+				{
+					if (numPoints <= 1)
+						this->Log() << "Using one internally generated identity orientation with unit weight (non-powdered limit)." << std::endl;
+					else
+						this->Log() << "Using internal powder averaging grid with " << numPoints << " orientations." << std::endl;
 				}
 			}
 
@@ -928,6 +947,14 @@ namespace RunSection
 			{
 				this->Log() << "Initial state frame = molecular. Rotating density matrix per orientation." << std::endl;
 			}
+			else if (initialStateFrame == SpinAPI::StateFrame::Fixed)
+			{
+				this->Log() << "Initial state frame = fixed. Reusing the supplied lab-frame density matrix for every orientation." << std::endl;
+			}
+			else
+			{
+				this->Log() << "Initial state frame = eigen. The prepared density matrix is already defined in its Hamiltonian frame." << std::endl;
+			}
 
 			const SpinAPI::InitialStateCoherenceMode initialCoherences = (*i)->InitialStateCoherences();
 			const bool dephaseInitialState = (initialCoherences == SpinAPI::InitialStateCoherenceMode::DephaseEigenbasis);
@@ -944,6 +971,12 @@ namespace RunSection
 				}
 				this->Log() << "Initial-state coherences = eigenbasis populations. Off-diagonal elements are discarded per orientation." << std::endl;
 			}
+			else
+			{
+				this->Log() << "Initial-state coherences = keep. Coherences are retained after any molecular-frame rotation." << std::endl;
+			}
+
+			this->Log() << "NZ relaxation tensors and phenomenological operators are reconstructed for every powder orientation before propagation." << std::endl;
 
 			struct OrientationState
 			{
@@ -959,6 +992,7 @@ namespace RunSection
 
 			std::vector<OrientationState> orientation_states(static_cast<size_t>(numPoints));
 			int valid_orientations = 0;
+			bool nz_liouvillian_failure_logged = false;
 
 			for (int grid_num = 0; grid_num < numPoints; ++grid_num)
 			{
@@ -1001,9 +1035,14 @@ namespace RunSection
 				arma::cx_mat relaxationBasisHamiltonian = arma::conv_to<arma::cx_mat>::from(H0);
 				arma::cx_mat A_nz;
 				arma::cx_mat eigen_vec;
-				if (!this->BuildNakajimaZwanzigLiouvillian(i, space, H, relaxationBasisHamiltonian, Rot_mat, A_nz, eigen_vec))
+				if (!this->BuildNakajimaZwanzigLiouvillian(i, space, H, relaxationBasisHamiltonian, Rot_mat, A_nz, eigen_vec, grid_num == 0))
 				{
-					this->Log() << "Failed to build NZ Liouvillian for powder orientation " << grid_num << "." << std::endl;
+					if (!nz_liouvillian_failure_logged)
+					{
+						this->Log() << "Failed to build NZ Liouvillian for powder orientation " << grid_num
+									<< ". Further orientation failures of this type are suppressed for this task step." << std::endl;
+						nz_liouvillian_failure_logged = true;
+					}
 					continue;
 				}
 

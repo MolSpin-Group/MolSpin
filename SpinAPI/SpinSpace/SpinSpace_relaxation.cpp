@@ -1059,8 +1059,10 @@ namespace SpinAPI
 		return true;
 	}
 
-	// Hilbert-space relaxation operators cache builder
-	bool SpinSpace::RelaxationOperator(const operator_ptr &_operator, HilbertRelaxationCache &_out) const
+	// Hilbert-space relaxation operators cache builder. Powder tasks pass a
+	// spatial rotation so anisotropic relaxation axes follow the same
+	// orientation as the Hamiltonian tensors and molecular initial state.
+	bool SpinSpace::RelaxationOperatorHilbertInternal(const operator_ptr &_operator, const arma::mat *_spatialrotation, HilbertRelaxationCache &_out) const
 	{
 		if (_operator == nullptr || !_operator->IsValid())
 			return false;
@@ -1079,6 +1081,25 @@ namespace SpinAPI
 			_out.lindblad_terms.push_back(term);
 			return true;
 		};
+		auto create_triplet = [&](const spin_ptr &spin, arma::sp_cx_mat &Sx, arma::sp_cx_mat &Sy, arma::sp_cx_mat &Sz) {
+			if (!this->CreateSpinOperatorTriplet(spin, Sx, Sy, Sz))
+				return false;
+			// Non-powder callers retain the molecular Cartesian axes. Powder
+			// callers rotate the complete operator triplet before Lindblad,
+			// random-field, T1, or T2 channels are assembled from it.
+			return _spatialrotation == nullptr || this->RotateCartesianOperatorTriplet(*_spatialrotation, Sx, Sy, Sz);
+		};
+		auto create_plus_minus = [&](const spin_ptr &spin, arma::sp_cx_mat &Sp, arma::sp_cx_mat &Sm) {
+			arma::sp_cx_mat Sx;
+			arma::sp_cx_mat Sy;
+			arma::sp_cx_mat Sz;
+			if (!create_triplet(spin, Sx, Sy, Sz))
+				return false;
+			const arma::cx_double imag(0.0, 1.0);
+			Sp = Sx + imag * Sy;
+			Sm = Sx - imag * Sy;
+			return true;
+		};
 
 		bool added = false;
 
@@ -1093,9 +1114,7 @@ namespace SpinAPI
 				arma::sp_cx_mat Sx;
 				arma::sp_cx_mat Sy;
 				arma::sp_cx_mat Sz;
-				if (!this->CreateOperator(arma::conv_to<arma::sp_cx_mat>::from((*i)->Sx()), (*i), Sx) ||
-					!this->CreateOperator(arma::conv_to<arma::sp_cx_mat>::from((*i)->Sy()), (*i), Sy) ||
-					!this->CreateOperator(arma::conv_to<arma::sp_cx_mat>::from((*i)->Sz()), (*i), Sz))
+				if (!create_triplet(*i, Sx, Sy, Sz))
 				{
 					continue;
 				}
@@ -1119,8 +1138,7 @@ namespace SpinAPI
 
 				arma::sp_cx_mat Sp;
 				arma::sp_cx_mat Sm;
-				if (!this->CreateOperator(arma::conv_to<arma::sp_cx_mat>::from(spins[idx]->Sp()), spins[idx], Sp) ||
-					!this->CreateOperator(arma::conv_to<arma::sp_cx_mat>::from(spins[idx]->Sm()), spins[idx], Sm))
+				if (!create_plus_minus(spins[idx], Sp, Sm))
 				{
 					continue;
 				}
@@ -1163,9 +1181,7 @@ namespace SpinAPI
 				arma::sp_cx_mat Sx;
 				arma::sp_cx_mat Sy;
 				arma::sp_cx_mat Sz;
-				if (!this->CreateOperator(arma::conv_to<arma::sp_cx_mat>::from((*i)->Sx()), (*i), Sx) ||
-					!this->CreateOperator(arma::conv_to<arma::sp_cx_mat>::from((*i)->Sy()), (*i), Sy) ||
-					!this->CreateOperator(arma::conv_to<arma::sp_cx_mat>::from((*i)->Sz()), (*i), Sz))
+				if (!create_triplet(*i, Sx, Sy, Sz))
 				{
 					continue;
 				}
@@ -1205,9 +1221,7 @@ namespace SpinAPI
 				arma::sp_cx_mat Sx;
 				arma::sp_cx_mat Sy;
 				arma::sp_cx_mat Sz;
-				if (!this->CreateOperator(arma::conv_to<arma::sp_cx_mat>::from((*i)->Sx()), (*i), Sx) ||
-					!this->CreateOperator(arma::conv_to<arma::sp_cx_mat>::from((*i)->Sy()), (*i), Sy) ||
-					!this->CreateOperator(arma::conv_to<arma::sp_cx_mat>::from((*i)->Sz()), (*i), Sz))
+				if (!create_triplet(*i, Sx, Sy, Sz))
 				{
 					continue;
 				}
@@ -1259,8 +1273,7 @@ namespace SpinAPI
 
 				arma::sp_cx_mat Sp;
 				arma::sp_cx_mat Sm;
-				if (!this->CreateOperator(arma::conv_to<arma::sp_cx_mat>::from((*i)->Sp()), (*i), Sp) ||
-					!this->CreateOperator(arma::conv_to<arma::sp_cx_mat>::from((*i)->Sm()), (*i), Sm))
+				if (!create_plus_minus(*i, Sp, Sm))
 				{
 					continue;
 				}
@@ -1278,8 +1291,10 @@ namespace SpinAPI
 				if (!this->Contains(*i))
 					continue;
 
+				arma::sp_cx_mat Sx;
+				arma::sp_cx_mat Sy;
 				arma::sp_cx_mat Sz;
-				if (!this->CreateOperator(arma::conv_to<arma::sp_cx_mat>::from((*i)->Sz()), (*i), Sz))
+				if (!create_triplet(*i, Sx, Sy, Sz))
 				{
 					continue;
 				}
@@ -1289,6 +1304,18 @@ namespace SpinAPI
 		}
 
 		return added;
+	}
+
+	bool SpinSpace::RelaxationOperator(const operator_ptr &_operator, HilbertRelaxationCache &_out) const
+	{
+		return this->RelaxationOperatorHilbertInternal(_operator, nullptr, _out);
+	}
+
+	bool SpinSpace::PowderRelaxationOperatorHilbert(const operator_ptr &_operator, const arma::mat &_spatialrotation, HilbertRelaxationCache &_out) const
+	{
+		if (_spatialrotation.n_rows != 3 || _spatialrotation.n_cols != 3)
+			return false;
+		return this->RelaxationOperatorHilbertInternal(_operator, &_spatialrotation, _out);
 	}
 
 	bool SpinSpace::ApplyRelaxationHilbert(const HilbertRelaxationCache &_cache, const arma::cx_mat &_rho, arma::cx_mat &_out) const
@@ -1374,6 +1401,126 @@ namespace SpinAPI
 		return true;
 	}
 
+	bool SpinSpace::ApplyPhenomenologicalRelaxationHilbert(const std::vector<HilbertRelaxationPhenomenologicalTerm> &_terms, const arma::cx_mat &_basisEigenvectors, const arma::cx_mat &_rho, arma::cx_mat &_out) const
+	{
+		if (_rho.n_rows != _rho.n_cols ||
+			_basisEigenvectors.n_rows != _rho.n_rows ||
+			_basisEigenvectors.n_cols != _rho.n_cols)
+		{
+			return false;
+		}
+
+		_out.zeros(_rho.n_rows, _rho.n_cols);
+		if (_terms.empty())
+			return true;
+
+		// In the selected Hamiltonian eigenbasis, rate1 exchanges every
+		// population with every other population while preserving trace.
+		// rate2 damps only off-diagonal coherences. The caller uses this
+		// derivative form when explicit relaxation channels require RK steps.
+		const arma::uword dim = _rho.n_rows;
+		const arma::cx_mat rho_basis = _basisEigenvectors.t() * _rho * _basisEigenvectors;
+		arma::cx_mat relax_basis(dim, dim, arma::fill::zeros);
+
+		for (const auto &term : _terms)
+		{
+			if (term.populationRate != 0.0)
+			{
+				for (arma::uword row = 0; row < dim; ++row)
+				{
+					relax_basis(row, row) -= term.populationRate * static_cast<double>(dim - 1) * rho_basis(row, row);
+					for (arma::uword source = 0; source < dim; ++source)
+					{
+						if (source != row)
+							relax_basis(row, row) += term.populationRate * rho_basis(source, source);
+					}
+				}
+			}
+
+			if (term.coherenceRate != 0.0)
+			{
+				for (arma::uword row = 0; row < dim; ++row)
+				{
+					for (arma::uword col = 0; col < dim; ++col)
+					{
+						if (row != col)
+							relax_basis(row, col) -= term.coherenceRate * rho_basis(row, col);
+					}
+				}
+			}
+		}
+
+		_out = _basisEigenvectors * relax_basis * _basisEigenvectors.t();
+		return true;
+	}
+
+	bool SpinSpace::CreatePhenomenologicalRelaxationMapHilbert(const std::vector<HilbertRelaxationPhenomenologicalTerm> &_terms, const arma::cx_mat &_basisEigenvectors, double _timestep, HilbertPhenomenologicalRelaxationMap &_out) const
+	{
+		const arma::uword dim = _basisEigenvectors.n_rows;
+		if (dim == 0 || _basisEigenvectors.n_cols != dim ||
+			!std::isfinite(_timestep) || _timestep < 0.0)
+		{
+			return false;
+		}
+
+		double populationRate = 0.0;
+		double coherenceRate = 0.0;
+		for (const auto &term : _terms)
+		{
+			if (!std::isfinite(term.populationRate) || term.populationRate < 0.0 ||
+				!std::isfinite(term.coherenceRate) || term.coherenceRate < 0.0)
+			{
+				return false;
+			}
+			populationRate += term.populationRate;
+			coherenceRate += term.coherenceRate;
+		}
+
+		// All phenomenological generators commute in the same eigenbasis, so
+		// their rates can be summed before exponentiation. For N populations,
+		// deviations from trace(rho)/N decay as exp(-N * rate1 * dt);
+		// off-diagonal entries decay as exp(-rate2 * dt).
+		_out.basisToLab = _basisEigenvectors;
+		_out.labToBasis = _basisEigenvectors.t();
+		_out.populationDecay = std::exp(-static_cast<double>(dim) * populationRate * _timestep);
+		_out.coherenceDecay = std::exp(-coherenceRate * _timestep);
+		return true;
+	}
+
+	bool SpinSpace::ApplyPhenomenologicalRelaxationMapHilbert(const HilbertPhenomenologicalRelaxationMap &_map, arma::cx_mat &_rho, arma::cx_mat &_workspace) const
+	{
+		const arma::uword dim = _rho.n_rows;
+		if (dim == 0 || _rho.n_cols != dim ||
+			_map.basisToLab.n_rows != dim || _map.basisToLab.n_cols != dim ||
+			_map.labToBasis.n_rows != dim || _map.labToBasis.n_cols != dim ||
+			!std::isfinite(_map.populationDecay) || _map.populationDecay < 0.0 ||
+			!std::isfinite(_map.coherenceDecay) || _map.coherenceDecay < 0.0)
+		{
+			return false;
+		}
+
+		// Move into the orientation-specific H0 eigenbasis, apply the exact
+		// finite-step population and coherence decay, then return to the lab
+		// propagation basis. The caller supplies workspace to avoid allocations
+		// inside long powder/time loops.
+		_workspace = _map.labToBasis * _rho;
+		_rho = _workspace * _map.basisToLab;
+		const arma::cx_double equilibriumPopulation = arma::trace(_rho) / static_cast<double>(dim);
+		for (arma::uword row = 0; row < dim; ++row)
+		{
+			_rho(row, row) = equilibriumPopulation + (_rho(row, row) - equilibriumPopulation) * _map.populationDecay;
+			for (arma::uword col = 0; col < dim; ++col)
+			{
+				if (row != col)
+					_rho(row, col) *= _map.coherenceDecay;
+			}
+		}
+
+		_workspace = _map.basisToLab * _rho;
+		_rho = _workspace * _map.labToBasis;
+		return true;
+	}
+
 	bool SpinSpace::RelaxationSuperoperatorHilbert(const HilbertRelaxationCache &_cache, arma::cx_mat &_out) const
 	{
 		int dim = static_cast<int>(this->HilbertSpaceDimensions());
@@ -1451,6 +1598,42 @@ namespace SpinAPI
 			}
 		}
 
+		return true;
+	}
+
+	bool SpinSpace::PhenomenologicalRelaxationSuperoperatorHilbert(const std::vector<HilbertRelaxationPhenomenologicalTerm> &_terms, const arma::cx_mat &_basisEigenvectors, arma::cx_mat &_out) const
+	{
+		const arma::uword dim = _basisEigenvectors.n_rows;
+		if (dim == 0 || _basisEigenvectors.n_cols != dim)
+			return false;
+
+		if (_terms.empty())
+		{
+			_out.reset();
+			return true;
+		}
+
+		// timeinf solves require a Liouvillian rather than a finite-step map.
+		// Build it in the same H0 eigenbasis used by timeevo and transform it
+		// back to lab superspace ordering before returning it.
+		arma::cx_mat canonical(dim * dim, dim * dim, arma::fill::zeros);
+		for (const auto &term : _terms)
+		{
+			arma::cx_mat contribution;
+			if (!PhenomenologicalRelaxationOperator(static_cast<unsigned int>(dim), term.populationRate, term.coherenceRate, contribution))
+				return false;
+			canonical += contribution;
+		}
+
+		arma::cx_mat basisToLab;
+		arma::cx_mat labToBasis;
+		if (!this->SuperoperatorFromOperators(_basisEigenvectors, _basisEigenvectors.t(), basisToLab) ||
+			!this->SuperoperatorFromOperators(_basisEigenvectors.t(), _basisEigenvectors, labToBasis))
+		{
+			return false;
+		}
+
+		_out = basisToLab * canonical * labToBasis;
 		return true;
 	}
 

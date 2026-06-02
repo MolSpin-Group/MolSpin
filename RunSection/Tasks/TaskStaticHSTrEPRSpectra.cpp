@@ -3288,6 +3288,8 @@ namespace RunSection
 		}
 
 
+		// Harmonic post-processing models field-modulated detection after the
+		// absorption spectrum has been assembled on the sweep cache.
 		if (!this->Properties()->Get("harmonic", this->detectionHarmonic) &&
 			!this->Properties()->Get("detectionharmonic", this->detectionHarmonic) &&
 			!this->Properties()->Get("detection_harmonic", this->detectionHarmonic))
@@ -3406,6 +3408,17 @@ namespace RunSection
 
 		this->Properties()->Get("powderfullsphere", this->powderFullSphere);
 		this->Properties()->Get("fulltensorrotation", this->fullTensorRotation);
+
+		this->Log() << "TR-EPR detection model: mwfrequency = " << this->mwFrequencyGHz
+					<< " GHz, linewidth = " << this->linewidth_mT
+					<< " mT, lineshape = " << this->lineshape
+					<< ", harmonic = " << this->detectionHarmonic
+					<< ", modulation amplitude = " << this->modulationAmplitude_mT << " mT." << std::endl;
+		this->Log() << "TR-EPR powder grid request: type = " << this->powderGridType
+					<< ", symmetry = " << this->powderGridSymmetry
+					<< ", sampling points = " << this->powdersamplingpoints
+					<< ", gamma points = " << this->powderGammaPoints
+					<< ", full sphere = " << (this->powderFullSphere ? "true" : "false") << "." << std::endl;
 
 		this->detectSpinNames.clear();
 		this->Properties()->GetList("detectspins", this->detectSpinNames, ',');

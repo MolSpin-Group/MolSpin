@@ -250,6 +250,7 @@ namespace RunSection
 			if (explicitPowderGrid)
 			{
 				numPoints = static_cast<int>(grid.size());
+				this->Log() << "Using explicit single-orientation powder input. This is the external-distribution route; the supplied orientation and weight are preserved." << std::endl;
 			}
 			else
 			{
@@ -261,6 +262,13 @@ namespace RunSection
 				if (!this->CreateUniformGrid(numPoints, grid))
 				{
 					this->Log() << "Failed to obtain an Uniform grid." << std::endl;
+				}
+				else
+				{
+					if (numPoints <= 1)
+						this->Log() << "Using one internally generated identity orientation with unit weight (non-powdered limit)." << std::endl;
+					else
+						this->Log() << "Using internal powder averaging grid with " << numPoints << " orientations." << std::endl;
 				}
 			}
 
@@ -287,6 +295,10 @@ namespace RunSection
 			const SpinAPI::StateFrame initialStateFrame = (*i)->InitialStateFrame();
 			if (initialStateFrame == SpinAPI::StateFrame::Molecular)
 				this->Log() << "Initial state frame = molecular. Rotating density matrix per orientation." << std::endl;
+			else if (initialStateFrame == SpinAPI::StateFrame::Fixed)
+				this->Log() << "Initial state frame = fixed. Reusing the supplied lab-frame density matrix for every orientation." << std::endl;
+			else
+				this->Log() << "Initial state frame = eigen. The prepared density matrix is already defined in its Hamiltonian frame." << std::endl;
 
 			const SpinAPI::InitialStateCoherenceMode initialCoherences = (*i)->InitialStateCoherences();
 			const bool dephaseInitialState = (initialCoherences == SpinAPI::InitialStateCoherenceMode::DephaseEigenbasis);
@@ -303,6 +315,15 @@ namespace RunSection
 					return false;
 				}
 				this->Log() << "Initial-state coherences = eigenbasis populations. Off-diagonal elements are discarded per orientation." << std::endl;
+			}
+			else
+			{
+				this->Log() << "Initial-state coherences = keep. Coherences are retained after any molecular-frame rotation." << std::endl;
+			}
+
+			if ((*i)->operators_cbegin() != (*i)->operators_cend())
+			{
+				this->Log() << "Relaxation operators are rebuilt in the orientation-specific H0 eigenbasis for each powder point." << std::endl;
 			}
 
 			// Store the prepared initial state for every orientation. The same

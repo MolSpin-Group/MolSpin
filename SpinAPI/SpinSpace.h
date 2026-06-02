@@ -75,6 +75,16 @@ namespace SpinAPI
 		double coherenceRate = 0.0;
 	};
 
+	struct HilbertPhenomenologicalRelaxationMap
+	{
+		// Exact finite-step map in the selected Hamiltonian eigenbasis.
+		// Powder tasks prepare this once per orientation and reuse it.
+		arma::cx_mat basisToLab;
+		arma::cx_mat labToBasis;
+		double populationDecay = 1.0;
+		double coherenceDecay = 1.0;
+	};
+
 	struct HilbertRelaxationCache
 	{
 		std::vector<HilbertRelaxationTerm> lindblad_terms;
@@ -321,6 +331,20 @@ namespace SpinAPI
 		bool RelaxationOperator(const operator_ptr &, HilbertRelaxationCache &) const;
 		bool ApplyRelaxationHilbert(const HilbertRelaxationCache &, const arma::cx_mat &, arma::cx_mat &) const;
 		bool RelaxationSuperoperatorHilbert(const HilbertRelaxationCache &, arma::cx_mat &) const;
+		// Hilbert-space powder tasks rebuild anisotropic spin operators for
+		// each spatial orientation. Phenomenological relaxation is applied
+		// directly to matrix elements in the selected Hamiltonian eigenbasis.
+		bool PowderRelaxationOperatorHilbert(const operator_ptr &, const arma::mat &, HilbertRelaxationCache &) const;
+		// Differential form used when phenomenological terms must be combined
+		// with explicit relaxation channels in an RK propagation fallback.
+		bool ApplyPhenomenologicalRelaxationHilbert(const std::vector<HilbertRelaxationPhenomenologicalTerm> &, const arma::cx_mat &, const arma::cx_mat &, arma::cx_mat &) const;
+		// Exact finite-step form used by phenomenological-only Hilbert-space
+		// propagation. Preparation is separated from application so a powder
+		// task can reuse basis transforms and decay factors across time steps.
+		bool CreatePhenomenologicalRelaxationMapHilbert(const std::vector<HilbertRelaxationPhenomenologicalTerm> &, const arma::cx_mat &, double, HilbertPhenomenologicalRelaxationMap &) const;
+		bool ApplyPhenomenologicalRelaxationMapHilbert(const HilbertPhenomenologicalRelaxationMap &, arma::cx_mat &, arma::cx_mat &) const;
+		// Superspace representation retained for steady-state timeinf solves.
+		bool PhenomenologicalRelaxationSuperoperatorHilbert(const std::vector<HilbertRelaxationPhenomenologicalTerm> &, const arma::cx_mat &, arma::cx_mat &) const;
 
 		// Same relaxation operators, but when unitary transformation of projection operators is required
 		bool RelaxationOperatorFrameChange(const operator_ptr &_operator, arma::cx_mat _rotationmatrix, arma::cx_mat &_out) const;
@@ -390,6 +414,7 @@ namespace SpinAPI
 		bool CreateRotatedSpinPlusMinusInBasis(const spin_ptr &_spin, const arma::cx_mat &_basisrotation, const arma::mat &_spatialrotation, MatrixType &_Splus, MatrixType &_Sminus) const;
 		template <typename MatrixType>
 		bool RelaxationOperatorFrameChangeRotatedInternal(const operator_ptr &_operator, const arma::cx_mat &_basisrotation, const arma::mat &_spatialrotation, MatrixType &_out) const;
+		bool RelaxationOperatorHilbertInternal(const operator_ptr &, const arma::mat *, HilbertRelaxationCache &) const;
 
 	};
 

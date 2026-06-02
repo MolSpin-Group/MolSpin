@@ -39,6 +39,21 @@ namespace RunSection
 			return std::real(sum);
 		}
 
+		double TraceDenseDense(const arma::cx_mat &A, const arma::cx_mat &B)
+		{
+			// Avoid constructing A * B just to read its trace. This contraction
+			// is called for every output operator, time point, and orientation.
+			arma::cx_double sum = arma::cx_double(0.0, 0.0);
+			for (arma::uword row = 0; row < A.n_rows; ++row)
+			{
+				for (arma::uword col = 0; col < A.n_cols; ++col)
+				{
+					sum += A(row, col) * B(col, row);
+				}
+			}
+			return std::real(sum);
+		}
+
 		void WriteTransitionYieldHeader(const SpinAPI::system_ptr &_system, std::ostream &_stream)
 		{
 			auto transitions = _system->Transitions();
@@ -290,9 +305,9 @@ namespace RunSection
 			return true;
 		}
 
-		bool DiagonalizeRelaxationBasis(const arma::sp_cx_mat &basisHamiltonian,
-										arma::cx_mat &basisEigenvectors,
-										std::ostream &log_stream)
+			bool DiagonalizeRelaxationBasis(const arma::sp_cx_mat &basisHamiltonian,
+											arma::cx_mat &basisEigenvectors,
+											std::ostream &log_stream)
 			{
 				arma::vec eigenvalues;
 				if (!arma::eig_sym(eigenvalues, basisEigenvectors, arma::cx_mat(basisHamiltonian)))
@@ -301,104 +316,6 @@ namespace RunSection
 					return false;
 				}
 
-				return true;
-			}
-
-		void ApplyPhenomenologicalRelaxationInBasis(const std::vector<SpinAPI::HilbertRelaxationPhenomenologicalTerm> &terms,
-													const arma::cx_mat &basisEigenvectors,
-													const arma::cx_mat &rho,
-													arma::cx_mat &out)
-			{
-				out.zeros(rho.n_rows, rho.n_cols);
-				if (terms.empty())
-					return;
-
-				const arma::uword dim = rho.n_rows;
-				arma::cx_mat rho_basis = basisEigenvectors.t() * rho * basisEigenvectors;
-				arma::cx_mat relax_basis(dim, dim, arma::fill::zeros);
-
-				for (const auto &term : terms)
-				{
-					if (term.populationRate != 0.0)
-					{
-						for (arma::uword row = 0; row < dim; ++row)
-						{
-							relax_basis(row, row) -= term.populationRate * static_cast<double>(dim - 1) * rho_basis(row, row);
-							for (arma::uword source = 0; source < dim; ++source)
-							{
-								if (source == row)
-									continue;
-								relax_basis(row, row) += term.populationRate * rho_basis(source, source);
-							}
-						}
-					}
-
-					if (term.coherenceRate != 0.0)
-					{
-						for (arma::uword row = 0; row < dim; ++row)
-						{
-							for (arma::uword col = 0; col < dim; ++col)
-							{
-								if (row != col)
-									relax_basis(row, col) -= term.coherenceRate * rho_basis(row, col);
-							}
-						}
-					}
-				}
-
-				out = basisEigenvectors * relax_basis * basisEigenvectors.t();
-			}
-
-		bool BuildPhenomenologicalRelaxationSuperoperator(SpinAPI::SpinSpace &space,
-														  const std::vector<SpinAPI::HilbertRelaxationPhenomenologicalTerm> &terms,
-														  const arma::cx_mat &basisEigenvectors,
-														  arma::cx_mat &out)
-			{
-				if (terms.empty())
-				{
-					out.reset();
-					return true;
-				}
-
-				const arma::uword dim = basisEigenvectors.n_rows;
-				arma::cx_mat canonical(dim * dim, dim * dim, arma::fill::zeros);
-				for (const auto &term : terms)
-				{
-					for (arma::uword row = 0; row < dim; ++row)
-					{
-						for (arma::uword col = 0; col < dim; ++col)
-						{
-							const arma::uword index = row * dim + col;
-							if (row == col)
-							{
-								if (term.populationRate == 0.0)
-									continue;
-								canonical(index, index) -= term.populationRate * static_cast<double>(dim - 1);
-								for (arma::uword source = 0; source < dim; ++source)
-								{
-									if (source == row)
-										continue;
-									const arma::uword sourceIndex = source * dim + source;
-									canonical(index, sourceIndex) += term.populationRate;
-								}
-							}
-							else if (term.coherenceRate != 0.0)
-							{
-								canonical(index, index) -= term.coherenceRate;
-							}
-						}
-					}
-				}
-
-				arma::cx_mat basisToLab;
-				arma::cx_mat labToBasis;
-				if (!space.SuperoperatorFromOperators(basisEigenvectors, basisEigenvectors.t(), basisToLab) ||
-					!space.SuperoperatorFromOperators(basisEigenvectors.t(), basisEigenvectors, labToBasis))
-				{
-					return false;
-				}
-
-				out = basisToLab * canonical * labToBasis;
 				return true;
 			}
 		}
@@ -598,6 +515,20 @@ namespace RunSection
 			{
 				this->Log() << "Using sparse operators for expectation values." << std::endl;
 			}
+			// Compact density-map propagation keeps rho vectorized. Precompute
+			// matching trace contractions so observables do not require a
+			// matrix conversion at every output point.
+			std::vector<arma::cx_vec> OperatorsVector(projection_counter);
+			for (int idx = 0; idx < projection_counter; ++idx)
+			{
+				OperatorsVector[idx].zeros(dim * dim);
+				for (auto entry = OperatorsSparse[idx].begin(); entry != OperatorsSparse[idx].end(); ++entry)
+				{
+					// OperatorToSuperspace stores rho(row,col) at row * dim + col.
+					// trace(O rho) therefore uses O(row,col) at col * dim + row.
+					OperatorsVector[idx](entry.col() * dim + entry.row()) = *entry;
+				}
+			}
 
 			// Get the Hamiltonian
 			arma::sp_cx_mat K;
@@ -610,8 +541,12 @@ namespace RunSection
 				space.GetState((*j)->SourceState(), P);
 				K += (*j)->Rate() / 2 * P;
 				}
-				SpinAPI::HilbertRelaxationCache relaxation_cache;
+				// Phenomenological relaxation is basis-local and has an exact
+				// finite-step map. Explicit spin-operator relaxation must keep
+				// its operator cache so anisotropic axes can be rebuilt for
+				// every powder orientation.
 				std::vector<SpinAPI::HilbertRelaxationPhenomenologicalTerm> phenomenological_relaxation_terms;
+				std::vector<SpinAPI::operator_ptr> explicit_relaxation_operators;
 				bool use_density_matrix = false;
 				for (auto j = (*i)->operators_cbegin(); j != (*i)->operators_cend(); j++)
 				{
@@ -625,16 +560,27 @@ namespace RunSection
 						continue;
 					}
 
-					if (space.RelaxationOperator((*j), relaxation_cache))
+					SpinAPI::HilbertRelaxationCache validation_cache;
+					if (space.RelaxationOperator((*j), validation_cache))
 					{
+						explicit_relaxation_operators.push_back(*j);
 						use_density_matrix = true;
-						this->Log() << "Added relaxation operator \"" << (*j)->Name() << "\" to Hilbert-space propagation.\n";
+						this->Log() << "Added powder-aware relaxation operator \"" << (*j)->Name() << "\" to Hilbert-space propagation.\n";
 					}
 				}
 				const bool use_phenomenological_relaxation = !phenomenological_relaxation_terms.empty();
+				const bool use_only_phenomenological_relaxation = use_phenomenological_relaxation && explicit_relaxation_operators.empty();
 				if (use_density_matrix)
 				{
 					this->Log() << "Relaxation operators detected. Using density-matrix propagation in Hilbert space." << std::endl;
+				}
+				if (use_phenomenological_relaxation)
+				{
+					this->Log() << "Phenomenological relaxation is evaluated in the orientation-specific H0 eigenbasis." << std::endl;
+				}
+				if (!explicit_relaxation_operators.empty())
+				{
+					this->Log() << "Explicit relaxation operators are rebuilt for every powder orientation so their axes follow the molecular rotation." << std::endl;
 				}
 
 			// Setting or calculating total time.
@@ -695,58 +641,81 @@ namespace RunSection
 
 			if (propmethod == "autoexpm")
 			{
-				this->Log() << "Autoexpm is chosen as the propagation method." << std::endl;
-				if (precision == "double")
+				if (use_density_matrix)
 				{
-					this->Log() << "Double precision is chosen for the autoexpm method." << std::endl;
-				}
-				else if (precision == "single")
-				{
-					this->Log() << "Single precision is chosen for the autoexpm method." << std::endl;
-				}
-				else if (precision == "half")
-				{
-					this->Log() << "Half precision is chosen for the autoexpm method." << std::endl;
+					this->Log() << "Autoexpm was requested. The relaxation-aware propagation strategy is selected below." << std::endl;
 				}
 				else
 				{
-					this->Log() << "Undefined precision for autoexpm method. Using single precision." << std::endl;
-					precision = "single";
+					this->Log() << "Autoexpm is chosen as the propagation method." << std::endl;
+					if (precision == "double")
+					{
+						this->Log() << "Double precision is chosen for the autoexpm method." << std::endl;
+					}
+					else if (precision == "single")
+					{
+						this->Log() << "Single precision is chosen for the autoexpm method." << std::endl;
+					}
+					else if (precision == "half")
+					{
+						this->Log() << "Half precision is chosen for the autoexpm method." << std::endl;
+					}
+					else
+					{
+						this->Log() << "Undefined precision for autoexpm method. Using single precision." << std::endl;
+						precision = "single";
+					}
 				}
 			}
 			else if (propmethod == "krylov")
 			{
-				if (krylovsize > 0)
+				if (use_density_matrix)
 				{
-					this->Log() << "Krylov basis size is chosen as " << krylovsize << "." << std::endl;
-					if (krylovtol > 0)
-					{
-						this->Log() << "Tolerance for krylov propagation is chosen as " << krylovtol << "." << std::endl;
-					}
-					else
-					{
-						this->Log() << "Undefined tolerance for the krylov subspace. Using the default of 1e-16." << std::endl;
-						krylovtol = 1e-16;
-					}
+					this->Log() << "Krylov propagation was requested. The relaxation-aware propagation strategy is selected below." << std::endl;
 				}
 				else
 				{
-					this->Log() << "Undefined size of the krylov subspace. Using the default size of 16." << std::endl;
-					krylovsize = 16;
-					if (krylovtol > 0)
+					if (krylovsize > 0)
 					{
-						this->Log() << "Tolerance for krylov propagation is chosen as " << krylovtol << "." << std::endl;
+						this->Log() << "Krylov basis size is chosen as " << krylovsize << "." << std::endl;
+						if (krylovtol > 0)
+						{
+							this->Log() << "Tolerance for krylov propagation is chosen as " << krylovtol << "." << std::endl;
+						}
+						else
+						{
+							this->Log() << "Undefined tolerance for the krylov subspace. Using the default of 1e-16." << std::endl;
+							krylovtol = 1e-16;
+						}
 					}
 					else
 					{
-						this->Log() << "Undefined tolerance for the krylov subspace. Using the default of 1e-16." << std::endl;
-						krylovtol = 1e-16;
+						this->Log() << "Undefined size of the krylov subspace. Using the default size of 16." << std::endl;
+						krylovsize = 16;
+						if (krylovtol > 0)
+						{
+							this->Log() << "Tolerance for krylov propagation is chosen as " << krylovtol << "." << std::endl;
+						}
+						else
+						{
+							this->Log() << "Undefined tolerance for the krylov subspace. Using the default of 1e-16." << std::endl;
+							krylovtol = 1e-16;
+						}
 					}
 				}
 			}
 			else if (propmethod == "rk4" || propmethod == "explicit")
 			{
-				this->Log() << "Explicit RK4 is chosen as the propagation method." << std::endl;
+				this->Log() << "Explicit RK4 was requested as the propagation method." << std::endl;
+			}
+			else if (propmethod == "normal")
+			{
+				this->Log() << "Normal exponential Hamiltonian propagation is chosen." << std::endl;
+			}
+			else if (propmethod.empty())
+			{
+				this->Log() << "No propagation method specified. Using normal exponential Hamiltonian propagation." << std::endl;
+				propmethod = "normal";
 			}
 			else
 			{
@@ -755,22 +724,45 @@ namespace RunSection
 			}
 
 			bool relax_use_split_expm = false;
+			bool relax_use_exact_phenomenological_split = false;
 			arma::cx_mat K_dense;
 			if (use_density_matrix)
 			{
-				relax_use_split_expm = (propmethod != "rk4" && propmethod != "explicit");
-				if (relax_use_split_expm)
+				if (use_only_phenomenological_relaxation)
 				{
+					relax_use_split_expm = true;
+					relax_use_exact_phenomenological_split = true;
 					K_dense = arma::cx_mat(K);
-					this->Log() << "Relaxation operators active; using split-exponential propagation (Hamiltonian expm + RK4 relaxation)." << std::endl;
-					if (propmethod != "normal")
+					this->Log() << "Phenomenological relaxation active; using analytical eigenbasis split propagation (Hamiltonian exponential half-steps + exact relaxation map)." << std::endl;
+					if (propmethod == "rk4" || propmethod == "explicit")
 					{
-						this->Log() << "Note: propagationmethod is ignored for relaxation; use propagationmethod = rk4 to force explicit RK4." << std::endl;
+						this->Log() << "Note: explicit RK4 was requested but is not used for phenomenological-only relaxation because the analytical finite-step map is exact." << std::endl;
+					}
+					else if (propmethod != "normal")
+					{
+						this->Log() << "Note: propagationmethod = " << propmethod << " is replaced by dense Hamiltonian exponential half-steps for phenomenological-only relaxation." << std::endl;
 					}
 				}
 				else
 				{
-					this->Log() << "Relaxation operators active; using explicit RK4 density-matrix propagation." << std::endl;
+					relax_use_split_expm = (propmethod != "rk4" && propmethod != "explicit");
+					if (relax_use_split_expm)
+					{
+						K_dense = arma::cx_mat(K);
+						this->Log() << "Explicit relaxation operators active; using split propagation (Hamiltonian exponential half-steps + RK4 relaxation fallback)." << std::endl;
+						if (use_phenomenological_relaxation)
+						{
+							this->Log() << "Phenomenological terms are included in the RK4 fallback because explicit relaxation operators are also active." << std::endl;
+						}
+						if (propmethod != "normal")
+						{
+							this->Log() << "Note: propagationmethod is ignored for relaxation splitting; use propagationmethod = rk4 to force full explicit RK4." << std::endl;
+						}
+					}
+					else
+					{
+						this->Log() << "Explicit relaxation operators active; using full RK4 density-matrix propagation as requested." << std::endl;
+					}
 				}
 			}
 
@@ -789,6 +781,23 @@ namespace RunSection
 				Method = "timeevo";
 				method_timeevo = true;
 				method_timeinf = false;
+			}
+			this->Log() << "Spectrum evaluation method = " << Method << "." << std::endl;
+			if (method_timeinf && use_density_matrix)
+			{
+				this->Log() << "Steady-state relaxation is assembled as an orientation-specific Liouvillian before solving the time-integrated density matrix." << std::endl;
+			}
+			if (method_timeevo && relax_use_exact_phenomenological_split)
+			{
+				const int density_map_dimension = dim * dim;
+				if (density_map_dimension <= 64)
+				{
+					this->Log() << "Small Hilbert density matrix detected (" << density_map_dimension << " components). A compact finite-step map will be prepared per orientation." << std::endl;
+				}
+				else
+				{
+					this->Log() << "Hilbert density matrix has " << density_map_dimension << " components. Using direct matrix propagation to avoid compact-map memory growth." << std::endl;
+				}
 			}
 
 			// Read if the result should be integrated or not.
@@ -827,6 +836,7 @@ namespace RunSection
 			if (explicitPowderGrid)
 			{
 				numPoints = static_cast<int>(grid.size());
+				this->Log() << "Using explicit single-orientation powder input. This is the external-distribution route; the supplied orientation and weight are preserved." << std::endl;
 			}
 			else
 			{
@@ -855,12 +865,17 @@ namespace RunSection
 					{
 						this->Log() << "Using powder averaging with " << numPoints << " orientations." << std::endl;
 					}
+					else
+					{
+						this->Log() << "Using one internally generated identity orientation with unit weight (non-powdered limit)." << std::endl;
+					}
 				}
 			}
 			if (grid.empty())
 			{
 				grid.push_back({0.0, 0.0, 1.0});
 				numPoints = 0;
+				this->Log() << "Using one identity orientation with unit weight (non-powdered limit)." << std::endl;
 			}
 
 			std::vector<std::string> HamiltonianH0list;
@@ -872,6 +887,14 @@ namespace RunSection
 			if (initialStateFrame == SpinAPI::StateFrame::Molecular)
 			{
 				this->Log() << "Initial state frame = molecular. Rotating density matrix per orientation." << std::endl;
+			}
+			else if (initialStateFrame == SpinAPI::StateFrame::Fixed)
+			{
+				this->Log() << "Initial state frame = fixed. Reusing the supplied lab-frame density matrix for every orientation." << std::endl;
+			}
+			else
+			{
+				this->Log() << "Initial state frame = eigen. The prepared density matrix is already defined in its Hamiltonian frame." << std::endl;
 			}
 
 			const SpinAPI::InitialStateCoherenceMode initialCoherences = (*i)->InitialStateCoherences();
@@ -889,6 +912,10 @@ namespace RunSection
 					return false;
 				}
 				this->Log() << "Initial-state coherences = eigenbasis populations. Off-diagonal elements are discarded per orientation." << std::endl;
+			}
+			else
+			{
+				this->Log() << "Initial-state coherences = keep. Coherences are retained after any molecular-frame rotation." << std::endl;
 			}
 
 			// Read a pulse sequence from the input
@@ -1036,12 +1063,6 @@ namespace RunSection
 				Iden_dense = arma::eye<arma::cx_mat>(dim, dim);
 			}
 
-			arma::cx_mat relaxation_super;
-			if (method_timeinf && use_density_matrix)
-			{
-				space.RelaxationSuperoperatorHilbert(relaxation_cache, relaxation_super);
-			}
-
 			SpinAPI::SpinSpace base_space(space);
 			base_space.SetReactionOperatorType(this->reactionOperators);
 			base_space.UseSuperoperatorSpace(false);
@@ -1130,8 +1151,35 @@ namespace RunSection
 						continue;
 					}
 
-				if (use_density_matrix)
-				{
+					// Explicit spin-operator relaxation depends on the spatial
+					// orientation. Rebuild this cache beside the rotated H0
+					// instead of reusing the validation cache created above.
+					SpinAPI::HilbertRelaxationCache relaxation_cache;
+					bool relaxation_cache_valid = true;
+					for (const auto &relaxationOperator : explicit_relaxation_operators)
+					{
+						if (!space_thread.PowderRelaxationOperatorHilbert(relaxationOperator, Rot_mat, relaxation_cache))
+						{
+							this->Log() << "Failed to construct powder-aware Hilbert-space relaxation operator \"" << relaxationOperator->Name() << "\"." << std::endl;
+							relaxation_cache_valid = false;
+							break;
+						}
+					}
+					if (!relaxation_cache_valid)
+					{
+						continue;
+					}
+
+					arma::cx_mat relaxation_super;
+					if (method_timeinf && !explicit_relaxation_operators.empty() &&
+						!space_thread.RelaxationSuperoperatorHilbert(relaxation_cache, relaxation_super))
+					{
+						this->Log() << "Failed to construct powder-aware Hilbert-space relaxation superoperator." << std::endl;
+						continue;
+					}
+
+					if (use_density_matrix)
+					{
 					arma::cx_mat rho = rho_initial;
 					int dim = static_cast<int>(rho.n_rows);
 
@@ -1145,6 +1193,17 @@ namespace RunSection
 					arma::cx_mat k4(dim, dim, arma::fill::zeros);
 					arma::cx_mat tmp_state(dim, dim, arma::fill::zeros);
 					arma::cx_mat rk_accum(dim, dim, arma::fill::zeros);
+					SpinAPI::HilbertPhenomenologicalRelaxationMap timeevo_relaxation_map;
+					const SpinAPI::HilbertPhenomenologicalRelaxationMap *timeevo_relaxation_map_ptr = nullptr;
+					if (relax_use_exact_phenomenological_split && method_timeevo)
+					{
+						if (!space_thread.CreatePhenomenologicalRelaxationMapHilbert(phenomenological_relaxation_terms, phenomenological_basis_eigenvectors, dt, timeevo_relaxation_map))
+						{
+							this->Log() << "Failed to prepare the analytical phenomenological relaxation map for this powder orientation." << std::endl;
+							continue;
+						}
+						timeevo_relaxation_map_ptr = &timeevo_relaxation_map;
+					}
 
 					bool use_dense_H = false;
 					arma::cx_mat H_dense;
@@ -1170,8 +1229,15 @@ namespace RunSection
 						for (int idx = 0; idx < projection_counter; ++idx)
 						{
 							double val = use_sparse_ops ? TraceSparseDense(OperatorsSparse[idx], state)
-														: std::real(arma::trace(OperatorsDense[idx] * state));
+														: TraceDenseDense(OperatorsDense[idx], state);
 							target(row_index, idx) = val;
+						}
+					};
+
+					auto record_expectation_vector = [&](arma::mat &target, size_t row_index, const arma::cx_vec &state) {
+						for (int idx = 0; idx < projection_counter; ++idx)
+						{
+							target(row_index, idx) = std::real(arma::accu(OperatorsVector[idx] % state));
 						}
 					};
 
@@ -1188,15 +1254,15 @@ namespace RunSection
 						}
 						out = -imag_unit * (work_left - work_right);
 						work_left = K * state;
-							work_right = state * K;
-							out -= (work_left + work_right);
-							space_thread.ApplyRelaxationHilbert(relaxation_cache, state, relax);
-							if (use_phenomenological_relaxation)
-							{
-								ApplyPhenomenologicalRelaxationInBasis(phenomenological_relaxation_terms, phenomenological_basis_eigenvectors, state, phenomenological_relax);
-								relax += phenomenological_relax;
-							}
-							out += relax;
+						work_right = state * K;
+						out -= (work_left + work_right);
+						space_thread.ApplyRelaxationHilbert(relaxation_cache, state, relax);
+						if (use_phenomenological_relaxation)
+						{
+							space_thread.ApplyPhenomenologicalRelaxationHilbert(phenomenological_relaxation_terms, phenomenological_basis_eigenvectors, state, phenomenological_relax);
+							relax += phenomenological_relax;
+						}
+						out += relax;
 						};
 
 						auto rk4_step = [&](arma::cx_mat &state, const arma::sp_cx_mat &H_total, const arma::cx_mat *H_dense_ptr, double step_dt) {
@@ -1221,7 +1287,7 @@ namespace RunSection
 							space_thread.ApplyRelaxationHilbert(relaxation_cache, state, out);
 							if (use_phenomenological_relaxation)
 							{
-								ApplyPhenomenologicalRelaxationInBasis(phenomenological_relaxation_terms, phenomenological_basis_eigenvectors, state, phenomenological_relax);
+								space_thread.ApplyPhenomenologicalRelaxationHilbert(phenomenological_relaxation_terms, phenomenological_basis_eigenvectors, state, phenomenological_relax);
 								out += phenomenological_relax;
 							}
 						};
@@ -1255,10 +1321,36 @@ namespace RunSection
 						state = work_left * U_half_st;
 					};
 
-					auto split_step = [&](arma::cx_mat &state, const arma::cx_mat &U_half, const arma::cx_mat &U_half_st, double step_dt) {
+					auto split_step = [&](arma::cx_mat &state, const arma::cx_mat &U_half, const arma::cx_mat &U_half_st, const SpinAPI::HilbertPhenomenologicalRelaxationMap *phenomenological_map, double step_dt) {
 						apply_unitary_half(state, U_half, U_half_st);
-						rk4_relax_step(state, step_dt);
+						if (phenomenological_map != nullptr)
+						{
+							space_thread.ApplyPhenomenologicalRelaxationMapHilbert(*phenomenological_map, state, work_right);
+						}
+						else
+						{
+							rk4_relax_step(state, step_dt);
+						}
 						apply_unitary_half(state, U_half, U_half_st);
+					};
+
+					auto build_compact_split_propagator = [&](const arma::cx_mat &U_half, const arma::cx_mat &U_half_st, const SpinAPI::HilbertPhenomenologicalRelaxationMap *phenomenological_map, double step_dt, arma::sp_cx_mat &propagator) {
+						// For small Hilbert spaces, materializing the composed
+						// density map is faster than repeatedly dispatching
+						// several tiny matrix products in split_step().
+						const arma::uword density_dim = static_cast<arma::uword>(dim * dim);
+						arma::cx_mat dense_propagator(density_dim, density_dim, arma::fill::zeros);
+						arma::cx_mat basis_state(dim, dim, arma::fill::zeros);
+						arma::cx_vec propagated_state;
+						for (arma::uword col = 0; col < density_dim; ++col)
+						{
+							basis_state.zeros();
+							basis_state(col / dim, col % dim) = 1.0;
+							split_step(basis_state, U_half, U_half_st, phenomenological_map, step_dt);
+							space_thread.OperatorToSuperspace(basis_state, propagated_state);
+							dense_propagator.col(col) = propagated_state;
+						}
+						propagator = arma::sp_cx_mat(dense_propagator);
 					};
 
 					size_t pulse_step_index = 0;
@@ -1295,6 +1387,17 @@ namespace RunSection
 										this->Log() << "Invalid timestep for pulse \"" << (*pulse)->Name() << "\". Skipping pulse propagation." << std::endl;
 										continue;
 									}
+									SpinAPI::HilbertPhenomenologicalRelaxationMap pulse_relaxation_map;
+									const SpinAPI::HilbertPhenomenologicalRelaxationMap *pulse_relaxation_map_ptr = nullptr;
+									if (relax_use_exact_phenomenological_split)
+									{
+										if (!space_thread.CreatePhenomenologicalRelaxationMapHilbert(phenomenological_relaxation_terms, phenomenological_basis_eigenvectors, pulse_dt, pulse_relaxation_map))
+										{
+											this->Log() << "Failed to prepare the analytical phenomenological relaxation map for pulse \"" << (*pulse)->Name() << "\"." << std::endl;
+											continue;
+										}
+										pulse_relaxation_map_ptr = &pulse_relaxation_map;
+									}
 
 									if ((*pulse)->Type() == SpinAPI::PulseType::InstantPulse)
 									{
@@ -1325,7 +1428,7 @@ namespace RunSection
 											build_unitary_half(H_pulse_dense, pulse_dt, U_half, U_half_st);
 											for (unsigned int n = 1; n <= steps; ++n)
 											{
-												split_step(rho, U_half, U_half_st, pulse_dt);
+												split_step(rho, U_half, U_half_st, pulse_relaxation_map_ptr, pulse_dt);
 
 												if (has_pulse_output && pulse_step_index < ExptValuesPulseOrientation.n_rows)
 												{
@@ -1383,7 +1486,7 @@ namespace RunSection
 												arma::cx_mat U_half;
 												arma::cx_mat U_half_st;
 												build_unitary_half(H_pulse_dense, pulse_dt, U_half, U_half_st);
-												split_step(rho, U_half, U_half_st, pulse_dt);
+												split_step(rho, U_half, U_half_st, pulse_relaxation_map_ptr, pulse_dt);
 
 												if (has_pulse_output && pulse_step_index < ExptValuesPulseOrientation.n_rows)
 												{
@@ -1441,7 +1544,7 @@ namespace RunSection
 											build_unitary_half(H_dense, pulse_dt, U_half, U_half_st);
 											for (unsigned int n = 1; n <= relax_steps; ++n)
 											{
-												split_step(rho, U_half, U_half_st, pulse_dt);
+												split_step(rho, U_half, U_half_st, pulse_relaxation_map_ptr, pulse_dt);
 
 												if (has_pulse_output && pulse_step_index < ExptValuesPulseOrientation.n_rows)
 												{
@@ -1487,10 +1590,26 @@ namespace RunSection
 							arma::cx_mat U_half;
 							arma::cx_mat U_half_st;
 							build_unitary_half(H_dense, dt, U_half, U_half_st);
-							for (int k = 0; k < num_steps; ++k)
+							const bool use_compact_split_propagator = relax_use_exact_phenomenological_split && dim * dim <= 64;
+							if (use_compact_split_propagator)
 							{
-								record_expectation_rho(ExptValuesOrientation, k, rho);
-								split_step(rho, U_half, U_half_st, dt);
+								arma::sp_cx_mat compact_split_propagator;
+								build_compact_split_propagator(U_half, U_half_st, timeevo_relaxation_map_ptr, dt, compact_split_propagator);
+								arma::cx_vec rho_vector;
+								space_thread.OperatorToSuperspace(rho, rho_vector);
+								for (int k = 0; k < num_steps; ++k)
+								{
+									record_expectation_vector(ExptValuesOrientation, k, rho_vector);
+									rho_vector = compact_split_propagator * rho_vector;
+								}
+							}
+							else
+							{
+								for (int k = 0; k < num_steps; ++k)
+								{
+									record_expectation_rho(ExptValuesOrientation, k, rho);
+									split_step(rho, U_half, U_half_st, timeevo_relaxation_map_ptr, dt);
+								}
 							}
 						}
 						else
@@ -1513,7 +1632,7 @@ namespace RunSection
 							if (use_phenomenological_relaxation)
 							{
 								arma::cx_mat phenomenological_super;
-								if (!BuildPhenomenologicalRelaxationSuperoperator(space_thread, phenomenological_relaxation_terms, phenomenological_basis_eigenvectors, phenomenological_super))
+								if (!space_thread.PhenomenologicalRelaxationSuperoperatorHilbert(phenomenological_relaxation_terms, phenomenological_basis_eigenvectors, phenomenological_super))
 								{
 									this->Log() << "Failed to construct phenomenological relaxation superoperator for this powder orientation." << std::endl;
 									continue;
@@ -1965,7 +2084,7 @@ namespace RunSection
 					for (int idx = 0; idx < projection_counter; idx++)
 					{
 						double val = use_sparse_ops ? TraceSparseDense(OperatorsSparse[idx], rho_integrated)
-													: std::real(arma::trace(OperatorsDense[idx] * rho_integrated));
+													: TraceDenseDense(OperatorsDense[idx], rho_integrated);
 						this->Data() << std::setprecision(12) << val << " ";
 					}
 					this->Data() << std::endl;
