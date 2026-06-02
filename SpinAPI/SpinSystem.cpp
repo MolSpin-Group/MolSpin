@@ -786,11 +786,32 @@ namespace SpinAPI
 			{
 				std::cout << "RelaxationDephasing";
 			}
+			else if ((*i)->Type() == OperatorType::RelaxationLindbladDoubleSpin)
+			{
+				std::cout << "RelaxationLindbladDoubleSpin";
+			}
+			else if ((*i)->Type() == OperatorType::RelaxationRandomFields)
+			{
+				std::cout << "RelaxationRandomFields";
+			}
+			else if ((*i)->Type() == OperatorType::RelaxationT1)
+			{
+				std::cout << "RelaxationT1";
+			}
+			else if ((*i)->Type() == OperatorType::RelaxationT2)
+			{
+				std::cout << "RelaxationT2";
+			}
+			else if ((*i)->Type() == OperatorType::RelaxationPhenomenological)
+			{
+				std::cout << "RelaxationPhenomenological";
+			}
 			else
 			{
 				std::cout << "unknown";
 			}
 			std::cout << ", spins: " << (*i)->SpinCount();
+			std::cout << ", frame: " << ((*i)->Frame() == RelaxationFrame::Lab ? "lab" : "molecular");
 			std::cout << ", is valid: " << (*i)->IsValid() << ")" << std::endl;
 		}
 

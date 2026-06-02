@@ -2078,13 +2078,17 @@ bool test_spinapi_hilbert_phenomenological_finite_step_map_matches_superoperator
 	arma::cx_mat superoperator;
 	arma::cx_vec rhoVec;
 	arma::cx_mat fromSuperoperator;
+	arma::cx_mat mappedInBasis = xBasis.t() * rho * xBasis;
 	bool isCorrect = true;
 	isCorrect &= space.CreatePhenomenologicalRelaxationMapHilbert(terms, xBasis, timestep, map);
 	isCorrect &= space.ApplyPhenomenologicalRelaxationMapHilbert(map, mapped, workspace);
+	isCorrect &= space.ApplyPhenomenologicalRelaxationMapInBasisHilbert(map, mappedInBasis);
+	mappedInBasis = xBasis * mappedInBasis * xBasis.t();
 	isCorrect &= space.PhenomenologicalRelaxationSuperoperatorHilbert(terms, xBasis, superoperator);
 	isCorrect &= space.OperatorToSuperspace(rho, rhoVec);
 	isCorrect &= space.OperatorFromSuperspace(arma::expmat(superoperator * timestep) * rhoVec, fromSuperoperator);
 	isCorrect &= equal_matrices(mapped, fromSuperoperator, 1e-12);
+	isCorrect &= equal_matrices(mappedInBasis, fromSuperoperator, 1e-12);
 	isCorrect &= (std::abs(arma::trace(mapped) - arma::trace(rho)) < 1e-12);
 
 	return isCorrect;
@@ -2156,13 +2160,58 @@ bool test_spinapi_rotate_state_singlet_invariant_triplet_t0_rotates()
 
 	arma::cx_mat rotatedSinglet;
 	arma::cx_mat rotatedT0;
+	SpinAPI::HilbertStateRotationCache singletCache;
+	SpinAPI::HilbertStateRotationCache tripletCache;
+	isCorrect &= space.CreateStateRotationCache(Psinglet, singletCache);
+	isCorrect &= space.CreateStateRotationCache(PT0, tripletCache);
+	isCorrect &= singletCache.rotationInvariant;
+	isCorrect &= !tripletCache.rotationInvariant;
 	isCorrect &= space.RotateState(Psinglet, rotation, rotatedSinglet);
-	isCorrect &= space.RotateState(PT0, rotation, rotatedT0);
+	isCorrect &= space.RotateState(PT0, rotation, tripletCache, rotatedT0);
 
 	isCorrect &= equal_matrices(rotatedSinglet, Psinglet, 1e-12);
 	isCorrect &= (arma::norm(rotatedT0 - PT0, "fro") > 1e-3);
 	isCorrect &= (std::abs(arma::trace(Psinglet * rotatedT0)) < 1e-12);
 
+	return isCorrect;
+}
+//////////////////////////////////////////////////////////////////////////////
+
+bool test_spinapi_prepare_powder_initial_density_uses_rotation_invariance()
+{
+	auto spin1 = std::make_shared<SpinAPI::Spin>("E1", "spin=1/2;");
+	auto spin2 = std::make_shared<SpinAPI::Spin>("E2", "spin=1/2;");
+	auto singlet = std::make_shared<SpinAPI::State>("S", "spins(E1,E2)=|1/2,-1/2>-|-1/2,1/2>;");
+
+	SpinAPI::SpinSystem spinsys("System");
+	spinsys.Add(spin1);
+	spinsys.Add(spin2);
+
+	bool isCorrect = singlet->ParseFromSystem(spinsys);
+	SpinAPI::SpinSpace space(spinsys);
+	space.UseSuperoperatorSpace(true);
+
+	arma::cx_mat Psinglet;
+	isCorrect &= space.GetState(singlet, Psinglet);
+
+	SpinAPI::HilbertStateRotationCache cache;
+	isCorrect &= space.CreateStateRotationCache(Psinglet, cache);
+	isCorrect &= cache.rotationInvariant;
+
+	const double beta = 0.83;
+	arma::mat rotation = {
+		{std::cos(beta), 0.0, std::sin(beta)},
+		{0.0, 1.0, 0.0},
+		{-std::sin(beta), 0.0, std::cos(beta)}};
+
+	arma::cx_mat prepared;
+	const std::vector<std::string> unusedHamiltonian;
+	isCorrect &= space.PrepareInitialDensityForPowder(Psinglet, rotation, SpinAPI::StateFrame::Molecular, false, unusedHamiltonian, &cache, prepared);
+	isCorrect &= equal_matrices(prepared, Psinglet, 1e-12);
+
+	// PrepareInitialDensityForPowder temporarily switches to Hilbert operators
+	// internally. Confirm that the caller's superspace setting is restored.
+	isCorrect &= (space.SpaceDimensions() == space.SuperSpaceDimensions());
 	return isCorrect;
 }
 //////////////////////////////////////////////////////////////////////////////
@@ -2314,6 +2363,156 @@ bool test_spinapi_relaxation_t1_spin_one_population_exchange()
 }
 //////////////////////////////////////////////////////////////////////////////
 
+bool test_spinapi_relaxation_t2_is_normalized_pure_dephasing()
+{
+	auto spin = std::make_shared<SpinAPI::Spin>("E", "type=electron;spin=1/2;tensor=isotropic(2);");
+	auto relax = std::make_shared<SpinAPI::Operator>("T2", "type=relaxationt2;spins=E;rate=0.75;");
+
+	auto spinsys = std::make_shared<SpinAPI::SpinSystem>("System");
+	spinsys->Add(spin);
+	spinsys->Add(relax);
+	std::vector<std::shared_ptr<SpinAPI::SpinSystem>> systems = {spinsys};
+
+	bool isCorrect = (spinsys->ValidateOperators(systems).size() == 0);
+	isCorrect &= (relax->Frame() == SpinAPI::RelaxationFrame::Lab);
+
+	arma::cx_mat rho = arma::zeros<arma::cx_mat>(2, 2);
+	rho(0, 0) = 0.70;
+	rho(1, 1) = 0.30;
+	rho(0, 1) = arma::cx_double(0.20, 0.10);
+	rho(1, 0) = std::conj(rho(0, 1));
+
+	// relaxationt2 means pure dephasing at the user-supplied rate 1/Tphi.
+	// Populations and trace must remain untouched. T1 contributions to an
+	// observed 1/T2 are supplied separately through relaxationt1.
+	arma::cx_mat expected = arma::zeros<arma::cx_mat>(2, 2);
+	expected(0, 1) = -0.75 * rho(0, 1);
+	expected(1, 0) = -0.75 * rho(1, 0);
+
+	SpinAPI::SpinSpace ss_space(*spinsys);
+	ss_space.UseSuperoperatorSpace(true);
+	arma::sp_cx_mat R;
+	arma::cx_vec rho_vec;
+	arma::cx_mat ss_out;
+	isCorrect &= ss_space.RelaxationOperator(relax, R);
+	isCorrect &= ss_space.OperatorToSuperspace(rho, rho_vec);
+	isCorrect &= ss_space.OperatorFromSuperspace(R * rho_vec, ss_out);
+	isCorrect &= equal_matrices(ss_out, expected, 1e-12);
+	isCorrect &= (std::abs(arma::trace(ss_out)) < 1e-12);
+
+	SpinAPI::SpinSpace hs_space(*spinsys);
+	hs_space.UseSuperoperatorSpace(false);
+	SpinAPI::HilbertRelaxationCache cache;
+	arma::cx_mat hs_out;
+	isCorrect &= hs_space.RelaxationOperator(relax, cache);
+	isCorrect &= hs_space.ApplyRelaxationHilbert(cache, rho, hs_out);
+	isCorrect &= equal_matrices(hs_out, expected, 1e-12);
+
+	return isCorrect;
+}
+//////////////////////////////////////////////////////////////////////////////
+
+bool test_spinapi_relaxation_random_fields_are_trace_preserving_and_powder_invariant()
+{
+	auto spin = std::make_shared<SpinAPI::Spin>("E", "type=electron;spin=1/2;tensor=isotropic(2);");
+	auto relax = std::make_shared<SpinAPI::Operator>("RFR", "type=relaxationrandomfields;spins=E;rate=0.4;");
+
+	auto spinsys = std::make_shared<SpinAPI::SpinSystem>("System");
+	spinsys->Add(spin);
+	spinsys->Add(relax);
+	std::vector<std::shared_ptr<SpinAPI::SpinSystem>> systems = {spinsys};
+
+	bool isCorrect = (spinsys->ValidateOperators(systems).size() == 0);
+	isCorrect &= (relax->Frame() == SpinAPI::RelaxationFrame::Molecular);
+
+	arma::cx_mat rho = arma::zeros<arma::cx_mat>(2, 2);
+	rho(0, 0) = 0.75;
+	rho(1, 1) = 0.25;
+	rho(0, 1) = arma::cx_double(0.20, 0.10);
+	rho(1, 0) = std::conj(rho(0, 1));
+
+	// For one spin-1/2 and equal Cartesian rates k, sum_j k D[S_j]
+	// reduces to k * (trace(rho) I / 2 - rho). This is the one-spin
+	// component of the random-field model used by Kattnig et al.
+	const arma::cx_mat expected = 0.4 * (0.5 * arma::eye<arma::cx_mat>(2, 2) - rho);
+
+	SpinAPI::SpinSpace ss_space(*spinsys);
+	ss_space.UseSuperoperatorSpace(true);
+	arma::sp_cx_mat R;
+	arma::cx_vec rho_vec;
+	arma::cx_mat ss_out;
+	isCorrect &= ss_space.RelaxationOperator(relax, R);
+	isCorrect &= ss_space.OperatorToSuperspace(rho, rho_vec);
+	isCorrect &= ss_space.OperatorFromSuperspace(R * rho_vec, ss_out);
+	isCorrect &= equal_matrices(ss_out, expected, 1e-12);
+	isCorrect &= (std::abs(arma::trace(ss_out)) < 1e-12);
+
+	SpinAPI::SpinSpace hs_space(*spinsys);
+	hs_space.UseSuperoperatorSpace(false);
+	SpinAPI::HilbertRelaxationCache cache;
+	arma::cx_mat hs_out;
+	isCorrect &= hs_space.RelaxationOperator(relax, cache);
+	isCorrect &= hs_space.ApplyRelaxationHilbert(cache, rho, hs_out);
+	isCorrect &= equal_matrices(hs_out, expected, 1e-12);
+
+	// An isotropic random-field generator is invariant under powder rotation,
+	// even though its default frame is molecular. This catches accidental
+	// orientation-dependent loss terms in either propagation hierarchy.
+	const double beta = M_PI / 2.0;
+	arma::mat beta90 = {
+		{std::cos(beta), 0.0, std::sin(beta)},
+		{0.0, 1.0, 0.0},
+		{-std::sin(beta), 0.0, std::cos(beta)}};
+	arma::cx_mat basis = arma::eye<arma::cx_mat>(2, 2);
+	arma::sp_cx_mat powder_R;
+	isCorrect &= ss_space.PowderRelaxationOperatorEigenbasis(relax, basis, beta90, powder_R);
+	isCorrect &= equal_matrices(arma::cx_mat(powder_R), arma::cx_mat(R), 1e-12);
+
+	SpinAPI::HilbertRelaxationCache powder_cache;
+	arma::cx_mat powder_hs_out;
+	isCorrect &= hs_space.PowderRelaxationOperatorHilbert(relax, beta90, powder_cache);
+	isCorrect &= hs_space.ApplyRelaxationHilbert(powder_cache, rho, powder_hs_out);
+	isCorrect &= equal_matrices(powder_hs_out, expected, 1e-12);
+
+	return isCorrect;
+}
+//////////////////////////////////////////////////////////////////////////////
+
+bool test_spinapi_operator_copy_preserves_relaxation_configuration()
+{
+	auto spin = std::make_shared<SpinAPI::Spin>("E", "type=electron;spin=1/2;tensor=isotropic(2);");
+	auto relax = std::make_shared<SpinAPI::Operator>("T2", "type=relaxationt2;spins=E;rate=0.75;frame=molecular;");
+
+	auto spinsys = std::make_shared<SpinAPI::SpinSystem>("System");
+	spinsys->Add(spin);
+	spinsys->Add(relax);
+	std::vector<std::shared_ptr<SpinAPI::SpinSystem>> systems = {spinsys};
+
+	bool isCorrect = (spinsys->ValidateOperators(systems).size() == 0);
+	auto matches = [&relax](const SpinAPI::Operator &_operator)
+	{
+		return _operator.Name() == relax->Name() &&
+			   _operator.Type() == SpinAPI::OperatorType::RelaxationT2 &&
+			   _operator.SpinCount() == 1 &&
+			   std::abs(_operator.Rate1() - 0.75) < 1e-12 &&
+			   std::abs(_operator.Rate2() - 0.75) < 1e-12 &&
+			   std::abs(_operator.Rate3() - 0.75) < 1e-12 &&
+			   _operator.Frame() == SpinAPI::RelaxationFrame::Molecular &&
+			   _operator.IsValid();
+	};
+
+	// Operators are copied by higher-level setup code. Every parsed property
+	// and resolved spin pointer must survive both supported copy paths.
+	SpinAPI::Operator copied(*relax);
+	SpinAPI::Operator assigned("Placeholder", "type=unspecified;");
+	assigned = *relax;
+	isCorrect &= matches(copied);
+	isCorrect &= matches(assigned);
+
+	return isCorrect;
+}
+//////////////////////////////////////////////////////////////////////////////
+
 // Add all the SpinAPI test cases
 void AddSpinAPITests(std::vector<test_case> &_cases)
 {
@@ -2367,13 +2566,17 @@ void AddSpinAPITests(std::vector<test_case> &_cases)
 	_cases.push_back(test_case("SpinSpace::Phenomenological relaxation operator", test_spinapi_phenomenological_relaxation_operator));
 	_cases.push_back(test_case("SpinSpace::Phenomenological relaxation frame change is basis-local", test_spinapi_phenomenological_relaxation_framechange_is_basis_local));
 	_cases.push_back(test_case("SpinSpace::Phenomenological rate2 preserves populations and trace", test_spinapi_phenomenological_rate2_preserves_populations_and_trace));
-		_cases.push_back(test_case("SpinSpace::Powder phenomenological rate2 uses supplied eigenbasis", test_spinapi_powder_phenomenological_rate2_uses_supplied_eigenbasis));
-		_cases.push_back(test_case("SpinSpace::Hilbert phenomenological rate2 uses supplied eigenbasis", test_spinapi_hilbert_phenomenological_rate2_uses_supplied_eigenbasis));
-		_cases.push_back(test_case("SpinSpace::Hilbert phenomenological finite-step map matches superoperator", test_spinapi_hilbert_phenomenological_finite_step_map_matches_superoperator));
-		_cases.push_back(test_case("SpinSpace::RotateState maps z population to x population", test_spinapi_rotate_state_maps_z_population_to_x_population));
+	_cases.push_back(test_case("SpinSpace::Powder phenomenological rate2 uses supplied eigenbasis", test_spinapi_powder_phenomenological_rate2_uses_supplied_eigenbasis));
+	_cases.push_back(test_case("SpinSpace::Hilbert phenomenological rate2 uses supplied eigenbasis", test_spinapi_hilbert_phenomenological_rate2_uses_supplied_eigenbasis));
+	_cases.push_back(test_case("SpinSpace::Hilbert phenomenological finite-step map matches superoperator", test_spinapi_hilbert_phenomenological_finite_step_map_matches_superoperator));
+	_cases.push_back(test_case("SpinSpace::RotateState maps z population to x population", test_spinapi_rotate_state_maps_z_population_to_x_population));
 	_cases.push_back(test_case("SpinSpace::RotateState leaves singlet invariant and rotates T0", test_spinapi_rotate_state_singlet_invariant_triplet_t0_rotates));
+	_cases.push_back(test_case("SpinSpace::PrepareInitialDensityForPowder skips invariant rotations", test_spinapi_prepare_powder_initial_density_uses_rotation_invariance));
 	_cases.push_back(test_case("SpinSpace::DephaseStateInEigenbasis removes Hamiltonian coherences", test_spinapi_dephase_state_in_eigenbasis_removes_hamiltonian_coherences));
 	_cases.push_back(test_case("SpinSpace::Triplet keep retains free induction while dephase removes it", test_spinapi_triplet_keep_retains_free_induction_dephase_removes_it));
 	_cases.push_back(test_case("SpinSpace::T1 relaxation exchanges spin-1 populations", test_spinapi_relaxation_t1_spin_one_population_exchange));
+	_cases.push_back(test_case("SpinSpace::T2 relaxation is normalized pure dephasing", test_spinapi_relaxation_t2_is_normalized_pure_dephasing));
+	_cases.push_back(test_case("SpinSpace::Random fields preserve trace and isotropic powder invariance", test_spinapi_relaxation_random_fields_are_trace_preserving_and_powder_invariant));
+	_cases.push_back(test_case("SpinAPI::Operator copy preserves relaxation configuration", test_spinapi_operator_copy_preserves_relaxation_configuration));
 }
 //////////////////////////////////////////////////////////////////////////////

@@ -54,19 +54,6 @@ namespace SpinAPI
 		double rate = 0.0;
 	};
 
-	struct HilbertRelaxationRandomFieldTerm
-	{
-		arma::sp_cx_mat Sx;
-		arma::sp_cx_mat Sy;
-		arma::sp_cx_mat Sz;
-		arma::sp_cx_mat Sx_dag;
-		arma::sp_cx_mat Sy_dag;
-		arma::sp_cx_mat Sz_dag;
-		double rate1 = 0.0;
-		double rate2 = 0.0;
-		double rate3 = 0.0;
-	};
-
 	struct HilbertRelaxationPhenomenologicalTerm
 	{
 		// Used by Hilbert-space propagation caches. The corresponding
@@ -85,13 +72,22 @@ namespace SpinAPI
 		double coherenceDecay = 1.0;
 	};
 
+	struct HilbertStateRotationCache
+	{
+		// Spatial powder rotations act on a density matrix through the total
+		// angular-momentum generators. Build these operators once per spin space
+		// instead of embedding every single-spin operator for every orientation.
+		arma::cx_mat Jx;
+		arma::cx_mat Jy;
+		arma::cx_mat Jz;
+		bool rotationInvariant = false;
+	};
+
 	struct HilbertRelaxationCache
 	{
 		std::vector<HilbertRelaxationTerm> lindblad_terms;
 		std::vector<HilbertRelaxationDephasingTerm> dephasing_terms;
-		std::vector<HilbertRelaxationRandomFieldTerm> random_field_terms;
 		std::vector<HilbertRelaxationPhenomenologicalTerm> phenomenological_terms;
-		double random_field_rho_coeff = 0.0;
 	};
 
 	class SpinSpace
@@ -196,10 +192,13 @@ namespace SpinAPI
 		bool GetState(const CompleteState &, arma::cx_vec &, bool _useFullBasis = true) const;			 // Vector representing the state
 		bool GetState(const state_ptr &, arma::cx_vec &) const;											 // Vector representing the state
 		bool GetState(const state_ptr &, arma::cx_mat &) const;											 // Projection operator onto the state (dense matrix)
-		bool GetState(const state_ptr &, arma::sp_cx_mat &) const;										 // Projection operator onto the state (sparse matrix)
-		bool GetStateSubSpace(const state_ptr &_state, arma::cx_vec &_out) const;						 // Vector representing the state in subspace
-		bool RotateState(const arma::cx_mat &_state, const arma::mat &_rotation, arma::cx_mat &_out) const; // Rotate a density matrix with the same spatial rotation used for powder averaging
-		bool DephaseStateInEigenbasis(const arma::cx_mat &_state, const arma::cx_mat &_hamiltonian, arma::cx_mat &_out) const; // Keep only populations in a Hamiltonian eigenbasis
+			bool GetState(const state_ptr &, arma::sp_cx_mat &) const;										 // Projection operator onto the state (sparse matrix)
+			bool GetStateSubSpace(const state_ptr &_state, arma::cx_vec &_out) const;						 // Vector representing the state in subspace
+			bool RotateState(const arma::cx_mat &_state, const arma::mat &_rotation, arma::cx_mat &_out) const; // Rotate a density matrix with the same spatial rotation used for powder averaging
+			bool CreateStateRotationCache(const arma::cx_mat &_state, HilbertStateRotationCache &_cache, double _tolerance = 1.0e-12) const; // Precompute total-spin generators and detect rotationally invariant density matrices
+			bool RotateState(const arma::cx_mat &_state, const arma::mat &_rotation, const HilbertStateRotationCache &_cache, arma::cx_mat &_out) const; // Cached molecular-frame density-matrix rotation
+			bool PrepareInitialDensityForPowder(const arma::cx_mat &_referenceDensity, const arma::mat &_orientationRotation, StateFrame _stateFrame, bool _discardHamiltonianCoherences, const std::vector<std::string> &_dephasingHamiltonian, const HilbertStateRotationCache *_rotationCache, arma::cx_mat &_orientedDensity); // Apply molecular rotation and optional orientation-specific eigenbasis dephasing
+			bool DephaseStateInEigenbasis(const arma::cx_mat &_state, const arma::cx_mat &_hamiltonian, arma::cx_mat &_out) const; // Keep only populations in a Hamiltonian eigenbasis
 		bool ThermalStateFromHamiltonian(const arma::cx_mat &_hamiltonian, double _Temperature, arma::cx_mat &_mat) const; // Thermal state generated from a specific Hamiltonian
 		bool GetThermalState(SpinAPI::SpinSpace &_space, double _Temperature, std::vector<std::string> thermalhamiltonian_list, arma::cx_mat &_mat) const; // Projection operator onto the thermal equilibrium state (dense matrix)
 
@@ -341,8 +340,9 @@ namespace SpinAPI
 		// Exact finite-step form used by phenomenological-only Hilbert-space
 		// propagation. Preparation is separated from application so a powder
 		// task can reuse basis transforms and decay factors across time steps.
-		bool CreatePhenomenologicalRelaxationMapHilbert(const std::vector<HilbertRelaxationPhenomenologicalTerm> &, const arma::cx_mat &, double, HilbertPhenomenologicalRelaxationMap &) const;
-		bool ApplyPhenomenologicalRelaxationMapHilbert(const HilbertPhenomenologicalRelaxationMap &, arma::cx_mat &, arma::cx_mat &) const;
+			bool CreatePhenomenologicalRelaxationMapHilbert(const std::vector<HilbertRelaxationPhenomenologicalTerm> &, const arma::cx_mat &, double, HilbertPhenomenologicalRelaxationMap &) const;
+			bool ApplyPhenomenologicalRelaxationMapHilbert(const HilbertPhenomenologicalRelaxationMap &, arma::cx_mat &, arma::cx_mat &) const;
+			bool ApplyPhenomenologicalRelaxationMapInBasisHilbert(const HilbertPhenomenologicalRelaxationMap &, arma::cx_mat &) const; // Exact element-wise map when propagation already uses the selected eigenbasis
 		// Superspace representation retained for steady-state timeinf solves.
 		bool PhenomenologicalRelaxationSuperoperatorHilbert(const std::vector<HilbertRelaxationPhenomenologicalTerm> &, const arma::cx_mat &, arma::cx_mat &) const;
 
@@ -350,8 +350,9 @@ namespace SpinAPI
 		bool RelaxationOperatorFrameChange(const operator_ptr &_operator, arma::cx_mat _rotationmatrix, arma::cx_mat &_out) const;
 		bool RelaxationOperatorFrameChange(const operator_ptr &_operator, arma::cx_mat _rotationmatrix, arma::sp_cx_mat &_out) const;
 		bool RelaxationOperatorFrameChange(const operator_ptr &_operator, arma::sp_cx_mat _rotationmatrix, arma::sp_cx_mat &_out) const;
-		// Powder tasks need two rotations: a spatial powder-frame rotation of
-		// Cartesian relaxation axes, followed by the usual Hilbert-basis change.
+		// Powder tasks supply two rotations: an optional spatial powder-frame
+		// rotation for molecule-fixed relaxation axes, followed by the usual
+		// Hilbert-basis change. Lab-frame axes intentionally skip the first.
 		bool RelaxationOperatorFrameChangeRotated(const operator_ptr &_operator, arma::cx_mat _rotationmatrix, arma::mat _spatialrotation, arma::cx_mat &_out) const;
 		bool RelaxationOperatorFrameChangeRotated(const operator_ptr &_operator, arma::cx_mat _rotationmatrix, arma::mat _spatialrotation, arma::sp_cx_mat &_out) const;
 		// Powder relaxation helper: construct every supported relaxation operator

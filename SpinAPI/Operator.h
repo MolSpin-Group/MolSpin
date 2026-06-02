@@ -28,6 +28,7 @@ namespace SpinAPI
 		double rate1;
 		double rate2;
 		double rate3;
+		RelaxationFrame relaxationFrame;
 		bool isValid;
 
 	public:
@@ -51,6 +52,9 @@ namespace SpinAPI
 		double Rate1() const;
 		double Rate2() const;
 		double Rate3() const;
+		// Controls whether Cartesian spin-operator axes remain lab-fixed or
+		// follow molecular powder orientations before basis transformation.
+		RelaxationFrame Frame() const;
 
 		// Allow access to custom properties to be used for custom tasks
 		std::shared_ptr<const MSDParser::ObjectParser> Properties() const;

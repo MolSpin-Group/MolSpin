@@ -33,7 +33,6 @@ namespace RunSection
 		static arma::cx_vec ComputeRhoDot(double t, arma::sp_cx_mat& L, arma::cx_vec& K, arma::cx_vec RhoNaught);
 		void WriteTransitionYieldHeader(const SpinAPI::system_ptr &_system, std::ostream &_stream) const;
 		bool ProjectTransitionYields(const SpinAPI::system_ptr &_system, SpinAPI::SpinSpace &_space, const arma::cx_mat &_rho, std::ostream &_datastream, std::ostream &_logstream) const;
-		bool BuildOrientedInitialDensity(SpinAPI::SpinSpace &space, const arma::cx_mat &referenceDensity, const arma::mat &orientationRotation, SpinAPI::StateFrame stateFrame, bool discardHamiltonianCoherences, const std::vector<std::string> &dephasingHamiltonian, arma::cx_mat &orientedDensity, std::ostream &log_stream) const;
 		std::vector<arma::cx_mat> RotateRank1OperatorBasis(const std::vector<arma::cx_mat> &cartesian_operators, const arma::mat &frame_to_lab) const;
 		std::vector<arma::cx_mat> RotateRank2OperatorBasis(const std::vector<arma::cx_mat> &cartesian_operators, const arma::mat &frame_to_lab) const;
 		std::vector<arma::cx_mat> SingleSpinSphericalTensors(const std::vector<arma::cx_mat> &spin_operators, const arma::cx_vec &field) const;

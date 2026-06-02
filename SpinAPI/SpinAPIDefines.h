@@ -89,6 +89,16 @@ namespace SpinAPI
 		DephaseEigenbasis,
 	};
 
+	// Spatial frame used by spin-operator relaxation channels in powder tasks.
+	// Lab:       axes remain fixed relative to the external magnetic field.
+	// Molecular: axes follow the molecular orientation used for the current
+	//            powder point before any Hamiltonian-basis transformation.
+	enum class RelaxationFrame
+	{
+		Lab,
+		Molecular,
+	};
+
 	// The types of supported reaction operators
 	enum class ReactionOperatorType
 	{
@@ -101,12 +111,12 @@ namespace SpinAPI
 	enum class OperatorType
 	{
 		Unspecified,
-		RelaxationLindblad, // Single-spin operator, i.e. uses Sx, Sy and Sz operators of the specified spins
+		RelaxationLindblad, // Raw Cartesian single-spin Lindblad channels D[Sx], D[Sy], D[Sz]
 		RelaxationLindbladDoubleSpin,
 		RelaxationDephasing,
-		RelaxationRandomFields,
-		RelaxationT1,
-		RelaxationT2,
+		RelaxationRandomFields, // Cartesian random-field channels sum_j rate_j D[Sj]
+		RelaxationT1,		   // Symmetric high-temperature population transfer: rate/2 * (D[S+] + D[S-])
+		RelaxationT2,		   // Pure dephasing: 2 * rate * D[Sz], where rate is 1/Tphi for spin 1/2
 		RelaxationPhenomenological, // Global population/coherence damping in the working eigenbasis
 	};
 

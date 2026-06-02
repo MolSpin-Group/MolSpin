@@ -59,51 +59,6 @@ namespace RunSection
 		return true;
 	}
 
-	bool TaskStaticSSPowderSpectraNakajimaZwanzig::BuildOrientedInitialDensity(SpinAPI::SpinSpace &space,
-																			   const arma::cx_mat &referenceDensity,
-																			   const arma::mat &orientationRotation,
-																			   SpinAPI::StateFrame stateFrame,
-																			   bool discardHamiltonianCoherences,
-																			   const std::vector<std::string> &dephasingHamiltonian,
-																			   arma::cx_mat &orientedDensity,
-																			   std::ostream &log_stream) const
-		{
-			orientedDensity = referenceDensity;
-
-			// NZ propagation stores each orientation in its own eigenbasis.
-			// Prepare the density matrix in the lab frame first, then transform
-			// it to the NZ eigenbasis outside this helper.
-			space.UseSuperoperatorSpace(false);
-			if (stateFrame == SpinAPI::StateFrame::Molecular)
-			{
-				if (!space.RotateState(referenceDensity, orientationRotation, orientedDensity))
-				{
-					log_stream << "Failed to rotate initial density matrix for powder orientation." << std::endl;
-					return false;
-				}
-			}
-
-			if (discardHamiltonianCoherences)
-			{
-				arma::sp_cx_mat H0sp;
-				if (!space.BaseHamiltonianRotated_SA(dephasingHamiltonian, orientationRotation, H0sp))
-				{
-					log_stream << "Failed to construct initial-state Hamiltonian for powder orientation." << std::endl;
-					return false;
-				}
-
-				arma::cx_mat rho_dephased;
-				if (!space.DephaseStateInEigenbasis(orientedDensity, arma::conv_to<arma::cx_mat>::from(H0sp), rho_dephased))
-				{
-					log_stream << "Failed to dephase initial density matrix for powder orientation." << std::endl;
-					return false;
-				}
-				orientedDensity = rho_dephased;
-			}
-
-			return true;
-		}
-
 	std::vector<arma::cx_mat> TaskStaticSSPowderSpectraNakajimaZwanzig::RotateRank1OperatorBasis(const std::vector<arma::cx_mat> &cartesian_operators,
 																								  const arma::mat &frame_to_lab) const
 		{
@@ -943,9 +898,20 @@ namespace RunSection
 			}
 
 			const SpinAPI::StateFrame initialStateFrame = (*i)->InitialStateFrame();
+			SpinAPI::HilbertStateRotationCache initialStateRotationCache;
+			const SpinAPI::HilbertStateRotationCache *initialStateRotationCachePtr = nullptr;
 			if (initialStateFrame == SpinAPI::StateFrame::Molecular)
 			{
-				this->Log() << "Initial state frame = molecular. Rotating density matrix per orientation." << std::endl;
+				if (!space.CreateStateRotationCache(rho0, initialStateRotationCache))
+				{
+					this->Log() << "Failed to prepare molecular-frame initial-state rotations." << std::endl;
+					return false;
+				}
+				initialStateRotationCachePtr = &initialStateRotationCache;
+				if (initialStateRotationCache.rotationInvariant)
+					this->Log() << "Initial state frame = molecular, but the density matrix is rotationally invariant. Powder-state rotations are skipped." << std::endl;
+				else
+					this->Log() << "Initial state frame = molecular. Rotating the density matrix once per powder orientation." << std::endl;
 			}
 			else if (initialStateFrame == SpinAPI::StateFrame::Fixed)
 			{
@@ -1046,11 +1012,12 @@ namespace RunSection
 					continue;
 				}
 
-				arma::cx_mat rho_oriented;
-				if (!BuildOrientedInitialDensity(space, rho0, Rot_mat, initialStateFrame, dephaseInitialState, initialStateHamiltonianList, rho_oriented, this->Log()))
-				{
-					continue;
-				}
+					arma::cx_mat rho_oriented;
+					if (!space.PrepareInitialDensityForPowder(rho0, Rot_mat, initialStateFrame, dephaseInitialState, initialStateHamiltonianList, initialStateRotationCachePtr, rho_oriented))
+					{
+						this->Log() << "Failed to prepare initial density matrix for powder orientation " << grid_num << "." << std::endl;
+						continue;
+					}
 				rho_oriented /= arma::trace(rho_oriented);
 
 				space.UseSuperoperatorSpace(true);

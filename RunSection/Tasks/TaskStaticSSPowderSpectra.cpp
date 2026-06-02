@@ -293,8 +293,21 @@ namespace RunSection
 
 			// Get the initial state frame to determine if density matrix rotation is needed per orientation
 			const SpinAPI::StateFrame initialStateFrame = (*i)->InitialStateFrame();
+			SpinAPI::HilbertStateRotationCache initialStateRotationCache;
+			const SpinAPI::HilbertStateRotationCache *initialStateRotationCachePtr = nullptr;
 			if (initialStateFrame == SpinAPI::StateFrame::Molecular)
-				this->Log() << "Initial state frame = molecular. Rotating density matrix per orientation." << std::endl;
+			{
+				if (!space.CreateStateRotationCache(rho0, initialStateRotationCache))
+				{
+					this->Log() << "Failed to prepare molecular-frame initial-state rotations." << std::endl;
+					return false;
+				}
+				initialStateRotationCachePtr = &initialStateRotationCache;
+				if (initialStateRotationCache.rotationInvariant)
+					this->Log() << "Initial state frame = molecular, but the density matrix is rotationally invariant. Powder-state rotations are skipped." << std::endl;
+				else
+					this->Log() << "Initial state frame = molecular. Rotating the density matrix once per powder orientation." << std::endl;
+			}
 			else if (initialStateFrame == SpinAPI::StateFrame::Fixed)
 				this->Log() << "Initial state frame = fixed. Reusing the supplied lab-frame density matrix for every orientation." << std::endl;
 			else
@@ -352,41 +365,12 @@ namespace RunSection
 					continue;
 				}
 
-				arma::cx_mat rho_oriented = rho0;
-				if (initialStateFrame == SpinAPI::StateFrame::Molecular)
+				arma::cx_mat rho_oriented;
+				if (!space.PrepareInitialDensityForPowder(rho0, Rot_mat, initialStateFrame, dephaseInitialState, initialStateHamiltonianList, initialStateRotationCachePtr, rho_oriented))
 				{
-					// Molecular-frame initial conditions follow the sample
-					// orientation, just like anisotropic interaction tensors.
-					if (!space.RotateState(rho0, Rot_mat, rho_oriented))
-					{
-						this->Log() << "Failed to rotate density matrix for grid point " << grid_num << "." << std::endl;
-						rhovec[grid_num] = rho0vec;
-						continue;
-					}
-				}
-
-				if (dephaseInitialState)
-				{
-					arma::sp_cx_mat H0sp;
-					space.UseSuperoperatorSpace(false);
-					const bool gotH0 = space.BaseHamiltonianRotated_SA(initialStateHamiltonianList, Rot_mat, H0sp);
-					space.UseSuperoperatorSpace(true);
-
-					if (!gotH0)
-					{
-						this->Log() << "Failed to construct initial-state Hamiltonian for grid point " << grid_num << "." << std::endl;
-						return false;
-					}
-
-					arma::cx_mat rho_dephased;
-					// Discard coherences between Hamiltonian eigenstates, not
-					// between lab-frame basis functions.
-					if (!space.DephaseStateInEigenbasis(rho_oriented, arma::conv_to<arma::cx_mat>::from(H0sp), rho_dephased))
-					{
-						this->Log() << "Failed to dephase initial density matrix for grid point " << grid_num << "." << std::endl;
-						return false;
-					}
-					rho_oriented = rho_dephased;
+					this->Log() << "Failed to prepare initial density matrix for grid point " << grid_num << "." << std::endl;
+					rhovec[grid_num] = rho0vec;
+					continue;
 				}
 
 				if (!space.OperatorToSuperspace(rho_oriented, rhovec[grid_num]))
