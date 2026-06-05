@@ -192,6 +192,14 @@
                 timestep = 0.5;   
         }
 
+        //need to remmove this after testing
+        PulseSequence seq
+        {
+             tau1 = 10;
+             tau2 = 20;
+             sequence = [pulse1, tau1], [pulse2, tau2], [pulse3, tau1];   
+        }
+
     }
 // -------------------------------------------------------------
     Settings

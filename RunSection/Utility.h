@@ -14,8 +14,10 @@
 // #include <Eigen/Sparse>
 // #include <Eigen/Core>
 #include "SpinAPIfwd.h"
+#include "SpinAPIDefines.h"
 #include "SpinSpace.h"
 #include "CubicSpline.h"
+#include "PulseSequence.h"
 #include <utility>
 
 namespace RunSection
@@ -29,6 +31,19 @@ namespace RunSection
     FibSpherePoint* CalculateFibPoints(int n);
     bool RetrievePoint (std::array<double, 3> &arr, FibSpherePoint* ptr, int num);
 // endregion FibSphere
+
+// region TimeEvolutionBlocking
+    //std::tuple<std::vector<SpinAPI::pulse_ptr>,std::vector<double>> EvaluatePulseSequence(std::vector<SpinAPI::pulse_ptr> pulses, SpinAPI::PulseSequence seq);
+    struct block
+    {
+        double max_timestep;
+        double min_timestep;
+        double start;
+        double end;
+        bool free_evolution;
+    };
+    std::vector<block> GenerateTimeEvoBlocking(std::vector<PulseSequence_ptr>& seq, std::pair<double,double> MinMaxTimesteps, double TotalEvoTime, double offset = 0);
+// endregion TimeEvolutionBlocking
 
 // region MonteCarloSphere
     

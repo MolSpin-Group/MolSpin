@@ -318,6 +318,8 @@ namespace RunSection
 		params.f1 = 0.1;
 		params.f2 = 2.0;
 
+		//build timeevo block_structure
+
 	
 	
 		this->Log() << "Starting time evolution with timestep: " << this->timestep << ", total time: " << this->totaltime << ", minimum timestep: " << MinTimeStep << ", maximum timestep: " << MaxTimeStep << std::endl;
@@ -328,6 +330,7 @@ namespace RunSection
 		while (CurrentTime < this->totaltime)
 		{
 			// Propagate
+			//evaluate pulse sequence 
 
 			SpinAPI::SpinSpace::TimePropReturnInfo r;
 			L = L_base + GetCreationOperators();

@@ -30,7 +30,7 @@ ARMADILLO = -larmadillo -lopenblas -llapack -fopenmp -DARMA_NO_DEBUG
 # --------------------------------------------------------------------------
 # SpinAPI module
 PATH_SPINAPI = ./SpinAPI
-OBJS_SPINAPI = $(PATH_SPINAPI)/SpinSystem.o $(PATH_SPINAPI)/Spin.o $(PATH_SPINAPI)/Interaction.o $(PATH_SPINAPI)/Transition.o $(PATH_SPINAPI)/Operator.o $(PATH_SPINAPI)/Pulse.o $(PATH_SPINAPI)/State.o $(PATH_SPINAPI)/SpinSpace.o $(PATH_SPINAPI)/StandardOutput.o $(PATH_SPINAPI)/Tensor.o $(PATH_SPINAPI)/Trajectory.o $(PATH_SPINAPI)/SubSystem.o $(PATH_SPINAPI)/Function.o
+OBJS_SPINAPI = $(PATH_SPINAPI)/SpinSystem.o $(PATH_SPINAPI)/Spin.o $(PATH_SPINAPI)/Interaction.o $(PATH_SPINAPI)/Transition.o $(PATH_SPINAPI)/Operator.o $(PATH_SPINAPI)/Pulse.o $(PATH_SPINAPI)/State.o $(PATH_SPINAPI)/SpinSpace.o $(PATH_SPINAPI)/StandardOutput.o $(PATH_SPINAPI)/Tensor.o $(PATH_SPINAPI)/Trajectory.o $(PATH_SPINAPI)/SubSystem.o $(PATH_SPINAPI)/Function.o $(PATH_SPINAPI)/PulseSequence.o
 DEP_SPINAPI = 
 # --------------------------------------------------------------------------
 # MSD-Parser module
