@@ -98,7 +98,7 @@ namespace SpinAPI
 		MWPulse,
 		ShapedPulse,
 	};
-	#typedef std::vector<std::tuple<std::string, double>> PulseSequence;
+	//typedef std::vector<std::tuple<std::string, double>> PulseSequence;
 
 	// Types of standard outputs based on ActionTargets, to be used to by the StandardOutput class
 	enum class StandardOutputType

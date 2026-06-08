@@ -15,6 +15,7 @@
 #include "ObjectParser.h"
 #include "Utility.h"
 #include "Operator.h"
+#include "Pulse.h"
 
 #include <ctime>
 
@@ -319,19 +320,37 @@ namespace RunSection
 		params.f2 = 2.0;
 
 		//build timeevo block_structure
+		std::vector<SpinAPI::PulseSequence_ptr> sequences;
+		for (auto i = spaces.cbegin(); i != spaces.cend(); i++)
+		{
+			auto seq_vec = i->first->PulseSequences();
+			sequences.insert(sequences.end(), seq_vec.begin(), seq_vec.end());
+		}
+		std::vector<block> time_blocks = GenerateTimeEvoBlocking(sequences, {MinTimeStep,MaxTimeStep},this->totaltime);
+		this->Log() << PrintOutBlockStructure(time_blocks);
 
-	
-	
 		this->Log() << "Starting time evolution with timestep: " << this->timestep << ", total time: " << this->totaltime << ", minimum timestep: " << MinTimeStep << ", maximum timestep: " << MaxTimeStep << std::endl;
-
 		auto now = std::chrono::high_resolution_clock::now();
-
 		int step = 0;
+		size_t current_block = 0;
 		while (CurrentTime < this->totaltime)
 		{
 			// Propagate
 			//evaluate pulse sequence 
-
+			ClampTimeEvolution(CurrentTime, this->totaltime, time_blocks, current_block, this->timestep, params);
+			bool header = false;
+			for(auto& seq : sequences)
+			{
+				auto p = seq->GetActivePulseAtTime(CurrentTime);
+				if(p.first == nullptr)
+					continue;
+				if(!header)
+				{
+					this->Log() << "Active pulses | active time\n";
+					header = true;
+				}
+				this->Log() << seq->Name() << "." << p.first->Name() << " | " << p.second << std::endl;
+			}
 			SpinAPI::SpinSpace::TimePropReturnInfo r;
 			L = L_base + GetCreationOperators();
 			dL = UpdateTimeDependentL(CurrentTime);
@@ -349,7 +368,6 @@ namespace RunSection
 			}
 			else
 			{
-				//r = AdaptiveDirectKrylovArmadillo(L, rho0, rho0, this->timestep, CurrentTime, params, nullptr);
 				r = spaces[0].second->TimeAdaptiveKrylovGeneral(L, rho0, std::complex<double>(this->timestep,0.0), 30, L.n_rows, params);
 			}
 

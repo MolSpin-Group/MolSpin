@@ -10,6 +10,9 @@
 #include "Utility.h"
 #include <random>
 #include <thread>
+#include "PulseSequence.h"
+#include "Pulse.h"
+#include <sstream>
 #ifdef _OPENMP
 #include <omp.h>
 #endif
@@ -108,79 +111,206 @@ namespace RunSection
 //
     //}
 
-    std::vector<block> GenerateTimeEvoBlocking(std::vector<PulseSequence_ptr>& seq, std::pair<double,double> MinMaxTimesteps, double TotalEvoTime, double offset)
+    std::vector<block> GenerateTimeEvoBlocking(std::vector<SpinAPI::PulseSequence_ptr>& seq, std::pair<double,double> MinMaxTimesteps, double TotalEvoTime)
     {
+
+        std::vector<std::vector<PulseEvent>> timelines(seq.size());
+        std::vector<double> critical_time_points;
+        //double global_start = (offset > 0.0) ? offset : 0.0;
+        double global_start = 0.0;
+        critical_time_points.push_back(0.0);
+
+        for(size_t ch = 0; ch < seq.size(); ch++)
+        {
+            const auto& track = seq[ch];
+            double track_time = 0.0;
+            double ch_offset = track->Get_offset();
+            if(ch_offset > 0.0) 
+            {
+                PulseEvent o_event;
+                o_event.time = 0.0;
+                o_event.is_pulse = false;
+                o_event.pulse = nullptr;
+                timelines[ch].push_back(o_event);
+                critical_time_points.push_back(ch_offset);
+                track_time = ch_offset;
+            }
+            for(auto step = track->begin(); step != track->end(); step++)
+            {
+                auto[pulse, tau_key] = *step;
+                double pulse_duration = (pulse->Type() == SpinAPI::PulseType::InstantPulse) ? 0.0 : pulse->Pulsetime();
+                PulseEvent p_event;
+                p_event.time = track_time;
+                p_event.pulse = pulse;
+                p_event.is_pulse = true;
+                timelines[ch].push_back(p_event);
+
+                track_time += pulse_duration;
+                critical_time_points.push_back(track_time);
+
+                double gap_duration = 0.0;
+                auto it = track->Get_tau_list().find(tau_key);
+                if (it != track->Get_tau_list().end()) 
+                {
+                    gap_duration = it->second;
+                }
+
+                if (gap_duration > 0.0) 
+                {
+                    PulseEvent g_event;
+                    g_event.time = track_time;
+                    g_event.is_pulse = false;
+                    g_event.pulse = nullptr;
+                    timelines[ch].push_back(g_event);
+                    
+                    track_time += gap_duration;
+                    critical_time_points.push_back(track_time);
+                }
+            }
+        }
+
+        std::sort(critical_time_points.begin(), critical_time_points.end());
+        critical_time_points.erase(std::unique(critical_time_points.begin(), critical_time_points.end(), [](double a, double b) { return std::abs(a - b) < 1e-14; }), critical_time_points.end());
+
         std::vector<block> blocks = {};
-        bool empty = (pulse_sequence.empty()) ? true : false;
-        if (offset != 0.0 || empty)
+        bool empty = seq.empty();
+        if (empty)
         {
             block first_block;
             first_block.start = 0.0;
-            first_block.end = (!empty) ? offset : TotalEvoTime;
-            first_block.max_timestep = MinMaxTimesteps.second();
-            first_block.min_timestep = MinMaxTimesteps.first();
+            first_block.end = TotalEvoTime;
+            first_block.max_timestep = MinMaxTimesteps.second;
+            first_block.min_timestep = MinMaxTimesteps.first;
             first_block.free_evolution = true;
-            blocks.push_back(first_block)
-            if (empty)
-                return blocks;
+            blocks.push_back(first_block);
+            return blocks;
         }
 
-        //will modify below this
-        for(auto pulse = pulse_sequence.begin(); pulse != pulse_sequence.end(); pulse++)
+        for(size_t i = 0; i < critical_time_points.size() - 1; i++)
         {
-            unsigned int block_section = blocks.size()-1;
-            double current_time = blocks.empty() ? 0.0 : blocks[block_section].end;
-            block pulse_block;
-            block tau_block;
-            double pulse_time = 0.0;
-            double min = 0.0;
-            double max = 0.0;
-            if((*pulse)->Type() == SpinAPI::PulseType::InstantPulse)
+            double b_start = critical_time_points[i];
+            double b_end = critical_time_points[i+1];
+
+            if(std::abs(b_end - b_start) < 1e-14) continue;
+
+            bool global_free = true;
+            double block_min = MinMaxTimesteps.first;
+            double block_max = MinMaxTimesteps.second;
+
+            for (size_t ch = 0; ch < seq.size(); ch++)
             {
-                pulse_time = 0;
-                min = pulse_time;
-                max = pulse_time;
+                const auto& timeline = timelines[ch];
+                if(timeline.empty()) continue;
+                auto it = std::upper_bound(timeline.begin(), timeline.end(), b_start, [](double val, const PulseEvent& ev) { return val < ev.time;});
+                if (it != timeline.begin())
+                {
+                    auto active_ev = *(it-1);
+                    if(active_ev.is_pulse && active_ev.pulse) 
+                    {
+                        global_free = false;
+                        double ps = active_ev.pulse->Pulsetime();
+                        double ts = active_ev.pulse->Timestep();
+
+                        if(active_ev.pulse->Type() != SpinAPI::PulseType::InstantPulse)
+                        {
+                            double max_allowed = std::min(ps / 20.0, ts*1e3);
+                            double pulse_max = std::min(max_allowed, MinMaxTimesteps.second);
+                            double pulse_min = std::min(MinMaxTimesteps.first, ps / 1e3);
+                            
+                            
+                            block_max = std::min(block_max, pulse_max);
+                            block_min = std::min(block_min, pulse_min);
+                        }
+                        else
+                        {
+                            block_max = MinMaxTimesteps.first;
+                            block_min = MinMaxTimesteps.second;
+                        }
+                    }
+                }
             }
-            else 
-            {
-                pulse_time = (*pulse)->Pulsetime();
-                double ts = (*pulse)->Timestep();
-                double max_allowed = std::min(pulse_time / 20.0, ts*1e3);
-                max = std::min(max_allowed, MinMaxTimesteps.second);
-                min = std::min(MinMaxTimesteps.first, pulse_time / 1e3);
-                min = std::max(min, timestep_floor);
-            }
 
-            pulse_block.start = current_time
-            pulse_block.end = pulse_block.start + pulse_time;
-            pulse_block.max_timestep = max;
-            pulse_block.min_timestep = min;
-            pulse_block.free_evolution = false;
-            
-            size_t pulse_index = std::distance(pulse_sequence.begin(), pulse)
-            tau_block.start = pulse_block.end;
-            tau_block.end = tau_block.start + gaps[pulse_index];
-            tau_block.min_timestep = MinMaxTimesteps.first;
-            tau_block.max_timestep = MinMaxTimesteps.second;
-            tau_block.free_evolution = true;
-
-            blocks.push_back(pulse);
-            blocks.push_back(tau_block);
-        }
-
-        if (blocks.back().end != TotalEvoTime)
-        {
-            block final_block;
-            final_block.min_timestep = MinMaxTimesteps.first;
-            final_block.max_timestep = MinMaxTimesteps.second;
-            final_block.end = TotalEvoTime;
-            final_block.start = blocks.back().end;
-            final_block.free_evolution = true;
-            blocks.push_back(final_block);
+            block new_block;
+            new_block.start = b_start;
+            new_block.end = b_end;
+            new_block.max_timestep = block_max;
+            new_block.min_timestep = block_min;
+            new_block.free_evolution = global_free;
+            blocks.push_back(new_block);
         }
 
         return blocks;
 
+    }
+
+    std::string PrintOutBlockStructure(const std::vector<block>& blocks)
+    {
+        std::ostringstream ss;
+        ss << "\n" << std::string(90, '=') << "\n";
+        ss << "\t\t\t\t Generated time evolution block sections\n";
+        ss << std::string(90, '=') << "\n";
+
+        ss << std::left 
+           << std::setw(8)  << "Block section "
+           << std::setw(18) << "Start Time (ns)"
+           << std::setw(18) << "End Time (ns)"
+           << std::setw(16) << "Duration (ns)"
+           << std::setw(16) << "Max Timestep"
+           << std::setw(16) << "Min Timestep"
+           << "Evolution Type\n";
+        ss << std::string(90, '-') << "\n";
+        ss << std::scientific << std::setprecision(6);
+
+        for (size_t i = 0; i < blocks.size(); ++i)
+        {
+            const auto& b = blocks[i];
+            double duration = b.end - b.start;
+            
+            std::string evo_type = b.free_evolution ? "FREE EVOLUTION" : "ACTIVE PULSE(S)";
+
+            ss << std::left
+               << std::setw(8)  << i
+               << std::setw(18) << b.start
+               << std::setw(18) << b.end
+               << std::setw(16) << duration
+               << std::setw(16) << b.max_timestep
+               << std::setw(16) << b.min_timestep
+               << evo_type << "\n";
+        }
+        ss << std::string(90, '=') << "\n\n";
+        std::string return_str = ss.str();
+        return return_str;
+    }
+
+    void ClampTimeEvolution(double ctime, double ttime, const std::vector<block>& blocks, size_t& current_block, double& block_timestep, SpinAPI::SpinSpace::PropParam& params)
+    {
+        while(current_block < blocks.size() && ctime >= blocks[current_block].end)
+        {
+            current_block++;
+        }
+        const block& active_block = (current_block < blocks.size())
+                                  ? blocks[current_block]
+                                  : blocks.back();
+        params.max = active_block.max_timestep;
+        params.min = active_block.min_timestep;
+
+        if(block_timestep > active_block.max_timestep)
+        {
+            block_timestep = active_block.max_timestep;
+        }
+        if(block_timestep < active_block.min_timestep)
+        {
+            block_timestep = active_block.min_timestep;
+        }
+
+        if(ctime + block_timestep > active_block.end)
+        {
+            block_timestep = active_block.end - ctime;
+        }
+        if(ctime + block_timestep > ttime)
+        {
+            block_timestep = ttime - ctime;
+        }
     }
 
     MCSpherePoint* CalculateMCSpherePoints(int n, double rmax_x, double rmax_y, double rmax_z)

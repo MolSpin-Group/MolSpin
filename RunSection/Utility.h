@@ -19,6 +19,7 @@
 #include "CubicSpline.h"
 #include "PulseSequence.h"
 #include <utility>
+#include <iomanip>
 
 namespace RunSection
 {
@@ -42,7 +43,15 @@ namespace RunSection
         double end;
         bool free_evolution;
     };
-    std::vector<block> GenerateTimeEvoBlocking(std::vector<PulseSequence_ptr>& seq, std::pair<double,double> MinMaxTimesteps, double TotalEvoTime, double offset = 0);
+    struct PulseEvent
+    {
+        double time;
+        bool is_pulse;
+        SpinAPI::pulse_ptr pulse;
+    };
+    std::vector<block> GenerateTimeEvoBlocking(std::vector<SpinAPI::PulseSequence_ptr>& seq, std::pair<double,double> MinMaxTimesteps, double TotalEvoTime);
+    std::string PrintOutBlockStructure(const std::vector<block>& blocks );
+    void ClampTimeEvolution(double ctime, double ttime, const std::vector<block>& blocks, size_t& current_block, double& block_timestep, SpinAPI::SpinSpace::PropParam& params);
 // endregion TimeEvolutionBlocking
 
 // region MonteCarloSphere

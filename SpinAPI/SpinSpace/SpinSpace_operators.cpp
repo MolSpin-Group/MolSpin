@@ -1564,7 +1564,19 @@ namespace SpinAPI
 
 	double SpinSpace::Adjusth(double R, double safety, double f1, double f2, double h, int order)
 	{
-		return h * std::min(f2, std::max(f1, safety * std::pow(R, -1.0/(1 + order))));
+		if(order <= 5)
+		{
+			return h * std::min(f2, std::max(f1, safety * std::pow(R, -1.0/(1 + order))));
+		}
+		
+		double factor = safety / R;
+		if (R > 1.0)
+		{
+			return h * std::max(f1, factor);
+		}
+
+		return h * std::min(f2, factor);
+
 	}
 
     SpinSpace::TimePropReturnInfo SpinSpace::TimeAdapativeKrylovRoutine(const arma::sp_cx_mat &H, const arma::cx_colvec &b, arma::cx_double dt, int kryDim, int HilbSize, PropParam &propParam, bool general, bool reset)
@@ -1613,7 +1625,7 @@ namespace SpinAPI
 			double tol = propParam.atol + propParam.rtol * ynorm;
 			double R = KyrlovResult.error_estimate / tol;
 
-			dumpstep = Adjusth(R, propParam.safety, propParam.f1, propParam.f2, dumpstep);
+			dumpstep = Adjusth(R, propParam.safety, propParam.f1, propParam.f2, dumpstep, trialDim);
 
 			double dt_d = (dt / propParam.TimePrefactor).real();
 

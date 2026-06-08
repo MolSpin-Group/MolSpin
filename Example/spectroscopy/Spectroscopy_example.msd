@@ -195,9 +195,17 @@
         //need to remmove this after testing
         PulseSequence seq
         {
-             tau1 = 10;
-             tau2 = 20;
-             sequence = [pulse1, tau1], [pulse2, tau2], [pulse3, tau1];   
+                tau1 = 10;
+                tau2 = 20;
+                sequence = pulse1, tau1, pulse2, tau2, pulse3, tau1;   
+        }
+
+        PulseSequence seq2
+        {
+                tau1 = 5;
+                tau2 = 10;
+                sequence = pulse2, tau1, pulse3, tau2, pulse1, tau1, pulse1, tau2;
+                offset = 5.0;
         }
 
     }
@@ -234,7 +242,8 @@
     {
         Task Method1
         {
-                type = StaticSS-Spectra;
+                type = MultiStaticSS-timeevolution;
+                //type = StaticSS-Spectra;
                 method = timeevo;                                                        // timeinf or timeevo, timeinf allows to propagate spin density directly to t = inf.
                 integration = false;                                                     // specify if method = timeevo, if true allows to integrate yields in time from [0 to T] where T lies in [0, totaltime] interval with the step = timestep
                 timestep = 0.1;                                                          // specify if method = timeevo [ns]

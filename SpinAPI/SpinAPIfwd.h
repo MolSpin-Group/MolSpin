@@ -45,7 +45,7 @@ namespace SpinAPI
 
 #ifndef MOD_SpinAPI_PulseSequence
 	class PulseSequence;
-	using PulseSequence_ptr = std::shared<PulseSequence>;
+	using PulseSequence_ptr = std::shared_ptr<PulseSequence>;
 #endif
 
 #ifndef MOD_SpinAPI_State

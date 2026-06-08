@@ -244,7 +244,7 @@ namespace SpinAPI
 
 	bool SpinSystem::Contains(const PulseSequence_ptr & ptr) const
 	{
-		if (this->find(ptr) == nullptr)
+		if (this->pulses_seq_find(ptr->Name()) == nullptr)
 			return false;
 		return true;
 	}
@@ -332,7 +332,7 @@ namespace SpinAPI
 
 	bool SpinSystem::Add(const PulseSequence_ptr &pulseseq)
 	{
-		if(this->contains(pulseseq))
+		if(this->Contains(pulseseq))
 			return false;
 		this->pulses_seq.push_back(pulseseq);
 		return true;
@@ -488,21 +488,21 @@ namespace SpinAPI
 
 	std::vector<PulseSequence_ptr> SpinSystem::ValidatePulseSequences()
 	{
-		std::vector<pulse_ptr> failedPulsesSequences;
+		std::vector<PulseSequence_ptr>failedPulseSequences;
 		for(auto i = this->pulses_seq.cbegin(); i != this->pulses_seq.cend(); i++)
 		{
 			if((*i)->ParsePulseSequence(this->pulses))
 			{
 				if(!(*i)->IsValid())
-					failedPulsesSequences.push_back(*i);
+					failedPulseSequences.push_back(*i);
 			}
 			else
 			{
-				failedPulsesSequences.push_back(*i);
+				failedPulseSequences.push_back(*i);
 			}
 		}
-		RemoveFailedObjects<PulseSequence_ptr>(failedPulsesSequences, this->pulses_seq);
-		return failedPulsesSequences;
+		RemoveFailedObjects<PulseSequence_ptr>(failedPulseSequences, this->pulses_seq);
+		return failedPulseSequences;
 	}
 
 	// Method that loads the state objects and checks whether they are valid

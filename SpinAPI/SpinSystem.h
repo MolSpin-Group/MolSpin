@@ -121,7 +121,7 @@ namespace SpinAPI
 		std::vector<transition_ptr> ValidateTransitions(const std::vector<std::shared_ptr<SpinAPI::SpinSystem>> &); // Loads states into the transition objects and checks if the transitions are valid
 		std::vector<operator_ptr> ValidateOperators(const std::vector<std::shared_ptr<SpinAPI::SpinSystem>> &);		// Validates operators
 		std::vector<pulse_ptr> ValidatePulses();																	// Validates pulses
-		std::vector<PulseSequence_ptr> ValidatePulseSequences() 													// Validates Pulse sequences
+		std::vector<PulseSequence_ptr> ValidatePulseSequences(); 													// Validates Pulse sequences
 		std::vector<state_ptr> ValidateStates();																	// Attempts to parse all the states (requires all spins to be read into this->spins first). Returns list of states that failed validation/parsing.
 		std::vector<subsystem_ptr> ValidateSubSystems(); 															// Validates Subsystems;
 

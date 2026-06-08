@@ -102,6 +102,7 @@ namespace MSDParser
 					break;
 				case ObjectType::PulseSequence:
 					(*i)->Add(std::make_shared<SpinAPI::PulseSequence>(obj.Name(), obj.Contents()));
+					break;
 				case ObjectType::Properties:
 					if (!(*i)->SetProperties(std::make_shared<ObjectParser>(obj.Name(), obj.Contents())))
 						std::cout << "Error: A Properties object was already created for SpinSystem \"" << reader.ObjectGroupName() << "\"! Object \"" << obj.Name() << "\" ignored!" << std::endl;
@@ -185,7 +186,7 @@ namespace MSDParser
 				failed += 1;
 			}
 
-			auto failedpulseseq = (i*)->ValidatePulseSequences();
+			auto failedpulseseq = (*i)->ValidatePulseSequences();
 			for (auto j = failedpulseseq.cbegin(); j != failedpulseseq.cend(); j++)
 			{
 				std::cout << "Failed to load pulse sequence" << (*j)->Name() << "!" << std::endl;
