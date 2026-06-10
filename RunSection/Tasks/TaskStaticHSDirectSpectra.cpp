@@ -203,20 +203,20 @@ namespace RunSection
 			return true;
 		}
 
-			bool DiagonalizeRelaxationBasis(const arma::sp_cx_mat &basisHamiltonian,
-											arma::cx_mat &basisEigenvectors,
-											std::ostream &log_stream)
+		bool DiagonalizeRelaxationBasis(const arma::sp_cx_mat &basisHamiltonian,
+										arma::cx_mat &basisEigenvectors,
+										std::ostream &log_stream)
+		{
+			arma::vec eigenvalues;
+			if (!arma::eig_sym(eigenvalues, basisEigenvectors, arma::cx_mat(basisHamiltonian)))
 			{
-				arma::vec eigenvalues;
-				if (!arma::eig_sym(eigenvalues, basisEigenvectors, arma::cx_mat(basisHamiltonian)))
-				{
-					log_stream << "Failed to diagonalize the Hamiltonian used for phenomenological relaxation." << std::endl;
-					return false;
-				}
-
-				return true;
+				log_stream << "Failed to diagonalize the Hamiltonian used for phenomenological relaxation." << std::endl;
+				return false;
 			}
+
+			return true;
 		}
+	}
 
 	// -----------------------------------------------------
 	// TaskStaticHSDirectSpectra Constructors and Destructor
@@ -325,11 +325,11 @@ namespace RunSection
 							{
 								return false;
 							}
-								if (!space.CreateOperator(arma::conv_to<arma::sp_cx_mat>::from((*l)->Sy()), (*l), Iprojy))
+							if (!space.CreateOperator(arma::conv_to<arma::sp_cx_mat>::from((*l)->Sy()), (*l), Iprojy))
 							{
 								return false;
 							}
-								if (!space.CreateOperator(arma::conv_to<arma::sp_cx_mat>::from((*l)->Sz()), (*l), Iprojz))
+							if (!space.CreateOperator(arma::conv_to<arma::sp_cx_mat>::from((*l)->Sz()), (*l), Iprojz))
 							{
 								return false;
 							}
@@ -371,7 +371,7 @@ namespace RunSection
 								projection_counter += 1;
 								Operators[projection_counter] = Iprojz;
 								projection_counter += 1;
-							
+
 								for (auto j = transitions.cbegin(); j != transitions.cend(); j++)
 								{
 									if ((*j)->SourceState() == nullptr)
@@ -386,7 +386,7 @@ namespace RunSection
 									num_transitions++;
 								}
 							}
-						}	
+						}
 					}
 				}
 			}
@@ -438,48 +438,48 @@ namespace RunSection
 					continue;
 				space.GetState((*j)->SourceState(), P);
 				K += (*j)->Rate() / 2 * P;
-				}
-				// Phenomenological relaxation is basis-local and has an exact
-				// finite-step map. Explicit spin-operator relaxation must keep
-				// its operator cache so anisotropic axes can be rebuilt for
-				// every powder orientation.
-				std::vector<SpinAPI::HilbertRelaxationPhenomenologicalTerm> phenomenological_relaxation_terms;
-				std::vector<SpinAPI::operator_ptr> explicit_relaxation_operators;
-				bool use_density_matrix = false;
-				for (auto j = (*i)->operators_cbegin(); j != (*i)->operators_cend(); j++)
+			}
+			// Phenomenological relaxation is basis-local and has an exact
+			// finite-step map. Explicit spin-operator relaxation must keep
+			// its operator cache so anisotropic axes can be rebuilt for
+			// every powder orientation.
+			std::vector<SpinAPI::HilbertRelaxationPhenomenologicalTerm> phenomenological_relaxation_terms;
+			std::vector<SpinAPI::operator_ptr> explicit_relaxation_operators;
+			bool use_density_matrix = false;
+			for (auto j = (*i)->operators_cbegin(); j != (*i)->operators_cend(); j++)
+			{
+				if ((*j)->Type() == SpinAPI::OperatorType::RelaxationPhenomenological)
 				{
-					if ((*j)->Type() == SpinAPI::OperatorType::RelaxationPhenomenological)
+					if (AddPhenomenologicalTerm((*j), phenomenological_relaxation_terms))
 					{
-						if (AddPhenomenologicalTerm((*j), phenomenological_relaxation_terms))
-						{
-							use_density_matrix = true;
-							this->Log() << "Added eigenbasis relaxation operator \"" << (*j)->Name() << "\" to Hilbert-space propagation.\n";
-						}
-						continue;
-					}
-
-					SpinAPI::HilbertRelaxationCache validation_cache;
-					if (space.RelaxationOperator((*j), validation_cache))
-					{
-						explicit_relaxation_operators.push_back(*j);
 						use_density_matrix = true;
-						this->Log() << "Added powder-aware relaxation operator \"" << (*j)->Name() << "\" to Hilbert-space propagation.\n";
+						this->Log() << "Added eigenbasis relaxation operator \"" << (*j)->Name() << "\" to Hilbert-space propagation.\n";
 					}
+					continue;
 				}
-				const bool use_phenomenological_relaxation = !phenomenological_relaxation_terms.empty();
-				const bool use_only_phenomenological_relaxation = use_phenomenological_relaxation && explicit_relaxation_operators.empty();
-				if (use_density_matrix)
+
+				SpinAPI::HilbertRelaxationCache validation_cache;
+				if (space.RelaxationOperator((*j), validation_cache))
 				{
-					this->Log() << "Relaxation operators detected. Using density-matrix propagation in Hilbert space." << std::endl;
+					explicit_relaxation_operators.push_back(*j);
+					use_density_matrix = true;
+					this->Log() << "Added powder-aware relaxation operator \"" << (*j)->Name() << "\" to Hilbert-space propagation.\n";
 				}
-				if (use_phenomenological_relaxation)
-				{
-					this->Log() << "Phenomenological relaxation is evaluated in the orientation-specific H0 eigenbasis." << std::endl;
-				}
-				if (!explicit_relaxation_operators.empty())
-				{
-					this->Log() << "Explicit relaxation operators are rebuilt for every powder orientation so their axes follow the molecular rotation." << std::endl;
-				}
+			}
+			const bool use_phenomenological_relaxation = !phenomenological_relaxation_terms.empty();
+			const bool use_only_phenomenological_relaxation = use_phenomenological_relaxation && explicit_relaxation_operators.empty();
+			if (use_density_matrix)
+			{
+				this->Log() << "Relaxation operators detected. Using density-matrix propagation in Hilbert space." << std::endl;
+			}
+			if (use_phenomenological_relaxation)
+			{
+				this->Log() << "Phenomenological relaxation is evaluated in the orientation-specific H0 eigenbasis." << std::endl;
+			}
+			if (!explicit_relaxation_operators.empty())
+			{
+				this->Log() << "Explicit relaxation operators are rebuilt for every powder orientation so their axes follow the molecular rotation." << std::endl;
+			}
 
 			// Setting or calculating total time.
 			double totaltime = this->totaltime;
@@ -1041,22 +1041,22 @@ namespace RunSection
 					this->Log() << "Failed to obtain rotation matrix for powder orientation." << std::endl;
 				}
 
-					arma::sp_cx_mat H;
-					arma::sp_cx_mat relaxation_basis_hamiltonian;
-					if (hasH0list)
-					{
-						arma::sp_cx_mat H0;
-						if (!space_thread.BaseHamiltonianRotated_SA(HamiltonianH0list, Rot_mat, H0))
+				arma::sp_cx_mat H;
+				arma::sp_cx_mat relaxation_basis_hamiltonian;
+				if (hasH0list)
+				{
+					arma::sp_cx_mat H0;
+					if (!space_thread.BaseHamiltonianRotated_SA(HamiltonianH0list, Rot_mat, H0))
 					{
 						this->Log() << "Failed to obtain rotated Hamiltonian for SpinSystem \"" << (*i)->Name() << "\"." << std::endl;
-							continue;
-						}
-						H = H0;
-						relaxation_basis_hamiltonian = H0;
+						continue;
+					}
+					H = H0;
+					relaxation_basis_hamiltonian = H0;
 
-						if (hasH1list)
-						{
-							arma::sp_cx_mat H1;
+					if (hasH1list)
+					{
+						arma::sp_cx_mat H1;
 						if (!space_thread.ThermalHamiltonian(HamiltonianH1list, H1))
 						{
 							this->Log() << "Failed to obtain Hamiltonian H1 in Hilbert Space." << std::endl;
@@ -1069,67 +1069,67 @@ namespace RunSection
 				else
 				{
 					if (!space_thread.Hamiltonian(H))
-						{
-							this->Log() << "Failed to obtain the Hamiltonian in Hilbert Space." << std::endl;
-							continue;
-						}
-						relaxation_basis_hamiltonian = H;
-					}
-
-					arma::cx_mat rho_initial;
-					if (!reuseInitialFactor &&
-						!space_thread.PrepareInitialDensityForPowder(rho0, Rot_mat, initialStateFrame, dephaseInitialState, initialStateHamiltonianList, initialStateRotationCachePtr, rho_initial))
 					{
-						this->Log() << "Failed to prepare initial density matrix for powder orientation." << std::endl;
+						this->Log() << "Failed to obtain the Hamiltonian in Hilbert Space." << std::endl;
 						continue;
 					}
+					relaxation_basis_hamiltonian = H;
+				}
 
-					arma::cx_mat phenomenological_basis_eigenvectors;
-					if (use_phenomenological_relaxation &&
-						!DiagonalizeRelaxationBasis(relaxation_basis_hamiltonian, phenomenological_basis_eigenvectors, this->Log()))
-					{
-						continue;
-					}
+				arma::cx_mat rho_initial;
+				if (!reuseInitialFactor &&
+					!space_thread.PrepareInitialDensityForPowder(rho0, Rot_mat, initialStateFrame, dephaseInitialState, initialStateHamiltonianList, initialStateRotationCachePtr, rho_initial))
+				{
+					this->Log() << "Failed to prepare initial density matrix for powder orientation." << std::endl;
+					continue;
+				}
 
-					// Explicit spin-operator relaxation depends on the spatial
-					// orientation. Rebuild this cache beside the rotated H0
-					// instead of reusing the validation cache created above.
-					SpinAPI::HilbertRelaxationCache relaxation_cache;
-					bool relaxation_cache_valid = true;
-					for (const auto &relaxationOperator : explicit_relaxation_operators)
-					{
-						if (!space_thread.PowderRelaxationOperatorHilbert(relaxationOperator, Rot_mat, relaxation_cache))
-						{
-							this->Log() << "Failed to construct powder-aware Hilbert-space relaxation operator \"" << relaxationOperator->Name() << "\"." << std::endl;
-							relaxation_cache_valid = false;
-							break;
-						}
-					}
-					if (!relaxation_cache_valid)
-					{
-						continue;
-					}
+				arma::cx_mat phenomenological_basis_eigenvectors;
+				if (use_phenomenological_relaxation &&
+					!DiagonalizeRelaxationBasis(relaxation_basis_hamiltonian, phenomenological_basis_eigenvectors, this->Log()))
+				{
+					continue;
+				}
 
-					arma::cx_mat relaxation_super;
-					if (method_timeinf && !explicit_relaxation_operators.empty() &&
-						!space_thread.RelaxationSuperoperatorHilbert(relaxation_cache, relaxation_super))
+				// Explicit spin-operator relaxation depends on the spatial
+				// orientation. Rebuild this cache beside the rotated H0
+				// instead of reusing the validation cache created above.
+				SpinAPI::HilbertRelaxationCache relaxation_cache;
+				bool relaxation_cache_valid = true;
+				for (const auto &relaxationOperator : explicit_relaxation_operators)
+				{
+					if (!space_thread.PowderRelaxationOperatorHilbert(relaxationOperator, Rot_mat, relaxation_cache))
 					{
-						this->Log() << "Failed to construct powder-aware Hilbert-space relaxation superoperator." << std::endl;
-						continue;
+						this->Log() << "Failed to construct powder-aware Hilbert-space relaxation operator \"" << relaxationOperator->Name() << "\"." << std::endl;
+						relaxation_cache_valid = false;
+						break;
 					}
+				}
+				if (!relaxation_cache_valid)
+				{
+					continue;
+				}
 
-					if (use_density_matrix)
-					{
+				arma::cx_mat relaxation_super;
+				if (method_timeinf && !explicit_relaxation_operators.empty() &&
+					!space_thread.RelaxationSuperoperatorHilbert(relaxation_cache, relaxation_super))
+				{
+					this->Log() << "Failed to construct powder-aware Hilbert-space relaxation superoperator." << std::endl;
+					continue;
+				}
+
+				if (use_density_matrix)
+				{
 					arma::cx_mat rho = rho_initial;
 					int dim = static_cast<int>(rho.n_rows);
 
-						arma::cx_mat work_left(dim, dim, arma::fill::zeros);
-						arma::cx_mat work_right(dim, dim, arma::fill::zeros);
-						arma::cx_mat relax(dim, dim, arma::fill::zeros);
-						arma::cx_mat phenomenological_relax(dim, dim, arma::fill::zeros);
-						arma::cx_mat k1(dim, dim, arma::fill::zeros);
-						arma::cx_mat k2(dim, dim, arma::fill::zeros);
-						arma::cx_mat k3(dim, dim, arma::fill::zeros);
+					arma::cx_mat work_left(dim, dim, arma::fill::zeros);
+					arma::cx_mat work_right(dim, dim, arma::fill::zeros);
+					arma::cx_mat relax(dim, dim, arma::fill::zeros);
+					arma::cx_mat phenomenological_relax(dim, dim, arma::fill::zeros);
+					arma::cx_mat k1(dim, dim, arma::fill::zeros);
+					arma::cx_mat k2(dim, dim, arma::fill::zeros);
+					arma::cx_mat k3(dim, dim, arma::fill::zeros);
 					arma::cx_mat k4(dim, dim, arma::fill::zeros);
 					arma::cx_mat tmp_state(dim, dim, arma::fill::zeros);
 					arma::cx_mat rk_accum(dim, dim, arma::fill::zeros);
@@ -1153,76 +1153,79 @@ namespace RunSection
 						H_dense = arma::cx_mat(H);
 						use_dense_H = true;
 					}
-						else if (H.n_rows > 0 && H.n_cols > 0)
-						{
+					else if (H.n_rows > 0 && H.n_cols > 0)
+					{
 						H_density = static_cast<double>(H.n_nonzero) / (static_cast<double>(H.n_rows) * static_cast<double>(H.n_cols));
 						if (H_density > 0.15)
 						{
 							H_dense = arma::cx_mat(H);
-								use_dense_H = true;
-							}
+							use_dense_H = true;
 						}
+					}
 
-						const bool propagateInPhenomenologicalBasis =
-							relax_use_exact_phenomenological_split && method_timeevo;
-						arma::cx_mat K_propagation_basis = K_dense;
-						std::vector<arma::cx_mat> operatorsPhenomenologicalBasis;
-						std::vector<arma::cx_vec> operatorsPhenomenologicalBasisVector;
-						if (propagateInPhenomenologicalBasis)
+					const bool propagateInPhenomenologicalBasis =
+						relax_use_exact_phenomenological_split && method_timeevo;
+					arma::cx_mat K_propagation_basis = K_dense;
+					std::vector<arma::cx_mat> operatorsPhenomenologicalBasis;
+					std::vector<arma::cx_vec> operatorsPhenomenologicalBasisVector;
+					if (propagateInPhenomenologicalBasis)
+					{
+						// Phenomenological relaxation is diagonal in this H0
+						// eigenbasis. Keep every recurring operation in that
+						// basis for the full orientation instead of performing
+						// two dense basis round trips during every time step.
+						rho = phenomenological_basis_eigenvectors.t() * rho * phenomenological_basis_eigenvectors;
+						H_dense = phenomenological_basis_eigenvectors.t() * H_dense * phenomenological_basis_eigenvectors;
+						K_propagation_basis = phenomenological_basis_eigenvectors.t() * K_dense * phenomenological_basis_eigenvectors;
+
+						operatorsPhenomenologicalBasis.resize(projection_counter);
+						operatorsPhenomenologicalBasisVector.resize(projection_counter);
+						for (int idx = 0; idx < projection_counter; ++idx)
 						{
-							// Phenomenological relaxation is diagonal in this H0
-							// eigenbasis. Keep every recurring operation in that
-							// basis for the full orientation instead of performing
-							// two dense basis round trips during every time step.
-							rho = phenomenological_basis_eigenvectors.t() * rho * phenomenological_basis_eigenvectors;
-							H_dense = phenomenological_basis_eigenvectors.t() * H_dense * phenomenological_basis_eigenvectors;
-							K_propagation_basis = phenomenological_basis_eigenvectors.t() * K_dense * phenomenological_basis_eigenvectors;
-
-							operatorsPhenomenologicalBasis.resize(projection_counter);
-							operatorsPhenomenologicalBasisVector.resize(projection_counter);
-							for (int idx = 0; idx < projection_counter; ++idx)
+							const arma::cx_mat operatorLab = use_sparse_ops
+																 ? arma::cx_mat(OperatorsSparse[idx])
+																 : OperatorsDense[idx];
+							operatorsPhenomenologicalBasis[idx] =
+								phenomenological_basis_eigenvectors.t() * operatorLab * phenomenological_basis_eigenvectors;
+							operatorsPhenomenologicalBasisVector[idx].zeros(dim * dim);
+							for (int row = 0; row < dim; ++row)
 							{
-								const arma::cx_mat operatorLab = use_sparse_ops
-																	 ? arma::cx_mat(OperatorsSparse[idx])
-																	 : OperatorsDense[idx];
-								operatorsPhenomenologicalBasis[idx] =
-									phenomenological_basis_eigenvectors.t() * operatorLab * phenomenological_basis_eigenvectors;
-								operatorsPhenomenologicalBasisVector[idx].zeros(dim * dim);
-								for (int row = 0; row < dim; ++row)
+								for (int col = 0; col < dim; ++col)
 								{
-									for (int col = 0; col < dim; ++col)
-									{
-										operatorsPhenomenologicalBasisVector[idx](col * dim + row) =
-											operatorsPhenomenologicalBasis[idx](row, col);
-									}
+									operatorsPhenomenologicalBasisVector[idx](col * dim + row) =
+										operatorsPhenomenologicalBasis[idx](row, col);
 								}
 							}
 						}
+					}
 
-						const arma::cx_double imag_unit(0.0, 1.0);
+					const arma::cx_double imag_unit(0.0, 1.0);
 
-						auto record_expectation_rho = [&](arma::mat &target, size_t row_index, const arma::cx_mat &state) {
-							for (int idx = 0; idx < projection_counter; ++idx)
-							{
-								double val = propagateInPhenomenologicalBasis
-												 ? TraceDenseDense(operatorsPhenomenologicalBasis[idx], state)
-												 : (use_sparse_ops ? TraceSparseDense(OperatorsSparse[idx], state)
-																  : TraceDenseDense(OperatorsDense[idx], state));
+					auto record_expectation_rho = [&](arma::mat &target, size_t row_index, const arma::cx_mat &state)
+					{
+						for (int idx = 0; idx < projection_counter; ++idx)
+						{
+							double val = propagateInPhenomenologicalBasis
+											 ? TraceDenseDense(operatorsPhenomenologicalBasis[idx], state)
+											 : (use_sparse_ops ? TraceSparseDense(OperatorsSparse[idx], state)
+															   : TraceDenseDense(OperatorsDense[idx], state));
 							target(row_index, idx) = val;
 						}
 					};
 
-						auto record_expectation_vector = [&](arma::mat &target, size_t row_index, const arma::cx_vec &state) {
-							for (int idx = 0; idx < projection_counter; ++idx)
-							{
-								const arma::cx_vec &operatorVector = propagateInPhenomenologicalBasis
-																		 ? operatorsPhenomenologicalBasisVector[idx]
-																		 : OperatorsVector[idx];
-								target(row_index, idx) = std::real(arma::accu(operatorVector % state));
+					auto record_expectation_vector = [&](arma::mat &target, size_t row_index, const arma::cx_vec &state)
+					{
+						for (int idx = 0; idx < projection_counter; ++idx)
+						{
+							const arma::cx_vec &operatorVector = propagateInPhenomenologicalBasis
+																	 ? operatorsPhenomenologicalBasisVector[idx]
+																	 : OperatorsVector[idx];
+							target(row_index, idx) = std::real(arma::accu(operatorVector % state));
 						}
 					};
 
-					auto drho = [&](const arma::cx_mat &state, const arma::sp_cx_mat &H_total, const arma::cx_mat *H_dense_ptr, arma::cx_mat &out) {
+					auto drho = [&](const arma::cx_mat &state, const arma::sp_cx_mat &H_total, const arma::cx_mat *H_dense_ptr, arma::cx_mat &out)
+					{
 						if (H_dense_ptr != nullptr)
 						{
 							work_left = (*H_dense_ptr) * state;
@@ -1244,9 +1247,10 @@ namespace RunSection
 							relax += phenomenological_relax;
 						}
 						out += relax;
-						};
+					};
 
-						auto rk4_step = [&](arma::cx_mat &state, const arma::sp_cx_mat &H_total, const arma::cx_mat *H_dense_ptr, double step_dt) {
+					auto rk4_step = [&](arma::cx_mat &state, const arma::sp_cx_mat &H_total, const arma::cx_mat *H_dense_ptr, double step_dt)
+					{
 						drho(state, H_total, H_dense_ptr, k1);
 						tmp_state = state;
 						tmp_state += (0.5 * step_dt) * k1;
@@ -1264,16 +1268,18 @@ namespace RunSection
 						state += (step_dt / 6.0) * rk_accum;
 					};
 
-						auto relax_rhs = [&](const arma::cx_mat &state, arma::cx_mat &out) {
-							space_thread.ApplyRelaxationHilbert(relaxation_cache, state, out);
-							if (use_phenomenological_relaxation)
-							{
-								space_thread.ApplyPhenomenologicalRelaxationHilbert(phenomenological_relaxation_terms, phenomenological_basis_eigenvectors, state, phenomenological_relax);
-								out += phenomenological_relax;
-							}
-						};
+					auto relax_rhs = [&](const arma::cx_mat &state, arma::cx_mat &out)
+					{
+						space_thread.ApplyRelaxationHilbert(relaxation_cache, state, out);
+						if (use_phenomenological_relaxation)
+						{
+							space_thread.ApplyPhenomenologicalRelaxationHilbert(phenomenological_relaxation_terms, phenomenological_basis_eigenvectors, state, phenomenological_relax);
+							out += phenomenological_relax;
+						}
+					};
 
-					auto rk4_relax_step = [&](arma::cx_mat &state, double step_dt) {
+					auto rk4_relax_step = [&](arma::cx_mat &state, double step_dt)
+					{
 						relax_rhs(state, k1);
 						tmp_state = state;
 						tmp_state += (0.5 * step_dt) * k1;
@@ -1291,25 +1297,28 @@ namespace RunSection
 						state += (step_dt / 6.0) * rk_accum;
 					};
 
-						auto build_unitary_half = [&](const arma::cx_mat &H_total_dense, double step_dt, arma::cx_mat &U_half, arma::cx_mat &U_half_st) {
-							arma::cx_mat A_dense = -imag_unit * H_total_dense - K_propagation_basis;
+					auto build_unitary_half = [&](const arma::cx_mat &H_total_dense, double step_dt, arma::cx_mat &U_half, arma::cx_mat &U_half_st)
+					{
+						arma::cx_mat A_dense = -imag_unit * H_total_dense - K_propagation_basis;
 						U_half = arma::expmat(A_dense * (0.5 * step_dt));
 						U_half_st = U_half.t();
 					};
 
-					auto apply_unitary_half = [&](arma::cx_mat &state, const arma::cx_mat &U_half, const arma::cx_mat &U_half_st) {
+					auto apply_unitary_half = [&](arma::cx_mat &state, const arma::cx_mat &U_half, const arma::cx_mat &U_half_st)
+					{
 						work_left = U_half * state;
 						state = work_left * U_half_st;
 					};
 
-					auto split_step = [&](arma::cx_mat &state, const arma::cx_mat &U_half, const arma::cx_mat &U_half_st, const SpinAPI::HilbertPhenomenologicalRelaxationMap *phenomenological_map, double step_dt) {
+					auto split_step = [&](arma::cx_mat &state, const arma::cx_mat &U_half, const arma::cx_mat &U_half_st, const SpinAPI::HilbertPhenomenologicalRelaxationMap *phenomenological_map, double step_dt)
+					{
 						apply_unitary_half(state, U_half, U_half_st);
-							if (phenomenological_map != nullptr)
-							{
-								if (propagateInPhenomenologicalBasis)
-									space_thread.ApplyPhenomenologicalRelaxationMapInBasisHilbert(*phenomenological_map, state);
-								else
-									space_thread.ApplyPhenomenologicalRelaxationMapHilbert(*phenomenological_map, state, work_right);
+						if (phenomenological_map != nullptr)
+						{
+							if (propagateInPhenomenologicalBasis)
+								space_thread.ApplyPhenomenologicalRelaxationMapInBasisHilbert(*phenomenological_map, state);
+							else
+								space_thread.ApplyPhenomenologicalRelaxationMapHilbert(*phenomenological_map, state, work_right);
 						}
 						else
 						{
@@ -1318,7 +1327,8 @@ namespace RunSection
 						apply_unitary_half(state, U_half, U_half_st);
 					};
 
-						auto build_compact_split_propagator = [&](const arma::cx_mat &U_half, const arma::cx_mat &U_half_st, const SpinAPI::HilbertPhenomenologicalRelaxationMap *phenomenological_map, double step_dt, arma::sp_cx_mat &propagator) {
+					auto build_compact_split_propagator = [&](const arma::cx_mat &U_half, const arma::cx_mat &U_half_st, const SpinAPI::HilbertPhenomenologicalRelaxationMap *phenomenological_map, double step_dt, arma::sp_cx_mat &propagator)
+					{
 						// For small Hilbert spaces, materializing the composed
 						// density map is faster than repeatedly dispatching
 						// several tiny matrix products in split_step().
@@ -1334,17 +1344,18 @@ namespace RunSection
 							space_thread.OperatorToSuperspace(basis_state, propagated_state);
 							dense_propagator.col(col) = propagated_state;
 						}
-							propagator = arma::sp_cx_mat(dense_propagator);
-						};
+						propagator = arma::sp_cx_mat(dense_propagator);
+					};
 
-						auto operator_for_propagation_basis = [&](const arma::sp_cx_mat &operatorLab) {
-							arma::cx_mat result(operatorLab);
-							if (propagateInPhenomenologicalBasis)
-							{
-								result = phenomenological_basis_eigenvectors.t() * result * phenomenological_basis_eigenvectors;
-							}
-							return result;
-						};
+					auto operator_for_propagation_basis = [&](const arma::sp_cx_mat &operatorLab)
+					{
+						arma::cx_mat result(operatorLab);
+						if (propagateInPhenomenologicalBasis)
+						{
+							result = phenomenological_basis_eigenvectors.t() * result * phenomenological_basis_eigenvectors;
+						}
+						return result;
+					};
 
 					size_t pulse_step_index = 0;
 					arma::mat ExptValuesPulseOrientation;
@@ -1399,9 +1410,9 @@ namespace RunSection
 										{
 											this->Log() << "Failed to create a pulse operator in HS." << std::endl;
 											continue;
-											}
-											arma::cx_mat U = operator_for_propagation_basis(pulse_operator);
-											rho = U * rho * U.t();
+										}
+										arma::cx_mat U = operator_for_propagation_basis(pulse_operator);
+										rho = U * rho * U.t();
 									}
 									else if ((*pulse)->Type() == SpinAPI::PulseType::LongPulseStaticField)
 									{
@@ -1413,9 +1424,9 @@ namespace RunSection
 										}
 
 										unsigned int steps = static_cast<unsigned int>(std::abs((*pulse)->Pulsetime() / pulse_dt));
-											if (relax_use_split_expm)
-											{
-												arma::cx_mat H_pulse_dense = H_dense + operator_for_propagation_basis(pulse_operator);
+										if (relax_use_split_expm)
+										{
+											arma::cx_mat H_pulse_dense = H_dense + operator_for_propagation_basis(pulse_operator);
 											arma::cx_mat U_half;
 											arma::cx_mat U_half_st;
 											build_unitary_half(H_pulse_dense, pulse_dt, U_half, U_half_st);
@@ -1468,15 +1479,15 @@ namespace RunSection
 											continue;
 										}
 
-											unsigned int steps = static_cast<unsigned int>(std::abs((*pulse)->Pulsetime() / pulse_dt));
-											if (relax_use_split_expm)
+										unsigned int steps = static_cast<unsigned int>(std::abs((*pulse)->Pulsetime() / pulse_dt));
+										if (relax_use_split_expm)
+										{
+											const arma::cx_mat pulse_operator_propagation = operator_for_propagation_basis(pulse_operator);
+											for (unsigned int n = 1; n <= steps; ++n)
 											{
-												const arma::cx_mat pulse_operator_propagation = operator_for_propagation_basis(pulse_operator);
-												for (unsigned int n = 1; n <= steps; ++n)
-												{
-													double t = n * pulse_dt;
-													double pulse_factor = std::cos((*pulse)->Frequency() * t);
-													arma::cx_mat H_pulse_dense = H_dense + pulse_operator_propagation * pulse_factor;
+												double t = n * pulse_dt;
+												double pulse_factor = std::cos((*pulse)->Frequency() * t);
+												arma::cx_mat H_pulse_dense = H_dense + pulse_operator_propagation * pulse_factor;
 												arma::cx_mat U_half;
 												arma::cx_mat U_half_st;
 												build_unitary_half(H_pulse_dense, pulse_dt, U_half, U_half_st);
@@ -1585,8 +1596,8 @@ namespace RunSection
 							arma::cx_mat U_half_st;
 							build_unitary_half(H_dense, dt, U_half, U_half_st);
 							const bool use_compact_split_propagator = relax_use_exact_phenomenological_split && dim * dim <= 64;
-								if (use_compact_split_propagator)
-								{
+							if (use_compact_split_propagator)
+							{
 								arma::sp_cx_mat compact_split_propagator;
 								build_compact_split_propagator(U_half, U_half_st, timeevo_relaxation_map_ptr, dt, compact_split_propagator);
 								arma::cx_vec rho_vector;
@@ -1594,42 +1605,42 @@ namespace RunSection
 								for (int k = 0; k < num_steps; ++k)
 								{
 									record_expectation_vector(ExptValuesOrientation, k, rho_vector);
-										rho_vector = compact_split_propagator * rho_vector;
-									}
+									rho_vector = compact_split_propagator * rho_vector;
 								}
-								else if (propagateInPhenomenologicalBasis)
+							}
+							else if (propagateInPhenomenologicalBasis)
+							{
+								// Consecutive Strang steps share their
+								// neighboring Hamiltonian half-steps:
+								// U(1/2) R U(1/2) U(1/2) R U(1/2).
+								// Keep a half-step-shifted density matrix and
+								// transform each observable once. The exact
+								// same split evolution then needs two dense
+								// products per time point instead of four.
+								const arma::cx_mat U_full = U_half * U_half;
+								const arma::cx_mat U_full_st = U_full.t();
+								const arma::cx_mat U_half_inverse = arma::inv(U_half);
+								std::vector<arma::cx_mat> operatorsCentered(projection_counter);
+								for (int idx = 0; idx < projection_counter; ++idx)
 								{
-									// Consecutive Strang steps share their
-									// neighboring Hamiltonian half-steps:
-									// U(1/2) R U(1/2) U(1/2) R U(1/2).
-									// Keep a half-step-shifted density matrix and
-									// transform each observable once. The exact
-									// same split evolution then needs two dense
-									// products per time point instead of four.
-									const arma::cx_mat U_full = U_half * U_half;
-									const arma::cx_mat U_full_st = U_full.t();
-									const arma::cx_mat U_half_inverse = arma::inv(U_half);
-									std::vector<arma::cx_mat> operatorsCentered(projection_counter);
+									operatorsCentered[idx] =
+										U_half_inverse.t() * operatorsPhenomenologicalBasis[idx] * U_half_inverse;
+								}
+
+								apply_unitary_half(rho, U_half, U_half_st);
+								for (int k = 0; k < num_steps; ++k)
+								{
 									for (int idx = 0; idx < projection_counter; ++idx)
 									{
-										operatorsCentered[idx] =
-											U_half_inverse.t() * operatorsPhenomenologicalBasis[idx] * U_half_inverse;
+										ExptValuesOrientation(k, idx) = TraceDenseDense(operatorsCentered[idx], rho);
 									}
-
-									apply_unitary_half(rho, U_half, U_half_st);
-									for (int k = 0; k < num_steps; ++k)
-									{
-										for (int idx = 0; idx < projection_counter; ++idx)
-										{
-											ExptValuesOrientation(k, idx) = TraceDenseDense(operatorsCentered[idx], rho);
-										}
-										space_thread.ApplyPhenomenologicalRelaxationMapInBasisHilbert(*timeevo_relaxation_map_ptr, rho);
-										work_left = U_full * rho;
-										rho = work_left * U_full_st;
-									}
+									space_thread.ApplyPhenomenologicalRelaxationMapInBasisHilbert(*timeevo_relaxation_map_ptr, rho);
+									work_left = U_full * rho;
+									rho = work_left * U_full_st;
 								}
-								else
-								{
+							}
+							else
+							{
 								for (int k = 0; k < num_steps; ++k)
 								{
 									record_expectation_rho(ExptValuesOrientation, k, rho);
@@ -1647,32 +1658,32 @@ namespace RunSection
 						}
 					}
 
-						if (method_timeinf)
+					if (method_timeinf)
+					{
+						arma::cx_mat rho0mat = rho;
+						arma::cx_mat A_dense = -arma::cx_double(0.0, 1.0) * arma::cx_mat(H) - arma::cx_mat(K);
+
+						arma::cx_mat L = arma::kron(A_dense, Iden_dense) + arma::kron(Iden_dense, arma::conj(A_dense));
+						arma::cx_mat relaxation_super_orientation = relaxation_super;
+						if (use_phenomenological_relaxation)
 						{
-							arma::cx_mat rho0mat = rho;
-							arma::cx_mat A_dense = -arma::cx_double(0.0, 1.0) * arma::cx_mat(H) - arma::cx_mat(K);
-
-							arma::cx_mat L = arma::kron(A_dense, Iden_dense) + arma::kron(Iden_dense, arma::conj(A_dense));
-							arma::cx_mat relaxation_super_orientation = relaxation_super;
-							if (use_phenomenological_relaxation)
+							arma::cx_mat phenomenological_super;
+							if (!space_thread.PhenomenologicalRelaxationSuperoperatorHilbert(phenomenological_relaxation_terms, phenomenological_basis_eigenvectors, phenomenological_super))
 							{
-								arma::cx_mat phenomenological_super;
-								if (!space_thread.PhenomenologicalRelaxationSuperoperatorHilbert(phenomenological_relaxation_terms, phenomenological_basis_eigenvectors, phenomenological_super))
-								{
-									this->Log() << "Failed to construct phenomenological relaxation superoperator for this powder orientation." << std::endl;
-									continue;
-								}
+								this->Log() << "Failed to construct phenomenological relaxation superoperator for this powder orientation." << std::endl;
+								continue;
+							}
 
-								if (relaxation_super_orientation.is_empty())
-									relaxation_super_orientation = phenomenological_super;
-								else
-									relaxation_super_orientation += phenomenological_super;
-							}
-							if (!relaxation_super_orientation.is_empty())
-							{
-								L += relaxation_super_orientation;
-							}
-							arma::cx_vec rhs;
+							if (relaxation_super_orientation.is_empty())
+								relaxation_super_orientation = phenomenological_super;
+							else
+								relaxation_super_orientation += phenomenological_super;
+						}
+						if (!relaxation_super_orientation.is_empty())
+						{
+							L += relaxation_super_orientation;
+						}
+						arma::cx_vec rhs;
 						if (!space_thread.OperatorToSuperspace(-rho0mat, rhs))
 						{
 							this->Log() << "Failed to convert Hilbert timeinf right-hand side to superspace convention." << std::endl;
@@ -1712,7 +1723,8 @@ namespace RunSection
 					continue;
 				}
 
-				auto record_expectation = [&](arma::mat &target, size_t row_index, const arma::cx_mat &state) {
+				auto record_expectation = [&](arma::mat &target, size_t row_index, const arma::cx_mat &state)
+				{
 					arma::cx_mat state_conj = arma::conj(state);
 					for (int idx = 0; idx < projection_counter; ++idx)
 					{
@@ -1909,10 +1921,10 @@ namespace RunSection
 							{
 								OB = OperatorsDense[idx] * B;
 							}
-								double abs_trace = std::real(arma::accu(Bconj % OB));
-								double expected_value = abs_trace;
-								ExptValuesOrientation(k, idx) = expected_value;
-							}
+							double abs_trace = std::real(arma::accu(Bconj % OB));
+							double expected_value = abs_trace;
+							ExptValuesOrientation(k, idx) = expected_value;
+						}
 
 						// Update B using the Higham propagator
 						B = space_thread.HighamProp(H_prop, B, -arma::cx_double(0.0, 1.0) * dt, precision, M);
@@ -2305,9 +2317,9 @@ namespace RunSection
 		{
 			double index = static_cast<double>(i) + 0.5;
 
-			theta[i] = std::acos(1.0 - index / _Npoints);							// hemisphere
-			phi[i] = golden * index;												// hemisphere
-			weight[i] = 2 * arma::datum::pi / _Npoints; // constant in cos(theta) over the hemisphere
+			theta[i] = std::acos(1.0 - index / _Npoints); // hemisphere
+			phi[i] = golden * index;					  // hemisphere
+			weight[i] = 2 * arma::datum::pi / _Npoints;	  // constant in cos(theta) over the hemisphere
 			_uniformGrid[i] = {theta[i], phi[i], weight[i]};
 		}
 
