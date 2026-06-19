@@ -13,8 +13,10 @@
 #include <memory>
 #include <vector>
 #include <unordered_map>
+#include <armadillo>
 
 #include "SpinAPIfwd.h"
+#include "SpinSpace.h"
 #include "ActionTarget.h"
 #include "SpinAPIDefines.h"
 #include "MSDParserfwd.h"
@@ -74,6 +76,8 @@ namespace SpinAPI
     using PulseSequence_ptr = std::shared_ptr<PulseSequence>;
 
     bool CheckActionScalarTau(const double &);
+
+    arma::sp_cx_mat GetPulseOperator(std::vector<std::pair<PulseSequence_ptr, SpinSpace>>, arma::cx_vec&, double);
 
 }
 #endif

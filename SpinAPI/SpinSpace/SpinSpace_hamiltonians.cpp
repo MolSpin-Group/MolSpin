@@ -308,24 +308,47 @@ namespace SpinAPI
 					this->CreateOperator(arma::conv_to<arma::cx_mat>::from((*i)->Tz()), (*i), Sz);
 					divider = 1.0  / (*i)->GetTensor().Isotropic();
 				}
+
+				auto d_list = _interaction->Strain_Succeptability();
+				double h43,h41,h26,h25,h16,h15 = 0.0;
+				if (d_list.size() == 3)
+				{
+					h43 = d_list[0];
+					h26 = d_list[1];
+					h16 = d_list[2];
+				}
+				else if (d_list.size() == 6)
+				{
+					h43 = d_list[0];
+					h41 = d_list[1];
+					h26 = d_list[2];
+					h25 = d_list[3];
+					h16 = d_list[4];
+					h15 = d_list[6];
+				}
 				
 				auto A = ATensor->LabFrame();
-				double Ex = A(0, 0);
-				double Ey = A(1,1);
-				double Ez = A(2,2);
+				//Ex = exz - 1/2(h15/h16)(exx-eyy)
+				double Ex = A(0,2) - 0.5 * ((h16 != 0.0) ? (h15/h16) * (A(0,0)-A(1,1)) : 0.0);
+				double Ey = A(1,2) + ((h26 != 0.0) ? (h25/h26) * A(0,1) : 0.0);
+				double Ez = A(2,2) + ((h43 != 0.0) ? (h41/h43) * (A(0,0) + A(1,1)) : 0.0);
 
-				double D_parallel = _interaction->Strain_Succeptability()[0];
-				double D_perpendicular = _interaction->Strain_Succeptability()[1];
-				double D_off_diagonal = _interaction->Strain_Succeptability()[2];
+				double d0 = h43; //d_parallel
+				double d1 = 0.5 * h16; //h_perp
+				double d2 = 0.5 * h26; //h_perp
+
+				//double D_parallel = _interaction->Strain_Succeptability()[0];
+				//double D_perpendicular = _interaction->Strain_Succeptability()[1];
+				//double D_off_diagonal = _interaction->Strain_Succeptability()[2];
 				
 				auto AntiCommutator = [](arma::cx_mat A, arma::cx_mat B) {
 					return (A * B) + (B * A);
 				};
 
 				{
-					arma::cx_mat H_parallel = D_parallel * Ez * (Sz * Sz) * divider;
-					arma::cx_mat H_perpendicular = D_perpendicular * (((Sx * Sx) - (Sy * Sy)) * Ex * divider + AntiCommutator(Sx, Sy) * Ey * divider);
-					arma::cx_mat H_off_diagonal = D_off_diagonal * (AntiCommutator(Sx, Sz) * Ex * divider + AntiCommutator(Sy, Sz) * Ey * divider);
+					arma::cx_mat H_parallel = d0 * Ez * (Sz * Sz) * divider;
+					arma::cx_mat H_perpendicular = d1 * (((Sx * Sx) - (Sy * Sy)) * Ex * divider + AntiCommutator(Sx, Sy) * Ey * divider);
+					arma::cx_mat H_off_diagonal = d2 * (AntiCommutator(Sx, Sz) * Ex * divider + AntiCommutator(Sy, Sz) * Ey * divider);
 					tmp += H_parallel + H_perpendicular + H_off_diagonal;
 				}
 
@@ -680,24 +703,46 @@ namespace SpinAPI
 					divider = 1.0 / (*i)->GetTensor().Isotropic();
 				}
 
+				auto d_list = _interaction->Strain_Succeptability();
+				double h43,h41,h26,h25,h16,h15 = 0.0;
+				if (d_list.size() == 3)
+				{
+					h43 = d_list[0];
+					h26 = d_list[1];
+					h16 = d_list[2];
+				}
+				else if (d_list.size() == 6)
+				{
+					h43 = d_list[0];
+					h41 = d_list[1];
+					h26 = d_list[2];
+					h25 = d_list[3];
+					h16 = d_list[4];
+					h15 = d_list[6];
+				}
+				
 				auto A = ATensor->LabFrame();
-				double Ex = A(0, 0);
-				double Ey = A(1,1);
-				double Ez = A(2,2);
+				//Ex = exz - 1/2(h15/h16)(exx-eyy)
+				double Ex = A(0,2) - 0.5 * ((h16 != 0.0) ? (h15/h16) * (A(0,0)-A(1,1)) : 0.0);
+				double Ey = A(1,2) + ((h26 != 0.0) ? (h25/h26) * A(0,1) : 0.0);
+				double Ez = A(2,2) + ((h43 != 0.0) ? (h41/h43) * (A(0,0) + A(1,1)) : 0.0);
 
-				double D_parallel = _interaction->Strain_Succeptability()[0];
-				double D_perpendicular = _interaction->Strain_Succeptability()[1];
-				double D_off_diagonal = _interaction->Strain_Succeptability()[2];
+				double d0 = h43; //d_parallel
+				double d1 = 0.5 * h16; //h_perp
+				double d2 = 0.5 * h26; //h_perp
+
+				//double D_parallel = _interaction->Strain_Succeptability()[0];
+				//double D_perpendicular = _interaction->Strain_Succeptability()[1];
+				//double D_off_diagonal = _interaction->Strain_Succeptability()[2];
 				
 				auto AntiCommutator = [](arma::sp_cx_mat A, arma::sp_cx_mat B) {
-					arma::sp_cx_mat abba = A*B + B*A;
-					return abba;
+					return (A * B) + (B * A);
 				};
 
 				{
-					arma::sp_cx_mat H_parallel = D_parallel * Ez * (Sz * Sz) * divider;
-					arma::sp_cx_mat H_perpendicular = D_perpendicular * (((Sx * Sx) - (Sy * Sy)) * Ex * divider + AntiCommutator(Sx, Sy) * Ey * divider);
-					arma::sp_cx_mat H_off_diagonal = D_off_diagonal * (AntiCommutator(Sx, Sz) * Ex * divider + AntiCommutator(Sy, Sz) * Ey * divider);
+					arma::sp_cx_mat H_parallel = d0 * Ez * (Sz * Sz) * divider;
+					arma::sp_cx_mat H_perpendicular = d1 * (((Sx * Sx) - (Sy * Sy)) * Ex * divider + AntiCommutator(Sx, Sy) * Ey * divider);
+					arma::sp_cx_mat H_off_diagonal = d2 * (AntiCommutator(Sx, Sz) * Ex * divider + AntiCommutator(Sy, Sz) * Ey * divider);
 					tmp += H_parallel + H_perpendicular + H_off_diagonal;
 				}
 

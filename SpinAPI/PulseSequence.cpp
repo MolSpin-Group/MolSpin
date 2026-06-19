@@ -1,6 +1,3 @@
-#include "PulseSequence.h"
-#include "PulseSequence.h"
-#include "PulseSequence.h"
 /////////////////////////////////////////////////////////////////////////
 // PulseSequence class (SpinAPI Module)
 // ------------------
@@ -216,4 +213,29 @@ namespace SpinAPI
 	{
 		return std::isfinite(_d);
 	}
+
+    arma::sp_cx_mat GetPulseOperator(std::vector<std::pair<PulseSequence_ptr, SpinSpace>> sequences, arma::cx_vec& rho, double CurrentTime) //rho is included for the case where we have a instant pulse 
+    {
+        //first get the active pulses
+        std::vector<std::tuple<pulse_ptr, double, SpinSpace>> active = {};
+        for(auto seq : sequences)
+        {
+            auto p = seq.first->GetActivePulseAtTime(CurrentTime);
+            if(p.first == nullptr)
+                continue;
+            auto temp = std::make_tuple<pulse_ptr,double,SpinSpace>(std::move(p.first), std::move(p.second), std::move(seq.second));
+            active.push_back(temp);
+        }
+        for(auto i = active.begin(); i != active.end(); i++)
+        {
+            auto[pulse, current_duration,space] = (*i);
+
+            //check if it's a instant pulse
+            if(pulse->Type() == SpinAPI::PulseType::InstantPulse)
+            {
+                arma::sp_cx_mat pulse_op;
+                
+            }
+        }
+    }
 }

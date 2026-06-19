@@ -324,9 +324,9 @@ namespace SpinAPI
 					double temp_E = E[0];
 					E = {temp_E, temp_E, temp_E};
 				}
-				else if (E.size() != 3)
+				else if (E.size() != 6 && E.size() != 3)
 				{
-					std::cerr << "Error: E array must contain either 1 or 3 comma-separated values like 'E = Eiso;' or 'E = Ex, Ey, Ez;'. " << std::endl;
+					std::cerr << "Error: E array must contain either 1,3,6 comma-separated values like 'E = Eiso;' or 'E = Ex, Ey, Ez'; or 'E = exx, exy, exz, eyy, eyz, ezz;'. " << std::endl;
 				}
 				this->strain_components = E;
 
@@ -337,16 +337,37 @@ namespace SpinAPI
 					double temp_D = D[0];
 					D = {temp_D, temp_D, temp_D}; 
 				}
-				else if (D.size() != 3)
+				else if (D.size() != 3 && D.size() != 6)
 				{
-					std::cerr << "Error: D array must contain either 1 or 3 comma-separated values like 'D = Diso;' or 'D = Dx, Dy, Dz;'. " << std::endl;
+					std::cerr << "Error: D array must contain either 1 or 3 comma-separated values like 'D = Diso;' or 'D = Dx, Dy, Dz; or 'D= d43, d41, d26, d25, d16, d15'. " << std::endl;
 				}
 				this->strain_succeptability = D;
-
+				
 				arma::mat inTensor = arma::zeros<arma::mat>(3, 3);
-				inTensor(0,0) = this->strain_components[0];
-				inTensor(1,1) = this->strain_components[1];
-				inTensor(2,2) = this->strain_components[2];
+				if (E.size() == 3) //populate ezz, ezx, eyz
+				{
+					inTensor(0,2) = this->strain_components[0]; //Ex = ezx and exz
+					inTensor(2,0) = this->strain_components[0];
+
+					inTensor(1,2) = this->strain_components[1]; //Ey = eyz and ezy
+					inTensor(2,1) = this->strain_components[1];
+
+					inTensor(2,2) = this->strain_components[2]; //Ez = ezz
+				}
+				else if(E.size() == 6)
+				{
+					inTensor(0,0) = this->strain_components[0];
+					inTensor(0,1) = this->strain_components[1];
+					inTensor(1,0) = this->strain_components[1];
+					inTensor(0,2) = this->strain_components[2];
+					inTensor(2,0) = this->strain_components[2];
+
+					inTensor(1,1) = this->strain_components[3];
+					inTensor(1,2) = this->strain_components[4];
+					inTensor(2,1) = this->strain_components[4];
+
+					inTensor(2,2) = this->strain_components[5];
+				}
 
 				if (this->properties->Get("tensortype", str))
 				{
@@ -1457,19 +1478,87 @@ namespace SpinAPI
 
 			if(this->type == InteractionType::Strain)
 			{
-				RunSection::ActionScalar ex = RunSection::ActionScalar(this->strain_components[0], nullptr);
-				scalars.push_back(RunSection::NamedActionScalar(_system + "." + this->Name() + ".ex", ex));
-				RunSection::ActionScalar ey = RunSection::ActionScalar(this->strain_components[1], nullptr);
-				scalars.push_back(RunSection::NamedActionScalar(_system + "." + this->Name() + ".ey", ey));
-				RunSection::ActionScalar ez = RunSection::ActionScalar(this->strain_components[2], nullptr);
-				scalars.push_back(RunSection::NamedActionScalar(_system + "." + this->Name() + ".ez", ez));
+				double h43,h41,h26,h25,h16,h15 = 0.0;
+				auto d_list = this->strain_succeptability;
+				if (d_list.size() == 3)
+				{
+					h43 = d_list[0];
+					h26 = d_list[1];
+					h16 = d_list[2];
+				}
+				else if (d_list.size() == 6)
+				{
+					h43 = d_list[0];
+					h41 = d_list[1];
+					h26 = d_list[2];
+					h25 = d_list[3];
+					h16 = d_list[4];
+					h15 = d_list[6];
+				}
 
-				RunSection::ActionScalar d1 = RunSection::ActionScalar(this->strain_succeptability[0], nullptr);
-				scalars.push_back(RunSection::NamedActionScalar(_system + "." + this->Name() + ".d1", d1));
-				RunSection::ActionScalar d2 = RunSection::ActionScalar(this->strain_succeptability[1], nullptr);
-				scalars.push_back(RunSection::NamedActionScalar(_system + "." + this->Name() + ".d2", d2));
-				RunSection::ActionScalar d3 = RunSection::ActionScalar(this->strain_succeptability[2], nullptr);
-				scalars.push_back(RunSection::NamedActionScalar(_system + "." + this->Name() + ".d3", d3));
+				if (this->strain_components.size() == 3)
+				{
+					RunSection::ActionScalar ex = RunSection::ActionScalar(this->strain_components[0], nullptr);
+					scalars.push_back(RunSection::NamedActionScalar(_system + "." + this->Name() + ".ex", ex));
+					RunSection::ActionScalar ey = RunSection::ActionScalar(this->strain_components[1], nullptr);
+					scalars.push_back(RunSection::NamedActionScalar(_system + "." + this->Name() + ".ey", ey));
+					RunSection::ActionScalar ez = RunSection::ActionScalar(this->strain_components[2], nullptr);
+					scalars.push_back(RunSection::NamedActionScalar(_system + "." + this->Name() + ".ez", ez));
+				}
+				else if (this->strain_components.size() == 6)
+				{
+					
+					auto A = this->CouplingTensor()->LabFrame();
+					double Ex = A(0,2) - 0.5 * ((h16 != 0.0) ? (h15/h16) * (A(0,0)-A(1,1)) : 0.0);
+					double Ey = A(1,2) + ((h26 != 0.0) ? (h25/h26) * A(0,1) : 0.0);
+					double Ez = A(2,2) + ((h43 != 0.0) ? (h41/h43) * (A(0,0) + A(1,1)) : 0.0);
+
+					RunSection::ActionScalar ex = RunSection::ActionScalar(Ex, nullptr, true);
+					scalars.push_back(RunSection::NamedActionScalar(_system + "." + this->Name() + ".ex", ex));
+					RunSection::ActionScalar ey = RunSection::ActionScalar(Ey, nullptr, true);
+					scalars.push_back(RunSection::NamedActionScalar(_system + "." + this->Name() + ".ey", ey));
+					RunSection::ActionScalar ez = RunSection::ActionScalar(Ez, nullptr, true);
+					scalars.push_back(RunSection::NamedActionScalar(_system + "." + this->Name() + ".ez", ez));
+
+					RunSection::ActionScalar exx = RunSection::ActionScalar(this->strain_components[0], nullptr);
+					scalars.push_back(RunSection::NamedActionScalar(_system + "." + this->Name() + ".exx", exx));
+					RunSection::ActionScalar eyy = RunSection::ActionScalar(this->strain_components[5], nullptr);
+					scalars.push_back(RunSection::NamedActionScalar(_system + "." + this->Name() + ".eyy", eyy));
+					RunSection::ActionScalar ezz = RunSection::ActionScalar(this->strain_components[2], nullptr);
+					scalars.push_back(RunSection::NamedActionScalar(_system + "." + this->Name() + ".ezz", ezz));
+					RunSection::ActionScalar exy = RunSection::ActionScalar(this->strain_components[1], nullptr);
+					scalars.push_back(RunSection::NamedActionScalar(_system + "." + this->Name() + ".exy", exy));
+					RunSection::ActionScalar exz = RunSection::ActionScalar(this->strain_components[2], nullptr);
+					scalars.push_back(RunSection::NamedActionScalar(_system + "." + this->Name() + ".exz", exz));
+					RunSection::ActionScalar eyz = RunSection::ActionScalar(this->strain_components[4], nullptr);
+					scalars.push_back(RunSection::NamedActionScalar(_system + "." + this->Name() + ".eyz", eyz));
+
+				}
+				
+				if(this->strain_succeptability.size() == 3)
+				{
+					RunSection::ActionScalar d1 = RunSection::ActionScalar(this->strain_succeptability[0], nullptr);
+					scalars.push_back(RunSection::NamedActionScalar(_system + "." + this->Name() + ".d1", d1));
+					RunSection::ActionScalar d2 = RunSection::ActionScalar(this->strain_succeptability[1], nullptr);
+					scalars.push_back(RunSection::NamedActionScalar(_system + "." + this->Name() + ".d2", d2));
+					RunSection::ActionScalar d3 = RunSection::ActionScalar(this->strain_succeptability[2], nullptr);
+					scalars.push_back(RunSection::NamedActionScalar(_system + "." + this->Name() + ".d3", d3));
+				}
+				else if(this->strain_succeptability.size() == 6)
+				{
+					RunSection::ActionScalar d43 = RunSection::ActionScalar(this->strain_succeptability[0], nullptr);
+					scalars.push_back(RunSection::NamedActionScalar(_system + "." + this->Name() + ".d43", d43));
+					RunSection::ActionScalar d41 = RunSection::ActionScalar(this->strain_succeptability[1], nullptr);
+					scalars.push_back(RunSection::NamedActionScalar(_system + "." + this->Name() + ".d41", d41));
+					RunSection::ActionScalar d26 = RunSection::ActionScalar(this->strain_succeptability[2], nullptr);
+					scalars.push_back(RunSection::NamedActionScalar(_system + "." + this->Name() + ".d26", d26));
+					RunSection::ActionScalar d25 = RunSection::ActionScalar(this->strain_succeptability[2], nullptr);
+					scalars.push_back(RunSection::NamedActionScalar(_system + "." + this->Name() + ".d25", d25));
+					RunSection::ActionScalar d16 = RunSection::ActionScalar(this->strain_succeptability[2], nullptr);
+					scalars.push_back(RunSection::NamedActionScalar(_system + "." + this->Name() + ".d16", d16));
+					RunSection::ActionScalar d15 = RunSection::ActionScalar(this->strain_succeptability[2], nullptr);
+					scalars.push_back(RunSection::NamedActionScalar(_system + "." + this->Name() + ".d15", d15));
+				}
 
 
 				if(this->tensorType == InteractionTensorType::Monochromatic)
