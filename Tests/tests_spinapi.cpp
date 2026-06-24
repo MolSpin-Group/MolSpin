@@ -1453,6 +1453,62 @@ bool test_function_finding()
 	// return true;
 }
 //////////////////////////////////////////////////////////////////////////////
+bool test_state_function_grouped_superposition()
+{
+	std::string sp1 = "NDI";
+	std::string sp1Contents = "spin=1/2;";
+	auto spin1 = std::make_shared<SpinAPI::Spin>(sp1, sp1Contents);
+
+	std::string sp2 = "PXX";
+	std::string sp2Contents = "spin=1/2;";
+	auto spin2 = std::make_shared<SpinAPI::Spin>(sp2, sp2Contents);
+
+	SpinAPI::SpinSystem spinsys("System");
+	spinsys.Add(spin1);
+	spinsys.Add(spin2);
+
+	std::string state_name = "STmix";
+	std::string state_contents =
+		"a=0.7853981633974483;"
+		"spins(NDI,PXX)="
+		"   cos(a)( |1/2,-1/2> - |-1/2,1/2> )"
+		" + sin(a)( |-1/2,-1/2> - |1/2,1/2> );";
+	SpinAPI::State state(state_name, state_contents);
+
+	SpinAPI::SpinSpace space;
+	space.Add(spin1);
+	space.Add(spin2);
+
+	arma::cx_vec parsed;
+	arma::cx_vec expected(4, arma::fill::zeros);
+	const double a = 0.7853981633974483;
+	const double invNorm = 1.0 / std::sqrt(2.0);
+	expected(0) = -std::sin(a) * invNorm; // | 1/2,  1/2>
+	expected(1) =  std::cos(a) * invNorm; // | 1/2, -1/2>
+	expected(2) = -std::cos(a) * invNorm; // |-1/2,  1/2>
+	expected(3) =  std::sin(a) * invNorm; // |-1/2, -1/2>
+
+	bool isCorrect = true;
+	bool parsedState = state.ParseFromSystem(spinsys);
+	bool gotState = space.GetState(std::make_shared<SpinAPI::State>(state), parsed);
+	isCorrect &= parsedState;
+	isCorrect &= gotState;
+	isCorrect &= equal_vec(parsed, expected, 1.0e-10);
+
+	std::string exp_state_contents = "spins(NDI)=exp(0)|1/2>;";
+	SpinAPI::State exp_state("ExpState", exp_state_contents);
+	SpinAPI::SpinSpace oneSpinSpace;
+	oneSpinSpace.Add(spin1);
+	arma::cx_vec expParsed;
+	arma::cx_vec expExpected(2, arma::fill::zeros);
+	expExpected(0) = 1.0;
+	isCorrect &= exp_state.ParseFromSystem(spinsys);
+	isCorrect &= oneSpinSpace.GetState(std::make_shared<SpinAPI::State>(exp_state), expParsed);
+	isCorrect &= equal_vec(expParsed, expExpected, 1.0e-10);
+
+	return isCorrect;
+}
+//////////////////////////////////////////////////////////////////////////////
 bool test_function_evaluation()
 {
 	// Setup objects for the test
@@ -2550,6 +2606,7 @@ void AddSpinAPITests(std::vector<test_case> &_cases)
 	_cases.push_back(test_case("SpinAPI::SpinSpace spin management (Add, Contains, Remove)", test_spinapi_spinspace_spinmanagement1));
 	_cases.push_back(test_case("SpinAPI::SpinSpace spin management (Vector Add,Vector Contains, Clear)", test_spinapi_spinspace_spinmanagement2));
 	_cases.push_back(test_case("SpinAPI::StateFunctions validating function parsing", test_function_finding));
+	_cases.push_back(test_case("SpinAPI::StateFunctions grouped superposition factors", test_state_function_grouped_superposition));
 	_cases.push_back(test_case("SpinAPI::Functions validating function evaluation", test_function_evaluation));
 	_cases.push_back(test_case("SpinAPI::Pulse InstantPulse", test_spinapi_instantpulse));
 	_cases.push_back(test_case("SpinAPI::Pulse LongPulseStaticField", test_spinapi_longpulsestaticfield));

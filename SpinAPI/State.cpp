@@ -18,6 +18,22 @@
 
 namespace SpinAPI
 {
+	namespace
+	{
+		std::string TrimStateToken(const std::string &_str)
+		{
+			auto begin = _str.begin();
+			while (begin != _str.end() && std::isspace(static_cast<unsigned char>(*begin)))
+				++begin;
+
+			auto end = _str.end();
+			while (end != begin && std::isspace(static_cast<unsigned char>(*(end - 1))))
+				--end;
+
+			return std::string(begin, end);
+		}
+	}
+
 	// -----------------------------------------------------
 	// State Constructors and Destructor
 	// -----------------------------------------------------
@@ -25,7 +41,7 @@ namespace SpinAPI
 	{
 	}
 
-	State::State(const State &_state) : properties(std::make_shared<MSDParser::ObjectParser>(*(this->properties))), substates(), isValid(_state.isValid)
+	State::State(const State &_state) : properties(std::make_shared<MSDParser::ObjectParser>(*(_state.properties))), substates(_state.substates), Functions(_state.Functions), BracketDepth(_state.BracketDepth), InitialFactors(_state.InitialFactors), Variables(_state.Variables), isValid(_state.isValid)
 	{
 	}
 
@@ -38,8 +54,16 @@ namespace SpinAPI
 	// Copy-assignment
 	const State &State::operator=(const State &_state)
 	{
-		this->properties = std::make_shared<MSDParser::ObjectParser>(*(this->properties));
+		if (this == &_state)
+			return (*this);
+
+		this->properties = std::make_shared<MSDParser::ObjectParser>(*(_state.properties));
 		this->substates = _state.substates;
+		this->Functions = _state.Functions;
+		this->BracketDepth = _state.BracketDepth;
+		this->InitialFactors = _state.InitialFactors;
+		this->Variables = _state.Variables;
+		this->isValid = _state.isValid;
 
 		return (*this);
 	}
@@ -50,17 +74,18 @@ namespace SpinAPI
 	// Note that "mz" is stored in units of "1/2"
 	bool State::ParseMz(const std::string &_mz, int &_out)
 	{
+		const std::string mzString = TrimStateToken(_mz);
 		try
 		{
 			// Check whether mz is written in the form "1/2", "2/2", "3/2", etc.
-			if (_mz.size() > 2 && (*(_mz.cend() - 1) == '2' && *(_mz.cend() - 2) == '/'))
+			if (mzString.size() > 2 && (*(mzString.cend() - 1) == '2' && *(mzString.cend() - 2) == '/'))
 			{
-				_out = std::stoi(_mz.substr(0, _mz.size() - 2).c_str());
+				_out = std::stoi(mzString.substr(0, mzString.size() - 2).c_str());
 			}
 			else
 			{
 				// Use a factor of two if mz is not specified with "/2"
-				_out = 2 * std::stoi(_mz.c_str());
+				_out = 2 * std::stoi(mzString.c_str());
 			}
 		}
 		catch (const std::exception &)
@@ -74,24 +99,26 @@ namespace SpinAPI
 	// Parse complex number from string
 	bool State::ParseFactor(const std::string &_factor, arma::cx_double &_out)
 	{
+		const std::string factorString = TrimStateToken(_factor);
+
 		// An empty string (no explicit factor) is just a factor of 1
 		// Also check for other similar simple cases
-		if (_factor.empty() || _factor.compare("+") == 0)
+		if (factorString.empty() || factorString.compare("+") == 0)
 		{
 			_out = arma::cx_double(1, 0);
 			return true;
 		}
-		else if (_factor.compare("-") == 0)
+		else if (factorString.compare("-") == 0)
 		{
 			_out = arma::cx_double(-1, 0);
 			return true;
 		}
-		else if (_factor.compare("+i") == 0 || _factor.compare("i") == 0)
+		else if (factorString.compare("+i") == 0 || factorString.compare("i") == 0)
 		{
 			_out = arma::cx_double(0, 1);
 			return true;
 		}
-		else if (_factor.compare("-i") == 0)
+		else if (factorString.compare("-i") == 0)
 		{
 			_out = arma::cx_double(0, -1);
 			return true;
@@ -107,7 +134,7 @@ namespace SpinAPI
 		try
 		{
 			// Iterate through the string
-			for (auto i = _factor.cbegin(); i != _factor.cend(); i++)
+			for (auto i = factorString.cbegin(); i != factorString.cend(); i++)
 			{
 				// Ignore parantheses here
 				if ((*i) == '(' || (*i) == ')')
@@ -230,10 +257,25 @@ namespace SpinAPI
 		int depth = 0;
 		int FunctionDepth = -1;
 		int FuncNum = 0;
+		bool functionWaitingForTarget = false;
+		bool directFunctionTerm = false;
+		int functionGroupDepth = -1;
+		std::vector<bool> groupOwnsFunction;
+
+		auto clearActiveFunction = [&]()
+		{
+			Func = nullptr;
+			functionWaitingForTarget = false;
+			directFunctionTerm = false;
+			functionGroupDepth = -1;
+		};
 
 		// Loop through all characters in the string
 		for (auto i = _states.cbegin(); i != _states.cend(); i++)
 		{
+			if (std::isspace(static_cast<unsigned char>(*i)))
+				continue;
+
 			if (!inState && (*i) == '|')
 			{
 				// Attempt to parse the factor
@@ -241,6 +283,11 @@ namespace SpinAPI
 					return false;
 
 				factor = factor * PreFactor.back();
+				if (Func != nullptr && functionWaitingForTarget && functionGroupDepth < 0)
+				{
+					directFunctionTerm = true;
+					functionWaitingForTarget = false;
+				}
 				// We are now inside a state (not the factor), so reset the buffer
 				inState = true;
 				buffer = "";
@@ -373,6 +420,8 @@ namespace SpinAPI
 				FuncNum++;
 				if (DefaultFunction)
 					Func = nullptr;
+				if (directFunctionTerm)
+					clearActiveFunction();
 
 				// Reset buffer and prepare to read the next state
 				buffer = "";
@@ -394,11 +443,26 @@ namespace SpinAPI
 				buffer = "";
 				PreFactor.push_back(factor * PreFactor[depth]);
 				depth++;
+				const bool ownsFunction = (Func != nullptr && functionWaitingForTarget && functionGroupDepth < 0);
+				groupOwnsFunction.push_back(ownsFunction);
+				if (ownsFunction)
+				{
+					functionGroupDepth = depth;
+					functionWaitingForTarget = false;
+				}
 			}
 			else if (!inState && (*i) == ')' && !function)
 			{
+				if (depth < 1 || PreFactor.size() <= 1 || groupOwnsFunction.empty())
+					return false;
+
+				const bool ownsFunction = groupOwnsFunction.back();
+				groupOwnsFunction.pop_back();
 				PreFactor.pop_back();
 				depth--;
+				buffer = "";
+				if (ownsFunction)
+					clearActiveFunction();
 			}
 			else if (!function && std::isalpha((*i)) != 0)
 			{
@@ -427,8 +491,12 @@ namespace SpinAPI
 				variable = buffer;
 				function = false;
 				Func = FunctionParser(functionName, variable, 0, true);
+				if (Func == nullptr)
+					return false;
 
 				buffer = functionName;
+				functionWaitingForTarget = true;
+				FunctionDepth = -1;
 			}
 			else if ((*i) == '*')
 			{
@@ -453,6 +521,10 @@ namespace SpinAPI
 		// Clean-up if we attempted to create the state previously
 		if (!this->substates.empty())
 			this->substates.clear();
+		this->Functions.clear();
+		this->BracketDepth.clear();
+		this->InitialFactors.clear();
+		this->Variables.clear();
 
 		// Get a list of coupled spin state specifications
 		auto coupled = this->properties->GetFunction("spins");
@@ -839,28 +911,34 @@ namespace SpinAPI
 				{
 					int jump = i->size();
 					auto f = this->Functions[FuncNum];
-					if (f->GetVariable()[0] == "") // checks whether it acutally has a function to apply
+					auto variables = f->GetVariable();
+					if (variables.size() == 1 && variables[0] == "") // checks whether it acutally has a function to apply
 					{
 						FuncNum = FuncNum + jump;
 						continue;
 					}
 
-					if (Variables.size() == 1)
+					if (variables.empty())
 					{
-						factor = this->InitialFactors[FuncNum] * f->operator()((void *)(double *)&Variables[f->GetVariable()[0]]);
+						std::vector<void *> v;
+						factor = this->InitialFactors[FuncNum] * f->operator()(v);
+					}
+					else if (Variables.size() == 1)
+					{
+						factor = this->InitialFactors[FuncNum] * f->operator()((void *)(double *)&Variables[variables[0]]);
 					}
 					else
 					{
 						std::vector<void *> v;
 						for (unsigned int i = 0; i < Variables.size(); i++)
 						{
-							v.push_back((void *)(double *)&Variables[f->GetVariable()[i]]);
+							v.push_back((void *)(double *)&Variables[variables[i]]);
 						}
 						factor = this->InitialFactors[FuncNum] * f->operator()(v);
 					}
-					a->second = factor; // can't use a->second as this would have a culmative effect over time
-					FuncNum = FuncNum + jump;
-				}
+				a->second = factor; // can't use a->second as this would have a culmative effect over time
+				FuncNum = FuncNum + jump;
+			}
 			}
 		}
 		return true;
