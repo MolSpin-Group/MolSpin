@@ -231,11 +231,46 @@ namespace SpinAPI
             auto[pulse, current_duration,space] = (*i);
 
             //check if it's a instant pulse
-            if(pulse->Type() == SpinAPI::PulseType::InstantPulse)
+            auto pulse_type = pulse->Type();
+            arma::sp_cx_mat pulse_op;
+            if (pulse_type != SpinAPI::PulseType::MWPulse)
             {
-                arma::sp_cx_mat pulse_op;
-                
+                if space.PulseOperator(pulse,pulse_op)
+                {
+                    //error
+                    continue;
+                }
+            }
+            if(pulse_type== SpinAPI::PulseType::InstantPulse)
+            {
+                rho = pulse_op * rho;
+                return arma::sp_cx_mat(pulse_op.n_rows,pulse_op.n_cols);
+            }
+            else if(pulse_type == SpinAPI::PulseType::LongPulseStaticField)
+            {
+                return amra::cx_double(0.0,-1.0) * pulse_op;
+            }
+            else if(pulse_type == SpinAPI::PulseType::LongPulse)
+            {
+                double t = current_duration;
+                arma::sp_cx_mat A = arma::cx_double(0.0, -1.0) * pulse_op * std::cos(pulse->Frequency() * t);
+                return A;
+            }
+            else if(pulse_type == SpinAPI::PulseType::MWPulse)
+            {
+                double t = current_duration;
+                if(!space.PulseOperator_mw(pulse,pulse_op,t))
+                {
+                    continue;
+                }
+                arma::sp_cx_mat A = arma::cx_double(0.0, -1.0) * pulse_op;
+                return A;
+            }
+            else
+            {
+                return arma::sp_cx_mat(pulse_op.n_rows,pulse_op.n_cols);
             }
         }
+        return arma::sp_cx_mat(pulse_op.n_rows,pulse_op.n_cols);
     }
 }

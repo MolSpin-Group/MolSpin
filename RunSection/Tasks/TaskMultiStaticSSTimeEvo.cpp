@@ -321,10 +321,15 @@ namespace RunSection
 
 		//build timeevo block_structure
 		std::vector<SpinAPI::PulseSequence_ptr> sequences;
+		std::vector<std::pair<SpinAPI::PulseSequence_ptr, SpinAPI::SpinSpace>> sequence_space_pair;
 		for (auto i = spaces.cbegin(); i != spaces.cend(); i++)
 		{
 			auto seq_vec = i->first->PulseSequences();
 			sequences.insert(sequences.end(), seq_vec.begin(), seq_vec.end());
+			for(auto sq = seq_vec.start(); sq != seq_vec.end(); sq++)
+			{
+				sequence_space_pair.push_back({(*sq),(*i)});
+			}
 		}
 		std::vector<block> time_blocks = GenerateTimeEvoBlocking(sequences, {MinTimeStep,MaxTimeStep},this->totaltime);
 		this->Log() << PrintOutBlockStructure(time_blocks);
@@ -339,6 +344,7 @@ namespace RunSection
 			//evaluate pulse sequence 
 			ClampTimeEvolution(CurrentTime, this->totaltime, time_blocks, current_block, this->timestep, params);
 			bool header = false;
+			arma::sp_cx_mat pulse = SpinAPI::GetPulseOperator(sequence_space_pair,rho0,CurrentTime);
 			for(auto& seq : sequences)
 			{
 				auto p = seq->GetActivePulseAtTime(CurrentTime);
@@ -354,7 +360,7 @@ namespace RunSection
 			SpinAPI::SpinSpace::TimePropReturnInfo r;
 			L = L_base + GetCreationOperators();
 			dL = UpdateTimeDependentL(CurrentTime);
-			L = L + dL;
+			L = L + dL + pulse;
 
 			if(this->timestep + CurrentTime > this->totaltime)
 			{
