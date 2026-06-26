@@ -12,6 +12,9 @@
 #include "ObjectParser.h"
 #include <iostream>
 #include "Pulse.h"
+#include "Interaction.h"
+#include "Transition.h"
+#include <type_traits>
 namespace SpinAPI
 {
     PulseSequence::PulseSequence(std::string name, std::string contents)
@@ -36,7 +39,7 @@ namespace SpinAPI
     {
     }
 
-    bool PulseSequence::ParsePulseSequence(std::vector<pulse_ptr>& pulses)
+    bool PulseSequence::ParsePulseSequence(std::vector<pulse_ptr>& pulses, std::vector<interaction_ptr>& interactions, std::vector<transition_ptr>& transitions)
     {
         std::string seq = "";
         _validSequence = false;
@@ -55,7 +58,11 @@ namespace SpinAPI
         };
 
         std::unordered_map<std::string, SpinAPI::pulse_ptr> pulse_map;
+        std::unordered_map<std::string, SpinAPI::interaction_ptr> interaction_map;
+        std::unordered_map<std::string, SpinAPI::transition_ptr> transition_map;
         pulse_map.reserve(pulses.size());
+        interaction_map.reserve(interactions.size());
+        transition_map.reserve(transitions.size());
         for(const auto& p : pulses)
         {
             if (p) 
@@ -63,7 +70,20 @@ namespace SpinAPI
                 pulse_map[p->Name()] = p;
             }
         }
-
+        for(const auto& t : transitions)
+        {
+            if (t) 
+            {
+                transition_map[t->Name()] = t;
+            }
+        }
+        for(const auto& i : interactions)
+        {
+            if (i) 
+            {
+                interaction_map[i->Name()] = i;
+            }
+        }
         std::stringstream ss(seq);
         std::string pulse_name;
         std::string tau_key;
@@ -98,21 +118,52 @@ namespace SpinAPI
                 }
             }
 
-            auto it2 = pulse_map.find(pulse_name);
-            if(it2 == pulse_map.end())
-            {
-                std::cerr << "Pulse: " << pulse_name << " not found";
-                errors += 1;
-                continue;
-            }
-            if(!it2->second->IsValid())
-            {
-                std::cerr << "Pulse: " << pulse_name << " is not valid";
-                errors += 1;
-                continue;
-            }
 
-            this->AddStep(it2->second,tau_key);
+            auto process_step = [&](auto& target_map, const std::string& item, const std::string type, const auto& tau_key)
+            {
+                auto it2 = target_map.find(item);
+                if(it2 == target_map.end()) 
+                {
+                    return false;
+                }
+                if(!it2->second->IsValid())
+                {
+                    std::cerr << type << ": " << item << " is not valid" << std::endl;
+                    errors += 1;
+                    return true;
+                }
+                
+                using pt_type = typename std::decay_t<decltype(target_map)>::mapped_type::element_type;
+                if constexpr(std::is_same_v<pt_type, SpinAPI::Pulse>)
+                {
+                    this->AddStep(it2->second, tau_key);
+                    return true;
+                }
+                else
+                {
+                    if(type == "Interaction" || type == "Transition")
+                    {
+                        if(!it2->second->GetPulsed())
+                        {
+                            std::cerr << type << ": " << item << " is ill defined - no duration defined" << std::endl;
+                            errors += 1;
+                            return true;
+                        }
+                    }
+                }
+
+                this->AddStep(it2->second, tau_key);
+                return true;
+            };
+
+            bool match = process_step(pulse_map, pulse_name, "Pulse", tau_key) ||
+                         process_step(interaction_map, pulse_name, "Interaction", tau_key) ||
+                         process_step(transition_map, pulse_name, "Transition", tau_key);
+            if(!match)
+            {
+                std::cerr << "Sequence item: " << pulse_name << " not found" << std::endl;
+                errors += 1;
+            }
         }
         if (errors != 0)
             return false;
@@ -120,23 +171,32 @@ namespace SpinAPI
         return true;
     }
 
-    std::pair<SpinAPI::pulse_ptr, double> PulseSequence::GetActivePulseAtTime(double abs_time) const
+    std::pair<SequenceObject, double> PulseSequence::GetActivePulseAtTime(double abs_time) const
     {
         double track_time = this->offset;
         for (const auto& step : this->sequence)
         {
-            auto[pulse, tau_key] = step;
-            double pulse_duration = (pulse->Type() == SpinAPI::PulseType::InstantPulse) ? 0.0 : pulse->Pulsetime();
+            auto[block, tau_key] = step;
+            auto[pulse,interaction,transition] = block.get();
+            double pulse_duration = 0.0;
+            if (pulse != nullptr)
+                pulse_duration = (pulse->Type() == SpinAPI::PulseType::InstantPulse) ? 0.0 : pulse->Pulsetime();
+            else if(interaction != nullptr)
+                pulse_duration = interaction->ActiveTime();
+            else if(transition != nullptr)
+                pulse_duration = transition->ActiveTime();
+            else
+                return {SequenceObject(), 0.0};
 
             if (abs_time >= track_time && abs_time < (track_time + pulse_duration))
             {
                 double time_active = abs_time - track_time;
-                return { pulse, time_active };
+                return { block, time_active };
             }
             if(abs_time == track_time && pulse_duration == 0.0)
             {
                 double time_active = abs_time - track_time;
-                return {pulse, time_active};
+                return {block, time_active};
             }
 
             track_time += pulse_duration;
@@ -150,13 +210,13 @@ namespace SpinAPI
 
             if (abs_time >= track_time && abs_time < (track_time + gap_duration))
             {
-                return { nullptr, 0.0 };
+                return {SequenceObject(), 0.0 };
             }
 
             track_time += gap_duration;
         }
 
-        return { nullptr, 0.0 };
+        return {SequenceObject(), 0.0 };
     }
 
     const PulseSequence PulseSequence::operator=(const PulseSequence &seq)
@@ -214,63 +274,90 @@ namespace SpinAPI
 		return std::isfinite(_d);
 	}
 
-    arma::sp_cx_mat GetPulseOperator(std::vector<std::pair<PulseSequence_ptr, SpinSpace>> sequences, arma::cx_vec& rho, double CurrentTime) //rho is included for the case where we have a instant pulse 
+    std::vector<arma::sp_cx_mat> GetPulseOperator(std::vector<std::pair<PulseSequence_ptr, std::shared_ptr<SpinSpace>>> sequences, arma::cx_vec& rho, double CurrentTime) //rho is included for the case where we have a instant pulse 
     {
         //first get the active pulses
-        std::vector<std::tuple<pulse_ptr, double, SpinSpace>> active = {};
+        std::vector<std::tuple<SequenceObject, double, std::shared_ptr<SpinSpace>>> active = {};
+        std::vector<arma::sp_cx_mat> pulses = {};
+        std::vector<unsigned int> active_seq = {};
+        unsigned int idx = 0;
         for(auto seq : sequences)
         {
+            pulses.push_back(arma::sp_cx_mat(seq.second->SpaceDimensions(),seq.second->SpaceDimensions()));
             auto p = seq.first->GetActivePulseAtTime(CurrentTime);
-            if(p.first == nullptr)
+            if(p.first.IsNullptr())
                 continue;
-            auto temp = std::make_tuple<pulse_ptr,double,SpinSpace>(std::move(p.first), std::move(p.second), std::move(seq.second));
+            auto temp = std::make_tuple<SequenceObject,double,std::shared_ptr<SpinSpace>>(std::move(p.first), std::move(p.second), std::move(seq.second));
             active.push_back(temp);
+            active_seq.push_back(idx);
+            idx += 1;
         }
+
         for(auto i = active.begin(); i != active.end(); i++)
         {
-            auto[pulse, current_duration,space] = (*i);
+            auto[seq_object, current_duration,space] = (*i);
+            auto[pulse_event, interaction_event, transition_event] = seq_object.get();
+            int dim = space->SpaceDimensions();
+            auto evaluate_pulse = [&](SpinAPI::pulse_ptr& pulse) {
+                //check if it's a instant pulse
+                auto pulse_type = pulse->Type();
+                arma::sp_cx_mat pulse_op;
+                if (pulse_type != SpinAPI::PulseType::MWPulse)
+                {
+                    if(!space->PulseOperator(pulse,pulse_op))
+                    {
+                        //error
+                        return arma::sp_cx_mat(pulse_op.n_rows,pulse_op.n_cols);
+                    }
+                }
+                if(pulse_type== SpinAPI::PulseType::InstantPulse)
+                {
+                    rho = pulse_op * rho;
+                    return arma::sp_cx_mat(pulse_op.n_rows,pulse_op.n_cols);
+                }
+                else if(pulse_type == SpinAPI::PulseType::LongPulseStaticField)
+                {
+                    arma::sp_cx_mat A = arma::cx_double(0.0,-1.0) * pulse_op;
+                    //std::cout << A << std::endl;
+                    return A;
+                }
+                else if(pulse_type == SpinAPI::PulseType::LongPulse)
+                {
+                    double t = current_duration;
+                    arma::sp_cx_mat A = arma::cx_double(0.0, -1.0) * pulse_op * std::cos(pulse->Frequency() * t);
+                    return A;
+                }
+                else if(pulse_type == SpinAPI::PulseType::MWPulse)
+                {
+                    double t = current_duration;
+                    if(!space->PulseOperator_mw(pulse,pulse_op,t))
+                    {
+                        return arma::sp_cx_mat(pulse_op.n_rows,pulse_op.n_cols);
+                    }
+                    arma::sp_cx_mat A = arma::cx_double(0.0, -1.0) * pulse_op;
+                    return A;
+                }
+                else
+                {
+                    return arma::sp_cx_mat(pulse_op.n_rows,pulse_op.n_cols);
+                }
+            };
 
-            //check if it's a instant pulse
-            auto pulse_type = pulse->Type();
-            arma::sp_cx_mat pulse_op;
-            if (pulse_type != SpinAPI::PulseType::MWPulse)
-            {
-                if space.PulseOperator(pulse,pulse_op)
-                {
-                    //error
-                    continue;
-                }
-            }
-            if(pulse_type== SpinAPI::PulseType::InstantPulse)
-            {
-                rho = pulse_op * rho;
-                return arma::sp_cx_mat(pulse_op.n_rows,pulse_op.n_cols);
-            }
-            else if(pulse_type == SpinAPI::PulseType::LongPulseStaticField)
-            {
-                return amra::cx_double(0.0,-1.0) * pulse_op;
-            }
-            else if(pulse_type == SpinAPI::PulseType::LongPulse)
-            {
-                double t = current_duration;
-                arma::sp_cx_mat A = arma::cx_double(0.0, -1.0) * pulse_op * std::cos(pulse->Frequency() * t);
-                return A;
-            }
-            else if(pulse_type == SpinAPI::PulseType::MWPulse)
-            {
-                double t = current_duration;
-                if(!space.PulseOperator_mw(pulse,pulse_op,t))
-                {
-                    continue;
-                }
-                arma::sp_cx_mat A = arma::cx_double(0.0, -1.0) * pulse_op;
-                return A;
-            }
-            else
-            {
-                return arma::sp_cx_mat(pulse_op.n_rows,pulse_op.n_cols);
-            }
+            auto evaluate_interaction = [&](SpinAPI::interaction_ptr& interaction) {
+                interaction->SetActive(true);
+            };
+            auto evaluate_transition = [&](SpinAPI::transition_ptr& transition) {
+                transition->SetActive(true);
+            };
+            
+            idx = i - active.begin();
+            if(pulse_event)
+                pulses[active_seq[idx]] = evaluate_pulse(pulse_event);
+            if(interaction_event)
+                evaluate_interaction(interaction_event);
+            else if(transition_event)
+                evaluate_transition(transition_event);
         }
-        return arma::sp_cx_mat(pulse_op.n_rows,pulse_op.n_cols);
+        return pulses;
     }
 }

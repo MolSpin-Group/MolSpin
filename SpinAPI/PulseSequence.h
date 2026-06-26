@@ -23,10 +23,41 @@
 
 namespace SpinAPI
 {
+
+    class SequenceObject
+    {
+        SpinAPI::pulse_ptr m_pulse_block = nullptr;
+        SpinAPI::interaction_ptr m_interaction_block = nullptr;
+        SpinAPI::transition_ptr m_transition_block = nullptr;
+    public:
+        void set_block(SpinAPI::pulse_ptr& block)
+        {
+            m_pulse_block = block;
+        }
+        void set_block(SpinAPI::interaction_ptr& block)
+        {
+            m_interaction_block = block;
+        }
+        void set_block(SpinAPI::transition_ptr& block)
+        {
+            m_transition_block = block;
+        }
+
+        std::tuple<SpinAPI::pulse_ptr, SpinAPI::interaction_ptr, SpinAPI::transition_ptr> get()
+        {
+            return std::tuple<SpinAPI::pulse_ptr, SpinAPI::interaction_ptr, SpinAPI::transition_ptr>{m_pulse_block,m_interaction_block,m_transition_block};
+        }
+
+        bool IsNullptr()
+        {
+            return (m_pulse_block == nullptr) && (m_transition_block == nullptr) && (m_interaction_block == nullptr);
+        }
+    };
 	class PulseSequence
 	{
     public:
-        using SequenceStep = std::tuple<SpinAPI::pulse_ptr, std::string>;
+        //using SequenceStep = std::tuple<SpinAPI::pulse_ptr, std::string>;
+        using SequenceStep = std::tuple<SequenceObject, std::string>;
     private:
         std::shared_ptr<MSDParser::ObjectParser> properties;
         std::vector<SequenceStep> sequence;
@@ -62,14 +93,28 @@ namespace SpinAPI
         auto cbegin() const noexcept { return sequence.cbegin(); }
         auto cend() const noexcept { return sequence.cend(); }
 
-        bool ParsePulseSequence(std::vector<pulse_ptr>&);
-        std::pair<SpinAPI::pulse_ptr, double> GetActivePulseAtTime(double abs_time) const;
+        bool ParsePulseSequence(std::vector<pulse_ptr>&, std::vector<interaction_ptr>&, std::vector<transition_ptr>&);
+        std::pair<SequenceObject, double> GetActivePulseAtTime(double abs_time) const;
 
     private:
         std::vector<RunSection::NamedActionScalar> CreateActionScalars(const std::string&);
         void AddStep(SpinAPI::pulse_ptr ptr, std::string tau)
         {
-            sequence.emplace_back(std::move(ptr), tau);
+            SequenceObject block;
+            block.set_block(ptr);
+            sequence.emplace_back(block, tau);
+        }
+        void AddStep(SpinAPI::interaction_ptr ptr, std::string tau)
+        {
+            SequenceObject block;
+            block.set_block(ptr);
+            sequence.emplace_back(block, tau);
+        }
+        void AddStep(SpinAPI::transition_ptr ptr, std::string tau)
+        {
+            SequenceObject block;
+            block.set_block(ptr);
+            sequence.emplace_back(block, tau);
         }
     };
 
@@ -77,7 +122,7 @@ namespace SpinAPI
 
     bool CheckActionScalarTau(const double &);
 
-    arma::sp_cx_mat GetPulseOperator(std::vector<std::pair<PulseSequence_ptr, SpinSpace>>, arma::cx_vec&, double);
+    std::vector<arma::sp_cx_mat> GetPulseOperator(std::vector<std::pair<PulseSequence_ptr, std::shared_ptr<SpinSpace>>>, arma::cx_vec&, double);
 
 }
 #endif

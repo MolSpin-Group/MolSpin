@@ -10,6 +10,7 @@
 #include <iostream>
 #include "TaskMultiStaticSSTimeEvo.h"
 #include "Transition.h"
+#include "Interaction.h"
 #include "Settings.h"
 #include "State.h"
 #include "ObjectParser.h"
@@ -112,7 +113,7 @@ namespace RunSection
 
 			// Next, get the Hamiltonian
 			arma::sp_cx_mat H;
-			if(!i->second->Hamiltonian(H))
+			if(!i->second->StaticHamiltonian(H))
 			{
 				this->Log() << "ERROR: Failed to obtain the superspace Hamiltonian for spin system \"" << i->first->Name() << "\"!" << std::endl;
 				return false;
@@ -195,6 +196,44 @@ namespace RunSection
 				row += i->second->SpaceDimensions();
 			}
 			return Ltd;
+		};
+		bool header = false;
+		auto GetPulses = [&](double CurrentTime, std::vector<std::pair<SpinAPI::PulseSequence_ptr, std::shared_ptr<SpinAPI::SpinSpace>>>& sequence_pair, arma::cx_vec& rho) {
+			auto pulse = SpinAPI::GetPulseOperator(sequence_pair,rho,CurrentTime);
+			arma::sp_cx_mat PulseMat(L.n_rows, L.n_cols);
+			std::vector<std::shared_ptr<SpinAPI::SpinSpace>> space_vec;
+			nextDimension = 0;
+			for(auto& seq_space : sequence_pair)
+			{
+				auto[seq,space] = seq_space;
+				auto p = seq->GetActivePulseAtTime(CurrentTime);
+				space_vec.push_back(space);
+				if(p.first.IsNullptr())
+					continue;
+				if(!header)
+				{
+					this->Log() << "Active pulses | active time\n";
+					header = true;
+				}
+				std::string name = "";
+				auto[pu,inte,tr] = p.first.get();
+				name = (pu) ? pu->Name() : (inte) ? inte->Name() : tr->Name();
+				this->Log() << seq->Name() << "." << name << " | " << p.second << std::endl;
+			}
+
+			for(auto i = space_vec.cbegin(); i != space_vec.cend(); i++)
+			{
+				nextDimension = 0;
+				for(auto j = spaces.begin(); j != spaces.end(); j++)
+				{
+					if((*i) == (*j).second)
+						break;
+					nextDimension += (*j).second->SpaceDimensions();
+				}
+				unsigned int idx = i - space_vec.begin(); 
+				PulseMat.submat(nextDimension, nextDimension, nextDimension + (*i)->SpaceDimensions() - 1, nextDimension + (*i)->SpaceDimensions() - 1) += pulse[idx];
+			}
+			return PulseMat;
 		};
 
 		// Obtain the creation operators - note that we need to loop through the other SpinSystems again to find transitions leading into the current SpinSystem
@@ -321,14 +360,14 @@ namespace RunSection
 
 		//build timeevo block_structure
 		std::vector<SpinAPI::PulseSequence_ptr> sequences;
-		std::vector<std::pair<SpinAPI::PulseSequence_ptr, SpinAPI::SpinSpace>> sequence_space_pair;
+		std::vector<std::pair<SpinAPI::PulseSequence_ptr, std::shared_ptr<SpinAPI::SpinSpace>>> sequence_space_pair;
 		for (auto i = spaces.cbegin(); i != spaces.cend(); i++)
 		{
 			auto seq_vec = i->first->PulseSequences();
 			sequences.insert(sequences.end(), seq_vec.begin(), seq_vec.end());
-			for(auto sq = seq_vec.start(); sq != seq_vec.end(); sq++)
+			for(auto sq = seq_vec.begin(); sq != seq_vec.end(); sq++)
 			{
-				sequence_space_pair.push_back({(*sq),(*i)});
+				sequence_space_pair.push_back(std::make_pair((*sq),(*i).second));
 			}
 		}
 		std::vector<block> time_blocks = GenerateTimeEvoBlocking(sequences, {MinTimeStep,MaxTimeStep},this->totaltime);
@@ -343,24 +382,10 @@ namespace RunSection
 			// Propagate
 			//evaluate pulse sequence 
 			ClampTimeEvolution(CurrentTime, this->totaltime, time_blocks, current_block, this->timestep, params);
-			bool header = false;
-			arma::sp_cx_mat pulse = SpinAPI::GetPulseOperator(sequence_space_pair,rho0,CurrentTime);
-			for(auto& seq : sequences)
-			{
-				auto p = seq->GetActivePulseAtTime(CurrentTime);
-				if(p.first == nullptr)
-					continue;
-				if(!header)
-				{
-					this->Log() << "Active pulses | active time\n";
-					header = true;
-				}
-				this->Log() << seq->Name() << "." << p.first->Name() << " | " << p.second << std::endl;
-			}
 			SpinAPI::SpinSpace::TimePropReturnInfo r;
 			L = L_base + GetCreationOperators();
 			dL = UpdateTimeDependentL(CurrentTime);
-			L = L + dL + pulse;
+			L = L + dL + GetPulses(CurrentTime,sequence_space_pair,rho0);
 
 			if(this->timestep + CurrentTime > this->totaltime)
 			{

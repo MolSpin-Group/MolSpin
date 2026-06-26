@@ -42,6 +42,11 @@ namespace SpinAPI
 		// Private methods to create ActionTargets
 		std::vector<RunSection::NamedActionScalar> CreateActionScalars(const std::string &);
 
+		//flags for pulsing
+		bool Pulsed;
+		bool Active;
+		double active_time;
+
 	public:
 		// Constructors / Destructors
 		Transition(std::string, std::string, std::shared_ptr<SpinSystem>); // Normal constructor
@@ -85,6 +90,47 @@ namespace SpinAPI
 
 		// Public method for creating ActionTargets
 		void GetActionTargets(std::vector<RunSection::NamedActionScalar> &, std::vector<RunSection::NamedActionVector> &, const std::string &);
+
+		bool IsActive()
+		{
+			if (this->Pulsed == true)
+			{
+				bool act = this->Active;
+				this->Active = false; //this essentially ensures the interaction/transition is only active during the pulse time
+				return act;
+			}
+			return true;
+		}
+
+		void SetPulsed(bool pulsed)
+		{
+			this->Pulsed = pulsed;
+		}
+
+		bool GetPulsed() const
+		{
+			return this->Pulsed;
+		}
+
+		void SetActive(bool act)
+		{
+			this->Active = act;
+		}
+
+		bool HasTD() const
+		{
+			if (this->GetPulsed())
+			{
+				return true;
+			}
+			return this->HasTrajectory();
+		}
+
+		double ActiveTime() const
+		{
+			return this->active_time;
+		}
+
 	};
 
 	// Define alias for transition-pointers

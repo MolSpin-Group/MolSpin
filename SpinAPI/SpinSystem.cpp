@@ -491,7 +491,7 @@ namespace SpinAPI
 		std::vector<PulseSequence_ptr>failedPulseSequences;
 		for(auto i = this->pulses_seq.cbegin(); i != this->pulses_seq.cend(); i++)
 		{
-			if((*i)->ParsePulseSequence(this->pulses))
+			if((*i)->ParsePulseSequence(this->pulses,this->interactions,this->transitions))
 			{
 				if(!(*i)->IsValid())
 					failedPulseSequences.push_back(*i);

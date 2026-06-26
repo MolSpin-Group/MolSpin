@@ -140,6 +140,8 @@ namespace SpinAPI
 		{
 			if ((*j)->TrajectoryLength() > 0)
 				return true;
+			if((*j)->HasTD())
+				return true;
 		}
 
 		return false;

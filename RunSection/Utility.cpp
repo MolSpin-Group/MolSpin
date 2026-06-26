@@ -13,6 +13,8 @@
 #include "PulseSequence.h"
 #include "Pulse.h"
 #include <sstream>
+#include "Interaction.h"
+#include "Transition.h"
 #ifdef _OPENMP
 #include <omp.h>
 #endif
@@ -130,18 +132,23 @@ namespace RunSection
                 PulseEvent o_event;
                 o_event.time = 0.0;
                 o_event.is_pulse = false;
-                o_event.pulse = nullptr;
+                o_event.pulse = SpinAPI::SequenceObject();
                 timelines[ch].push_back(o_event);
                 critical_time_points.push_back(ch_offset);
                 track_time = ch_offset;
             }
             for(auto step = track->begin(); step != track->end(); step++)
             {
-                auto[pulse, tau_key] = *step;
-                double pulse_duration = (pulse->Type() == SpinAPI::PulseType::InstantPulse) ? 0.0 : pulse->Pulsetime();
+                auto[seq_step, tau_key] = *step; //need to change this to handle sequence steps
+                auto[pulse_event, interaction_event, transition_event] = seq_step.get();
+                double pulse_duration = 0.0;
+                if (pulse_event)
+                    pulse_duration = (pulse_event->Type() == SpinAPI::PulseType::InstantPulse) ? 0.0 : pulse_event->Pulsetime();
+                else
+                    pulse_duration = (interaction_event) ? interaction_event->ActiveTime() : transition_event->ActiveTime();
                 PulseEvent p_event;
                 p_event.time = track_time;
-                p_event.pulse = pulse;
+                p_event.pulse = seq_step;
                 p_event.is_pulse = true;
                 timelines[ch].push_back(p_event);
 
@@ -160,7 +167,7 @@ namespace RunSection
                     PulseEvent g_event;
                     g_event.time = track_time;
                     g_event.is_pulse = false;
-                    g_event.pulse = nullptr;
+                    g_event.pulse = SpinAPI::SequenceObject();
                     timelines[ch].push_back(g_event);
                     
                     track_time += gap_duration;
@@ -205,26 +212,48 @@ namespace RunSection
                 if (it != timeline.begin())
                 {
                     auto active_ev = *(it-1);
-                    if(active_ev.is_pulse && active_ev.pulse) 
+                    if(active_ev.is_pulse && !active_ev.pulse.IsNullptr()) 
                     {
                         global_free = false;
-                        double ps = active_ev.pulse->Pulsetime();
-                        double ts = active_ev.pulse->Timestep();
-
-                        if(active_ev.pulse->Type() != SpinAPI::PulseType::InstantPulse)
+                        auto[pulse_event, interaction_event, transition_event] = active_ev.pulse.get();
+                        double ps,ts = 0.0;
+                        if(pulse_event)
                         {
-                            double max_allowed = std::min(ps / 20.0, ts*1e3);
-                            double pulse_max = std::min(max_allowed, MinMaxTimesteps.second);
-                            double pulse_min = std::min(MinMaxTimesteps.first, ps / 1e3);
-                            
-                            
-                            block_max = std::min(block_max, pulse_max);
-                            block_min = std::min(block_min, pulse_min);
+                            ps = (pulse_event->Type() == SpinAPI::PulseType::InstantPulse) ? 0.0 : pulse_event->Pulsetime();
+                            ts = pulse_event->Timestep();
                         }
                         else
                         {
-                            block_max = MinMaxTimesteps.first;
-                            block_min = MinMaxTimesteps.second;
+                            ps = (interaction_event) ? interaction_event->ActiveTime() : transition_event->ActiveTime();
+                        }
+
+                        if(pulse_event)
+                        {
+                            if(pulse_event->Type() != SpinAPI::PulseType::InstantPulse)
+                            {
+                                double max_allowed = std::min(ps / 20.0, ts*1e3);
+                                double pulse_max = std::min(max_allowed, MinMaxTimesteps.second);
+                                double pulse_min = std::min(MinMaxTimesteps.first, ps / 1e3);
+                            
+                                
+                                block_max = std::min(block_max, pulse_max);
+                                block_min = std::min(block_min, pulse_min);
+                            }
+                            else
+                            {
+                                block_max = MinMaxTimesteps.first;
+                                block_min = MinMaxTimesteps.second;
+                            }
+                        }
+                        else
+                        {
+                            double max_allowed = ps / 20.0;
+                            double pulse_max = std::min(max_allowed, MinMaxTimesteps.second);
+                            double pulse_min = std::min(MinMaxTimesteps.first, ps / 1e3);
+                            
+                                
+                            block_max = std::min(block_max, pulse_max);
+                            block_min = std::min(block_min, pulse_min);
                         }
                     }
                 }
@@ -563,6 +592,7 @@ namespace RunSection
     SpinAPI::SpinSpace::TimePropReturnInfo RungeKutta45Armadillo(arma::sp_cx_mat &L, arma::cx_vec &rho0, arma::cx_vec &drhodt, double dumpstep, RungeKuttaFuncArma func, double time, SpinAPI::SpinSpace::PropParam params)
     {
         VecType k0(rho0.n_rows);
+        double used = 0.0;
 
         std::vector<std::pair<float, std::vector<float>>> ButcherTable = {{0.0, {}},
                                                                           {0.25, {0.25}},
@@ -664,20 +694,23 @@ namespace RunSection
             double max_change = atol + relative_error;
             double error_ratio = change / max_change;
             NewStepSize = Adjusth(error_ratio, max_change, change, safety, f1, f2);
-
             if (error_ratio <= params.reject_limit)
             {
                 drhodt = RK4;
                 keep_step = true;
-                dumpstep = NewStepSize;
+                used = dumpstep;
+                //dumpstep = NewStepSize;
             }
-            if(NewStepSize < params.min && error_ratio > params.reject_limit)
+            if(NewStepSize < params.min && error_ratio >= params.reject_limit)
             {
                 params.min = NewStepSize;
+                first_step = false;
             }
             if(NewStepSize > params.max)
             {
                 NewStepSize = params.max;
+                keep_step = true;
+                used = dumpstep;
             }
             if(error_ratio >= params.reject_limit)
             {
@@ -686,7 +719,7 @@ namespace RunSection
             dumpstep = NewStepSize;
 
         }
-        return {dumpstep, first_step};
+        return {dumpstep,used,first_step,drhodt};
     }
 
     //TimePropReturnInfo AdaptiveDirectKrylovArmadillo(arma::sp_cx_mat &L, arma::cx_vec &rho0, arma::cx_vec &drhodt, double dumpstep, double time, PropParam PropParams, HamiltonainTimeDepFuncArma GetTDH)

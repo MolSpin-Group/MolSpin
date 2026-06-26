@@ -123,6 +123,11 @@ namespace SpinAPI
 		// Helper method called by ParseSpinGroups
 		bool AddSpinList(const std::string &, const std::vector<spin_ptr> &, std::vector<spin_ptr> &, const std::vector<spin_ptr> *_crossCheck = nullptr);
 
+		//flags for pulsing
+		bool Pulsed;
+		bool Active;
+		double active_time;
+
 	public:
 		// Constructors / Destructors
 		Interaction(std::string, std::string); // Normal constructor
@@ -193,6 +198,38 @@ namespace SpinAPI
 
 		//get distribution functiom
 		SCDistributionF f;
+
+		bool IsActive()
+		{
+			if (this->Pulsed == true)
+			{
+				bool act = this->Active;
+				this->Active = false; //this essentially ensures the interaction/transition is only active during the pulse time
+				return act;
+			}
+			return true;
+		}
+
+		void SetPulsed(bool pulsed)
+		{
+			this->Pulsed = pulsed;
+		}
+
+		void SetActive(bool act)
+		{
+			this->Active = act;
+		}
+
+		bool GetPulsed()
+		{
+			return this->Pulsed;
+		}
+
+		double ActiveTime()
+		{
+			return this->active_time;
+		}
+
 	};
 
 	// Define alias for interaction-pointers

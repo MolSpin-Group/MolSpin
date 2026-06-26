@@ -186,12 +186,6 @@ namespace MSDParser
 				failed += 1;
 			}
 
-			auto failedpulseseq = (*i)->ValidatePulseSequences();
-			for (auto j = failedpulseseq.cbegin(); j != failedpulseseq.cend(); j++)
-			{
-				std::cout << "Failed to load pulse sequence" << (*j)->Name() << "!" << std::endl;
-				failed += 1;
-			}
 		}
 
 		// Put states into other objects - this can only be done now that all states have been loaded
@@ -217,6 +211,16 @@ namespace MSDParser
 			}
 
 			SpinAPI::LinkTransitions(*i);
+		}
+
+		for (auto i = this->systems.cbegin(); i != this->systems.cend(); i++)
+		{
+			auto failedpulseseq = (*i)->ValidatePulseSequences();
+			for (auto j = failedpulseseq.cbegin(); j != failedpulseseq.cend(); j++)
+			{
+				std::cout << "Failed to load pulse sequence" << (*j)->Name() << "!" << std::endl;
+				failed += 1;
+			}
 		}
 
 		if(failed > 0)

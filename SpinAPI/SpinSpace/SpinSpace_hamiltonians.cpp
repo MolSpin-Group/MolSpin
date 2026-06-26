@@ -1642,6 +1642,9 @@ namespace SpinAPI
 			// Skip static interactions
 			if (IsStatic(*(*i)))
 				continue;
+			
+			if(!(*i)->IsActive())
+				continue;
 
 			// Attempt to get the matrix representing the Interaction object in the spin space
 			if ((*i)->Type() == InteractionType::SemiClassicalField)
@@ -1678,6 +1681,9 @@ namespace SpinAPI
 		{
 			// Skip static interactions
 			if (IsStatic(*(*i)))
+				continue;
+			
+			if(!(*i)->IsActive())
 				continue;
 
 			if ((*i)->Type() == InteractionType::SemiClassicalField)

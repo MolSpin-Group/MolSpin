@@ -306,6 +306,9 @@ namespace SpinAPI
 			if (IsStatic(*(*i)))
 				continue;
 
+			if(!(*i)->IsActive())
+				continue;
+
 			// Attempt to get the matrix representing the reaction operator in the spin space
 			if (!this->ReactionOperator((*i), tmp, _forcedReactionOperatorType))
 				return false;
@@ -334,6 +337,9 @@ namespace SpinAPI
 		{
 			// Skip static transitions
 			if (IsStatic(*(*i)))
+				continue;
+
+			if(!(*i)->IsActive())
 				continue;
 
 			// Attempt to get the matrix representing the reaction operator in the spin space
@@ -669,7 +675,7 @@ namespace SpinAPI
 	bool CreationOperator(const transition_ptr &_transition, const SpinSpace &_sourceSpace, const SpinSpace &_targetSpace, arma::sp_cx_mat &_out, bool _useSuperoperatorSpace)
 	{
 		// Make sure that we have a valid transition object, with a target system specified
-		if (_transition == nullptr || !_transition->IsValid() || _transition->TargetState() == nullptr)
+		if (_transition == nullptr || !_transition->IsValid() || _transition->TargetState() == nullptr || _transition->IsActive() == false)
 			return false;
 
 		// Get a Hilbert space state vector of both the source state and the target state

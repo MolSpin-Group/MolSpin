@@ -47,7 +47,7 @@ namespace RunSection
     {
         double time;
         bool is_pulse;
-        SpinAPI::pulse_ptr pulse;
+        SpinAPI::SequenceObject pulse;
     };
     std::vector<block> GenerateTimeEvoBlocking(std::vector<SpinAPI::PulseSequence_ptr>& seq, std::pair<double,double> MinMaxTimesteps, double TotalEvoTime);
     std::string PrintOutBlockStructure(const std::vector<block>& blocks );

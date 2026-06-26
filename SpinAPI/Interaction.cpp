@@ -26,7 +26,8 @@ namespace SpinAPI
 																		 trjHasTime(false), trjHasField(false), trjHasTensor(false), trjHasPrefactor(false), trjTime(0), trjFieldX(0), trjFieldY(0), trjFieldZ(0), trjPrefactor(0),
 																		 tdFrequency(1.0), tdPhase(0.0), tdAxis("0 0 1"), tdPerpendicularOscillation(false), tdInitialField({0, 0, 0}), tensorType(InteractionTensorType::Static), tdTimestep(0),
 																		 tdInitialTensor(3, 3, arma::fill::zeros), tdMinFreq(0.0), tdMaxFreq(0.0), tdFreqs(), tdAmps(), tdPhases(), tdComponents(0), tdRandOrients(false), tdThetas(), tdPhis(), tdCorrTime(0.0),
-																		 tdPrintTensor(false), tdPrintField(false), hffield(), orientations(0), OriWeights(), BondLengths(), Spacing(), tau(0.0), dist(), tdSeed(0), tdAutoseed(false), tdGenerator(1), framelist({0, 0, 0}), f(), tdPhaseDrift(false), RWDiffusionCoefficient(0.0)
+																		 tdPrintTensor(false), tdPrintField(false), hffield(), orientations(0), OriWeights(), BondLengths(), Spacing(), tau(0.0), dist(), tdSeed(0), tdAutoseed(false), tdGenerator(1), framelist({0, 0, 0}), f(), tdPhaseDrift(false), RWDiffusionCoefficient(0.0),
+																		 Pulsed(false),Active(true),active_time(0.0)
 	{
 		// Is a trajectory specified?
 		std::string str;
@@ -57,6 +58,12 @@ namespace SpinAPI
 			{
 				std::cout << "ERROR: Failed to load trajectory \"" << (directory + str) << "\" for Interaction object \"" << this->Name() << "\"!" << std::endl;
 			}
+		}
+		
+		if (this->properties->Get("duration", this->active_time))
+		{
+			this->Pulsed = true;
+			this->Active = false;
 		}
 
 		// Get the type of the interaction
@@ -850,7 +857,8 @@ namespace SpinAPI
 																tdComponents(_interaction.tdComponents), tdRandOrients(_interaction.tdRandOrients), tdThetas(_interaction.tdThetas), tdPhis(_interaction.tdPhis), tdCorrTime(_interaction.tdCorrTime),
 																tdPrintTensor(_interaction.tdPrintTensor), tdPrintField(_interaction.tdPrintField), hffield(_interaction.hffield), orientations(_interaction.orientations),
 																OriWeights(_interaction.OriWeights), BondLengths(_interaction.BondLengths), Spacing(_interaction.Spacing), tau(_interaction.tau), dist(_interaction.dist),
-																tdSeed(_interaction.tdSeed), tdAutoseed(_interaction.tdAutoseed), tdGenerator(_interaction.tdGenerator), framelist(_interaction.framelist), f(_interaction.f), strain_components(_interaction.strain_components), strain_succeptability(_interaction.strain_succeptability), tdPhaseDrift(_interaction.tdPhaseDrift), RWDiffusionCoefficient(_interaction.RWDiffusionCoefficient)
+																tdSeed(_interaction.tdSeed), tdAutoseed(_interaction.tdAutoseed), tdGenerator(_interaction.tdGenerator), framelist(_interaction.framelist), f(_interaction.f), strain_components(_interaction.strain_components), strain_succeptability(_interaction.strain_succeptability), tdPhaseDrift(_interaction.tdPhaseDrift), RWDiffusionCoefficient(_interaction.RWDiffusionCoefficient),
+																Pulsed(_interaction.Pulsed), Active(_interaction.Active), active_time(_interaction.active_time)
 
 	{
 	}
@@ -921,6 +929,9 @@ namespace SpinAPI
 		this->framelist = _interaction.framelist;
 		this->tdPhaseDrift = _interaction.tdPhaseDrift;
 		this->RWDiffusionCoefficient = _interaction.RWDiffusionCoefficient;
+		this->Active = _interaction.Active;
+		this->Pulsed = _interaction.Pulsed;
+		this->active_time = _interaction.active_time;
 
 		return (*this);
 	}
@@ -1035,6 +1046,11 @@ namespace SpinAPI
 			return true;
 
 		if (this->trjHasTime)
+		{
+			return true;
+		}
+
+		if (this->Pulsed)
 		{
 			return true;
 		}
