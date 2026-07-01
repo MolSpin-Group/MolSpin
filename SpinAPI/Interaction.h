@@ -176,6 +176,10 @@ namespace SpinAPI
 		bool HasTimeDependence() const;
 		const arma::vec Framelist() const;
 
+		double Ex();
+		double Ey();
+		double Ez();
+
 		// Get time-dependency parameters
 		double GetTDFrequency() const { return this->tdFrequency; };
 		double GetTDPhase() const { return this->tdPhase; };

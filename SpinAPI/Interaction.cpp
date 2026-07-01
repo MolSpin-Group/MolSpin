@@ -333,7 +333,7 @@ namespace SpinAPI
 				}
 				else if (E.size() != 6 && E.size() != 3)
 				{
-					std::cerr << "Error: E array must contain either 1,3,6 comma-separated values like 'E = Eiso;' or 'E = Ex, Ey, Ez'; or 'E = exx, exy, exz, eyy, eyz, ezz;'. " << std::endl;
+					std::cerr << "Error: E array must contain either 1,3,6 space-separated values like 'E = Eiso;' or 'E = Ex, Ey, Ez'; or 'E = exx, exy, exz, eyy, eyz, ezz;'. " << std::endl;
 				}
 				this->strain_components = E;
 
@@ -346,7 +346,7 @@ namespace SpinAPI
 				}
 				else if (D.size() != 3 && D.size() != 6)
 				{
-					std::cerr << "Error: D array must contain either 1 or 3 comma-separated values like 'D = Diso;' or 'D = Dx, Dy, Dz; or 'D= d43, d41, d26, d25, d16, d15'. " << std::endl;
+					std::cerr << "Error: D array must contain either 1 or 3 space-separated values like 'D = Diso;' or 'D = Dx, Dy, Dz; or 'D= d43, d41, d26, d25, d16, d15'. " << std::endl;
 				}
 				this->strain_succeptability = D;
 				
@@ -1021,7 +1021,84 @@ namespace SpinAPI
 		return this->framelist;
 	}
 
-	// Checks whether the interaction field is time-dependent
+    double Interaction::Ex()
+    {
+        double h43,h41,h26,h25,h16,h15 = 0.0;
+		auto d_list = this->strain_succeptability;
+		if (d_list.size() == 3)
+		{
+			h43 = d_list[0];
+			h26 = d_list[1];
+			h16 = d_list[2];
+		}
+		else if (d_list.size() == 6)
+		{
+			h43 = d_list[0];
+			h41 = d_list[1];
+			h26 = d_list[2];
+			h25 = d_list[3];
+			h16 = d_list[4];
+			h15 = d_list[6];
+		}
+
+		auto A = this->CouplingTensor()->LabFrame();
+		double Ex1 = A(0,2) - 0.5 * ((h16 != 0.0) ? (h15/h16) * (A(0,0)-A(1,1)) : 0.0);
+		double Ex2 = A(0,2) - 0.5 * ((h26 != 0.0) ? (h25/h26) * (A(0,0)-A(1,1)) : 0.0);
+		return pow(((Ex1*Ex1 + Ex2*Ex2)/2),0.5);
+    }
+
+    double Interaction::Ey()
+    {
+        double h43,h41,h26,h25,h16,h15 = 0.0;
+		auto d_list = this->strain_succeptability;
+		if (d_list.size() == 3)
+		{
+			h43 = d_list[0];
+			h26 = d_list[1];
+			h16 = d_list[2];
+		}
+		else if (d_list.size() == 6)
+		{
+			h43 = d_list[0];
+			h41 = d_list[1];
+			h26 = d_list[2];
+			h25 = d_list[3];
+			h16 = d_list[4];
+			h15 = d_list[6];
+		}
+
+		auto A = this->CouplingTensor()->LabFrame();
+		double Ey2 = A(1,2) + ((h26 != 0.0) ? (h25/h26) * A(0,1) : 0.0);
+		double Ey1 = A(1,2) + ((h16 != 0.0) ? (h15/h16) * A(0,1) : 0.0);
+		return pow(((Ey1*Ey1 + Ey2*Ey2)/2),0.5);
+    }
+
+    double Interaction::Ez()
+    {
+        double h43,h41,h26,h25,h16,h15 = 0.0;
+		auto d_list = this->strain_succeptability;
+		if (d_list.size() == 3)
+		{
+			h43 = d_list[0];
+			h26 = d_list[1];
+			h16 = d_list[2];
+		}
+		else if (d_list.size() == 6)
+		{
+			h43 = d_list[0];
+			h41 = d_list[1];
+			h26 = d_list[2];
+			h25 = d_list[3];
+			h16 = d_list[4];
+			h15 = d_list[6];
+		}
+
+		auto A = this->CouplingTensor()->LabFrame();
+		double Ez = A(2,2) + ((h43 != 0.0) ? (h41/h43) * (A(0,0) + A(1,1)) : 0.0);
+		return Ez;
+    }
+
+    // Checks whether the interaction field is time-dependent
 	bool Interaction::HasFieldTimeDependence() const
 	{
 		if (this->fieldType != InteractionFieldType::Static)
@@ -1523,17 +1600,12 @@ namespace SpinAPI
 				}
 				else if (this->strain_components.size() == 6)
 				{
-					
-					auto A = this->CouplingTensor()->LabFrame();
-					double Ex = A(0,2) - 0.5 * ((h16 != 0.0) ? (h15/h16) * (A(0,0)-A(1,1)) : 0.0);
-					double Ey = A(1,2) + ((h26 != 0.0) ? (h25/h26) * A(0,1) : 0.0);
-					double Ez = A(2,2) + ((h43 != 0.0) ? (h41/h43) * (A(0,0) + A(1,1)) : 0.0);
 
-					RunSection::ActionScalar ex = RunSection::ActionScalar(Ex, nullptr, true);
+					RunSection::ActionScalar ex = RunSection::ActionScalar(std::bind(&Interaction::Ex, this));
 					scalars.push_back(RunSection::NamedActionScalar(_system + "." + this->Name() + ".ex", ex));
-					RunSection::ActionScalar ey = RunSection::ActionScalar(Ey, nullptr, true);
+					RunSection::ActionScalar ey = RunSection::ActionScalar(std::bind(&Interaction::Ey, this));
 					scalars.push_back(RunSection::NamedActionScalar(_system + "." + this->Name() + ".ey", ey));
-					RunSection::ActionScalar ez = RunSection::ActionScalar(Ez, nullptr, true);
+					RunSection::ActionScalar ez = RunSection::ActionScalar(std::bind(&Interaction::Ez, this));
 					scalars.push_back(RunSection::NamedActionScalar(_system + "." + this->Name() + ".ez", ez));
 
 					RunSection::ActionScalar exx = RunSection::ActionScalar(this->strain_components[0], nullptr);

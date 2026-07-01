@@ -13,6 +13,7 @@
 #define MOD_RunSection_ActionTarget
 
 #include <armadillo>
+#include <functional>
 
 namespace RunSection
 {
@@ -26,6 +27,9 @@ namespace RunSection
 		// Data reference to act on
 		T *data;
 
+		//functional data source
+		std::function<T()> dataSource;
+
 		// Other data members
 		bool readonly;
 		T initialValue;
@@ -35,14 +39,16 @@ namespace RunSection
 
 	public:
 		// Constructors / Destructors
-		ActionTarget<T>(T &_data, CheckFunction<T> _check, bool _readonly = false) : data(&_data), readonly(_readonly), initialValue(_data), check(_check){}; // Normal constructor
-		ActionTarget<T>(const ActionTarget<T> &_at) : data(_at.data), readonly(_at.readonly), initialValue(_at.initialValue), check(_at.check){};			  // Copy-constructor
+		ActionTarget<T>(std::function<T()> _dataSource) :data(nullptr), dataSource(_dataSource), readonly(true), initialValue(T()), check(nullptr){};
+		ActionTarget<T>(T &_data, CheckFunction<T> _check, bool _readonly = false) : data(&_data), dataSource(nullptr),readonly(_readonly), initialValue(_data), check(_check){}; // Normal constructor
+		ActionTarget<T>(const ActionTarget<T> &_at) : data(_at.data),dataSource(_at.dataSource), readonly(_at.readonly), initialValue(_at.initialValue), check(_at.check){};			  // Copy-constructor
 		~ActionTarget<T>(){};																																  // Destructor
 
 		// Operators
 		ActionTarget<T> &operator=(const ActionTarget<T> &_at) // Copy-assignment
 		{
 			this->data = _at.data;
+			this->dataSource = _at.dataSource;
 			this->readonly = _at.readonly;
 			this->initialValue = _at.initialValue;
 			this->check = _at.check;
@@ -54,6 +60,10 @@ namespace RunSection
 		// It is guaranteed to be different from nullptr since a reference was passed to the constructor (or to the constructor of the object used to copy construct/assign)
 		T Get() const
 		{
+			if(this->dataSource)
+			{
+				return this->dataSource();
+			}
 			return (*data);
 		}
 
@@ -61,7 +71,7 @@ namespace RunSection
 		// If a check-function was provided, use it to verify the input
 		bool Set(const T &_in)
 		{
-			if (this->readonly || (this->check != nullptr && this->check(_in) == false))
+			if (this->readonly || this->dataSource || (this->check != nullptr && this->check(_in) == false))
 				return false;
 
 			*(this->data) = _in;
@@ -72,12 +82,16 @@ namespace RunSection
 		// Such changes in readonly-ActionTargets can be reversed to an initial value through this method.
 		void Reset()
 		{
-			*(this->data) = this->initialValue;
+			if(!this->dataSource && this->data != nullptr)
+			{
+				*(this->data) = this->initialValue;
+			}
 		}
 
 		// Other public methods
 		bool HasCheck() const { return (this->check != nullptr); };
 		bool IsReadonly() const { return this->readonly; }
+		bool IsFunctional() const {return (this->dataSource != nullptr);}
 	};
 
 	using ActionScalar = ActionTarget<double>;
