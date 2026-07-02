@@ -113,12 +113,12 @@ namespace SpinAPI
 			_out = arma::cx_double(-1, 0);
 			return true;
 		}
-		else if (factorString.compare("+i") == 0 || factorString.compare("i") == 0)
+		else if (factorString.compare("+i") == 0 || factorString.compare("i") == 0 || factorString.compare("+I") == 0 || factorString.compare("I") == 0)
 		{
 			_out = arma::cx_double(0, 1);
 			return true;
 		}
-		else if (factorString.compare("-i") == 0)
+		else if (factorString.compare("-i") == 0 || factorString.compare("-I") == 0)
 		{
 			_out = arma::cx_double(0, -1);
 			return true;
@@ -260,6 +260,7 @@ namespace SpinAPI
 		bool functionWaitingForTarget = false;
 		bool directFunctionTerm = false;
 		int functionGroupDepth = -1;
+		arma::cx_double functionPreFactor = arma::cx_double(1.0, 0.0);
 		std::vector<bool> groupOwnsFunction;
 
 		auto clearActiveFunction = [&]()
@@ -268,6 +269,28 @@ namespace SpinAPI
 			functionWaitingForTarget = false;
 			directFunctionTerm = false;
 			functionGroupDepth = -1;
+			functionPreFactor = arma::cx_double(1.0, 0.0);
+		};
+
+		auto splitFunctionPreFactor = [&](std::string &_functionName) -> bool
+		{
+			functionPreFactor = arma::cx_double(1.0, 0.0);
+
+			const auto separator = _functionName.rfind('*');
+			if (separator == std::string::npos)
+				return true;
+			if (separator == 0 || separator + 1 >= _functionName.size())
+				return false;
+
+			const std::string factorString = _functionName.substr(0, separator);
+			std::string parsedFunctionName = _functionName.substr(separator + 1);
+			arma::cx_double parsedFactor;
+			if (!this->ParseFactor(factorString, parsedFactor))
+				return false;
+
+			_functionName = parsedFunctionName;
+			functionPreFactor = parsedFactor;
+			return true;
 		};
 
 		// Loop through all characters in the string
@@ -285,6 +308,8 @@ namespace SpinAPI
 				factor = factor * PreFactor.back();
 				if (Func != nullptr && functionWaitingForTarget && functionGroupDepth < 0)
 				{
+					// Prefixes such as i*sin(a)|...> are kept as a normal ket prefactor.
+					factor *= functionPreFactor;
 					directFunctionTerm = true;
 					functionWaitingForTarget = false;
 				}
@@ -441,9 +466,12 @@ namespace SpinAPI
 					return false;
 
 				buffer = "";
+				const bool ownsFunction = (Func != nullptr && functionWaitingForTarget && functionGroupDepth < 0);
+				if (ownsFunction)
+					factor *= functionPreFactor;
+
 				PreFactor.push_back(factor * PreFactor[depth]);
 				depth++;
-				const bool ownsFunction = (Func != nullptr && functionWaitingForTarget && functionGroupDepth < 0);
 				groupOwnsFunction.push_back(ownsFunction);
 				if (ownsFunction)
 				{
@@ -490,6 +518,9 @@ namespace SpinAPI
 				}
 				variable = buffer;
 				function = false;
+				if (!splitFunctionPreFactor(functionName))
+					return false;
+
 				Func = FunctionParser(functionName, variable, 0, true);
 				if (Func == nullptr)
 					return false;

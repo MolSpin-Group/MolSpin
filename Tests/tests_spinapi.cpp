@@ -1506,6 +1506,27 @@ bool test_state_function_grouped_superposition()
 	isCorrect &= oneSpinSpace.GetState(std::make_shared<SpinAPI::State>(exp_state), expParsed);
 	isCorrect &= equal_vec(expParsed, expExpected, 1.0e-10);
 
+	std::string direct_phase_contents =
+		"a=0.7853981633974483;"
+		"spins(NDI,PXX)=cos(a)|1/2,-1/2>+I*sin(a)|-1/2,1/2>;";
+	SpinAPI::State direct_phase_state("DirectPhaseState", direct_phase_contents);
+	arma::cx_vec directPhaseParsed;
+	arma::cx_vec directPhaseExpected(4, arma::fill::zeros);
+	directPhaseExpected(1) = std::cos(a);
+	directPhaseExpected(2) = arma::cx_double(0.0, std::sin(a));
+	isCorrect &= direct_phase_state.ParseFromSystem(spinsys);
+	isCorrect &= space.GetState(std::make_shared<SpinAPI::State>(direct_phase_state), directPhaseParsed);
+	isCorrect &= equal_vec(directPhaseParsed, directPhaseExpected, 1.0e-10);
+
+	std::string grouped_phase_contents =
+		"a=0.7853981633974483;"
+		"spins(NDI,PXX)=cos(a)(|1/2,-1/2>)+i*sin(a)(|-1/2,1/2>);";
+	SpinAPI::State grouped_phase_state("GroupedPhaseState", grouped_phase_contents);
+	arma::cx_vec groupedPhaseParsed;
+	isCorrect &= grouped_phase_state.ParseFromSystem(spinsys);
+	isCorrect &= space.GetState(std::make_shared<SpinAPI::State>(grouped_phase_state), groupedPhaseParsed);
+	isCorrect &= equal_vec(groupedPhaseParsed, directPhaseExpected, 1.0e-10);
+
 	return isCorrect;
 }
 //////////////////////////////////////////////////////////////////////////////
