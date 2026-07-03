@@ -23,7 +23,6 @@ SpinSystem GS
         group1 = e1;
         //dvalue = 2868.91;
         dvalue = 0.1023696699;
-        //D = 0;
         E = 0;
         //prefactor = 0.0178412132e-3; //half of the normal conversion because the electron is included twice
         prefactor = 0.5;
@@ -37,8 +36,6 @@ SpinSystem GS
         group2 = N14;
         tensor = matrix("-2.70 0 0; 0 -2.70 0; 0 0 -2.14"); //Mhz
         prefactor = 0.035682426404996e-3;
-        //tensortype = "monochromatic";
-        //frequency = 0.0;
     }
 
     Interaction N14nqp
@@ -46,9 +43,7 @@ SpinSystem GS
         type = zfs;
         group1 = N14;
         dvalue = -5.01;
-        //dvalue = -4.96;
         E = 0.0;
-        //prefactor = 1.591549508e-6;
         prefactor = 6.283185306e-3; 
         commonprefactor = false;
         energyshift = true;
@@ -58,7 +53,6 @@ SpinSystem GS
     {
         type = singlespin;
         spins = e1;
-        //field = "0.0 0.0 0.0101";
         field = "0.0 0.0 0.101";
     }
     
@@ -66,9 +60,7 @@ SpinSystem GS
     {
         type = singlespin;
         spins = N14;
-        //field = "0.0 0.0 0.101";
         field = "0.0 0.0 0.101";
-        //field = "0.0 0.0 0.0";
         prefactor = -0.019327078; //g_n = 3.076Mhz/T -> 19.327078Mrad/sT -> 0.019327078rad/(ns)T
         commonprefactor = false;
     }

@@ -233,6 +233,7 @@ namespace RunSection
 				unsigned int idx = i - space_vec.begin(); 
 				PulseMat.submat(nextDimension, nextDimension, nextDimension + (*i)->SpaceDimensions() - 1, nextDimension + (*i)->SpaceDimensions() - 1) += pulse[idx];
 			}
+			//std::cout << PulseMat << std::endl;
 			return PulseMat;
 		};
 
@@ -385,7 +386,9 @@ namespace RunSection
 			SpinAPI::SpinSpace::TimePropReturnInfo r;
 			L = L_base + GetCreationOperators();
 			dL = UpdateTimeDependentL(CurrentTime);
+			//std::cout << L << std::endl;
 			L = L + dL + GetPulses(CurrentTime,sequence_space_pair,rho0);
+			//std::cout << L << std::endl;
 
 			if(this->timestep + CurrentTime > this->totaltime)
 			{

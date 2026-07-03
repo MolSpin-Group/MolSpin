@@ -15,6 +15,8 @@
 #include <sstream>
 #include "Interaction.h"
 #include "Transition.h"
+#include <cctype>
+#include <string>
 #ifdef _OPENMP
 #include <omp.h>
 #endif
@@ -76,6 +78,67 @@ namespace RunSection
 
         arr = {x, yd, z};
         return true;
+    }
+
+
+//string manipulation functions
+    std::string lowercase(std::string str)
+    {
+        std::transform(str.begin(), str.end(), str.begin(),
+            [](unsigned char c) { return std::tolower(c); });
+        return str;
+    }
+
+    std::string uppercase(std::string str)
+    {
+        std::transform(str.begin(), str.end(), str.begin(),
+            [](unsigned char c) { return std::toupper(c); });
+        return str;
+    }
+
+    std::string trim(const std::string& str)
+    {
+        size_t first = str.find_first_not_of(" \t\r\n");
+        if (first == std::string::npos)
+            return "";
+        size_t last = str.find_last_not_of(" \t\r\n");
+        return str.substr(first, (last - first + 1));
+    }
+
+    std::vector<std::string> split(const std::string& str, char delimiter)
+    {
+        std::vector<std::string> tokens;
+        std::string token;
+        std::istringstream tokenStream(str);
+        while (std::getline(tokenStream, token, delimiter))
+        {
+            tokens.push_back(trim(token));
+        }
+        return tokens;
+    }
+
+    std::vector<std::string> split(const std::string& str, const std::string& delimiter)
+    {
+        std::vector<std::string> tokens;
+        size_t start = 0;
+        size_t end = 0;
+        while ((end = str.find(delimiter, start)) != std::string::npos)
+        {
+            tokens.push_back(trim(str.substr(start, end - start)));
+            start = end + delimiter.length();
+        }
+        tokens.push_back(trim(str.substr(start)));
+        return tokens;
+    }
+
+    bool startsWith(const std::string& str, const std::string& prefix)
+    {
+        return str.length() >= prefix.length() && str.substr(0, prefix.length()) == prefix;
+    }
+
+    bool endsWith(const std::string& str, const std::string& suffix)
+    {
+        return str.length() >= suffix.length() && str.substr(str.length() - suffix.length()) == suffix;
     }
 
     //std::tuple<std::vector<SpinAPI::pulse_ptr>,std::vector<double>> EvaluatePulseSequence(std::vector<SpinAPI::pulse_ptr> pulses, SpinAPI::PulseSequence PulseSeq)

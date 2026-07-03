@@ -89,6 +89,8 @@ namespace SpinAPI
         std::string tau_key;
         while (std::getline(ss, pulse_name, ',') && std::getline(ss, tau_key, ','))
         {
+            pulse_name = RunSection::lowercase(pulse_name);
+            tau_key = RunSection::lowercase(tau_key);
 
             trim(pulse_name);
             trim(tau_key);
@@ -325,6 +327,7 @@ namespace SpinAPI
                 {
                     double t = current_duration;
                     arma::sp_cx_mat A = arma::cx_double(0.0, -1.0) * pulse_op * std::cos(pulse->Frequency() * t);
+                    //std::cout << A << std::endl;
                     return A;
                 }
                 else if(pulse_type == SpinAPI::PulseType::MWPulse)

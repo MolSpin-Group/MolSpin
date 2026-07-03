@@ -54,6 +54,15 @@ namespace RunSection
     void ClampTimeEvolution(double ctime, double ttime, const std::vector<block>& blocks, size_t& current_block, double& block_timestep, SpinAPI::SpinSpace::PropParam& params);
 // endregion TimeEvolutionBlocking
 
+// string manipulation
+    std::string lowercase(std::string str);
+    std::string uppercase(std::string str);
+    std::string trim(const std::string& str);
+    std::vector<std::string> split(const std::string& str, char delimiter);
+    std::vector<std::string> split(const std::string& str, const std::string& delimiter);
+    bool startsWith(const std::string& str, const std::string& prefix);
+    bool endsWith(const std::string& str, const std::string& suffix);
+
 // region MonteCarloSphere
     
     struct MCSpherePoint
