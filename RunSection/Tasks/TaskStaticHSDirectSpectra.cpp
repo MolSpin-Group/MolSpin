@@ -1057,7 +1057,9 @@ namespace RunSection
 					if (hasH1list)
 					{
 						arma::sp_cx_mat H1;
-						if (!space_thread.ThermalHamiltonian(HamiltonianH1list, H1))
+						// CHANGED 2026-07-07: H1 must be rotated with the same powder crystallite as H0;
+						// otherwise the microwave operator is evaluated in a different molecular frame.
+						if (!space_thread.BaseHamiltonianRotatedZYZ(HamiltonianH1list, Rot_mat, H1))
 						{
 							this->Log() << "Failed to obtain Hamiltonian H1 in Hilbert Space." << std::endl;
 							continue;

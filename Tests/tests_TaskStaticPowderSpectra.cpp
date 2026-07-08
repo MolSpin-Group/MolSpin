@@ -710,6 +710,112 @@ bool test_task_staticpowder_timeevo_ss_hs_agree()
 	}
 
 	//////////////////////////////////////////////////////////////////////////////
+	// A lab-fixed B1 along x must see the crystallite-rotated g tensor. For this
+	// one-spin system H0 is zero and H1 is the only Hamiltonian, so <Sz(t)> has
+	// the analytic form 0.5*cos(g_eff*t). Identity orientation gives g_eff=gxx=2;
+	// beta=pi/2 gives g_eff=gzz=5.
+	bool test_task_staticpowder_h1_zeeman_follows_powder_orientation()
+	{
+		auto spin = std::make_shared<SpinAPI::Spin>("E", "type=electron;spin=1/2;tensor=matrix(2 0 0; 0 3 0; 0 0 5);");
+		auto h0 = std::make_shared<SpinAPI::Interaction>(
+			"B0",
+			"type=zeeman;spins=E;field=0 0 0;ignoretensors=true;commonprefactor=false;prefactor=1;");
+		auto h1 = std::make_shared<SpinAPI::Interaction>(
+			"mw",
+			"type=zeeman;spins=E;field=1 0 0;ignoretensors=false;commonprefactor=false;prefactor=1;");
+		auto state_up = std::make_shared<SpinAPI::State>("Up", "spin(E)=|1/2>;");
+
+		auto spinsys = std::make_shared<SpinAPI::SpinSystem>("System");
+		spinsys->Add(spin);
+		spinsys->Add(h0);
+		spinsys->Add(h1);
+		spinsys->Add(state_up);
+		spinsys->ValidateInteractions();
+		auto spinsysParser = std::make_shared<MSDParser::ObjectParser>("spinsyssettings", "initialstate=Up;");
+		spinsys->SetProperties(spinsysParser);
+
+		const double final_time = 0.4;
+		auto finalSzFor = [&](const std::string &_task_type, double _theta, double &_time, double &_sz) {
+			std::ostringstream props;
+			props << "method=timeevo;integration=false;cidsp=false;spinlist=E;"
+				  << "powderorientation=" << _theta << " 0 1;"
+				  << "hamiltonianh0list=B0;hamiltonianh1list=mw;"
+				  << "totaltime=" << final_time << ";timestep=0.1;";
+			if (_task_type == "statichs-direct-spectra")
+				props << "propagationmethod=normal;";
+
+			std::string data;
+			std::vector<std::vector<double>> rows;
+			if (!RunPowderTask(spinsys, _task_type, props.str(), data) ||
+				!ParseDataRows(data, rows) ||
+				rows.empty() ||
+				rows.back().size() < 3)
+			{
+				return false;
+			}
+
+			std::istringstream stream(data);
+			std::string line;
+			if (!std::getline(stream, line))
+				return false;
+			while (std::getline(stream, line))
+			{
+				if (line.empty())
+					continue;
+				std::istringstream line_stream(line);
+				std::string step_token;
+				std::string time_token;
+				if (!(line_stream >> step_token >> time_token))
+					return false;
+				try
+				{
+					_time = std::stod(time_token);
+				}
+				catch (const std::exception &)
+				{
+					return false;
+				}
+			}
+
+			_sz = rows.back()[2];
+			return true;
+		};
+
+		bool ok = state_up->ParseFromSystem(*spinsys);
+		const double beta90 = M_PI / 2.0;
+
+		for (const std::string task_type : {"staticss-powderspectra", "statichs-direct-spectra"})
+		{
+			double identity_time = 0.0;
+			double rotated_time = 0.0;
+			double identity_sz = 0.0;
+			double rotated_sz = 0.0;
+			bool task_ok = true;
+			task_ok &= finalSzFor(task_type, 0.0, identity_time, identity_sz);
+			task_ok &= finalSzFor(task_type, beta90, rotated_time, rotated_sz);
+
+			const double expected_identity = 0.5 * std::cos(2.0 * identity_time);
+			const double expected_rotated = 0.5 * std::cos(5.0 * rotated_time);
+			task_ok &= equal_double(identity_sz, expected_identity, 1e-8);
+			task_ok &= equal_double(rotated_sz, expected_rotated, 1e-8);
+			task_ok &= (std::abs(identity_sz - rotated_sz) > 0.3);
+			if (!task_ok)
+			{
+				std::cerr << "H1 powder orientation check failed for " << task_type
+						  << ": identity time=" << identity_time
+						  << ", beta90 time=" << rotated_time
+						  << ": identity Sz=" << identity_sz
+						  << ", beta90 Sz=" << rotated_sz
+						  << ", expected identity=" << expected_identity
+						  << ", expected beta90=" << expected_rotated << std::endl;
+			}
+			ok &= task_ok;
+		}
+
+		return ok;
+	}
+
+	//////////////////////////////////////////////////////////////////////////////
 	// Time-evo powder CW: HS direct spectra should also work for a non-RP one-electron system.
 	bool test_task_staticpowder_timeevo_oneelectron_hs_ss_agree()
 	{
@@ -887,6 +993,7 @@ void AddTaskStaticPowderSpectraTests(std::vector<test_case> &_cases)
 	_cases.push_back(test_case("Task StaticPowderSpectra phenomenological relaxation eigenbasis across tasks", test_task_staticpowder_phenomenological_relaxation_eigenbasis_three_tasks));
 	_cases.push_back(test_case("Task StaticPowderSpectra Lindblad relaxation axes follow orientation", test_task_staticpowder_lindblad_relaxation_axes_follow_orientation));
 	_cases.push_back(test_case("Task StaticPowderSpectra Hilbert Lindblad axes follow orientation", test_task_staticpowder_hilbert_lindblad_relaxation_axes_follow_orientation));
+	_cases.push_back(test_case("Task StaticPowderSpectra H1 Zeeman follows powder orientation", test_task_staticpowder_h1_zeeman_follows_powder_orientation));
 	_cases.push_back(test_case("Task StaticPowderSpectra timeevo one-electron HS/SS agree", test_task_staticpowder_timeevo_oneelectron_hs_ss_agree));
 	_cases.push_back(test_case("Task StaticPowderSpectra timeevo one-electron thermal HS/SS agree", test_task_staticpowder_timeevo_oneelectron_thermal_hs_ss_agree));
 	_cases.push_back(test_case("Task StaticPowderSpectra pulse one-electron thermal HS/SS agree", test_task_staticpowder_pulse_oneelectron_thermal_hs_ss_agree));

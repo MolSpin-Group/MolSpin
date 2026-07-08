@@ -991,7 +991,9 @@ namespace RunSection
 				}
 
 				arma::sp_cx_mat H1;
-				if (!space.ThermalHamiltonian(HamiltonianH1list, H1))
+				// CHANGED 2026-07-07: H1 follows the same powder crystallite as H0.
+				// The NZ task therefore uses one consistent molecular-to-lab rotation.
+				if (!space.BaseHamiltonianRotatedZYZ(HamiltonianH1list, Rot_mat, H1))
 				{
 					this->Log() << "Failed to obtain HamiltonianH1 for powder orientation " << grid_num << "." << std::endl;
 					continue;

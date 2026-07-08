@@ -33,14 +33,9 @@ using test_case = std::pair<std::string, test_ptr>; // Function pointer and name
 #include "tests_TaskStaticSS.cpp"
 #include "tests_TaskStaticRPOnlyHSSymDec.cpp"
 #include "tests_TaskStaticSSSpectra.cpp"
+#include "tests_TaskStaticHSTrEPRSpectra.cpp"
 #include "tests_TaskStaticPowderSpectra.cpp"
 #include "tests_utility.cpp"
-//////////////////////////////////////////////////////////////////////////////
-// A simple test to test the test module itself
-bool this_is_a_test_of_the_test_module()
-{
-	return true;
-}
 //////////////////////////////////////////////////////////////////////////////
 std::string read_captured_stream(std::FILE *file)
 {
@@ -77,7 +72,6 @@ int main(int argc, char **argv)
 	std::vector<test_case> failed_cases;
 
 	// Add test cases to the list
-	cases.push_back(test_case("Test module", this_is_a_test_of_the_test_module));
 	AddSpinAPITests(cases);
 	AddMSDParserTests(cases);
 	AddActionsTests(cases);
@@ -85,6 +79,7 @@ int main(int argc, char **argv)
 	AddTaskStaticSSTests(cases);
 	AddTaskStaticRPOnlyHSSymDecTests(cases);
 	AddTaskStaticSSSpectraTests(cases);
+	AddTaskStaticHSTrEPRSpectraTests(cases);
 	AddTaskStaticPowderSpectraTests(cases);
 	AddUtiltiyTests(cases);
 	

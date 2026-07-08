@@ -1530,6 +1530,80 @@ bool test_state_function_grouped_superposition()
 	return isCorrect;
 }
 //////////////////////////////////////////////////////////////////////////////
+bool test_state_easyspin_ciss_density_convention()
+{
+	std::string sp1 = "BDX";
+	std::string sp1Contents = "spin=1/2;";
+	auto spin1 = std::make_shared<SpinAPI::Spin>(sp1, sp1Contents);
+
+	std::string sp2 = "NDI";
+	std::string sp2Contents = "spin=1/2;";
+	auto spin2 = std::make_shared<SpinAPI::Spin>(sp2, sp2Contents);
+
+	SpinAPI::SpinSystem spinsys("System");
+	spinsys.Add(spin1);
+	spinsys.Add(spin2);
+
+	SpinAPI::SpinSpace space;
+	space.Add(spin1);
+	space.Add(spin2);
+
+	const double chi = 1.5707963267948966;
+	const double s = std::sin(0.5 * chi);
+	const double c = std::cos(0.5 * chi);
+	const double invsqrt2 = 1.0 / std::sqrt(2.0);
+
+	// EasySpin's Sys.initState = {pc'*pc,'coupled'} with
+	// pc = [0 1i*sin(chi/2) 0 cos(chi/2)] produces rho(T0,S) = -i*s*c.
+	arma::cx_mat rhoCoupledExpected(4, 4, arma::fill::zeros);
+	rhoCoupledExpected(1, 1) = s * s;
+	rhoCoupledExpected(1, 3) = arma::cx_double(0.0, -s * c);
+	rhoCoupledExpected(3, 1) = arma::cx_double(0.0, s * c);
+	rhoCoupledExpected(3, 3) = c * c;
+
+	arma::cx_mat uncoupledToCoupled(4, 4, arma::fill::zeros);
+	uncoupledToCoupled(0, 0) = 1.0;		   // T+ = |alpha alpha>
+	uncoupledToCoupled(1, 1) = invsqrt2;   // T0 = (|alpha beta> + |beta alpha>)/sqrt(2)
+	uncoupledToCoupled(1, 2) = invsqrt2;
+	uncoupledToCoupled(2, 3) = 1.0;		   // T- = |beta beta>
+	uncoupledToCoupled(3, 1) = invsqrt2;   // S = (|alpha beta> - |beta alpha>)/sqrt(2)
+	uncoupledToCoupled(3, 2) = -invsqrt2;
+
+	auto molspinDensityInEasySpinCoupledBasis = [&](const std::string &contents, arma::cx_mat &rhoCoupled) {
+		SpinAPI::State state("CISS", contents);
+		arma::cx_mat rhoUncoupled;
+		if (!state.ParseFromSystem(spinsys) ||
+			!space.GetState(std::make_shared<SpinAPI::State>(state), rhoUncoupled))
+		{
+			return false;
+		}
+		rhoCoupled = uncoupledToCoupled * rhoUncoupled * uncoupledToCoupled.t();
+		return true;
+	};
+
+	arma::cx_mat rhoCoupledSameOrder;
+	std::string sameOrderContents =
+		"chi=1.5707963267948966;"
+		"spins(BDX,NDI)="
+		"  cos(0.5*chi)(|1/2,-1/2> - |-1/2,1/2>)"
+		" -I* sin(0.5*chi)(|1/2,-1/2> + |-1/2,1/2>);";
+
+	arma::cx_mat rhoCoupledSwappedOrder;
+	std::string swappedOrderContents =
+		"chi=1.5707963267948966;"
+		"spins(NDI,BDX)="
+		"  cos(0.5*chi)(|1/2,-1/2> - |-1/2,1/2>)"
+		" +I* sin(0.5*chi)(|1/2,-1/2> + |-1/2,1/2>);";
+
+	bool isCorrect = true;
+	isCorrect &= molspinDensityInEasySpinCoupledBasis(sameOrderContents, rhoCoupledSameOrder);
+	isCorrect &= molspinDensityInEasySpinCoupledBasis(swappedOrderContents, rhoCoupledSwappedOrder);
+	isCorrect &= equal_matrices(rhoCoupledSameOrder, rhoCoupledExpected, 1.0e-10);
+	isCorrect &= equal_matrices(rhoCoupledSwappedOrder, rhoCoupledExpected, 1.0e-10);
+
+	return isCorrect;
+}
+//////////////////////////////////////////////////////////////////////////////
 bool test_function_evaluation()
 {
 	// Setup objects for the test
@@ -1850,6 +1924,48 @@ bool test_spinapi_zeeman_orientation_rotates_gtensor()
 	// A beta=pi/2 tensor-frame rotation moves the tensor x-axis onto lab z,
 	// so Bz sees gxx=1 instead of the unrotated gzz=3.
 	isCorrect &= equal_matrices(H, Sz, 1e-12);
+
+	return isCorrect;
+}
+//////////////////////////////////////////////////////////////////////////////
+
+bool test_spinapi_rotated_zeeman_hamiltonian_follows_powder_orientation()
+{
+	auto spin = std::make_shared<SpinAPI::Spin>("E", "type=electron;spin=1/2;tensor=matrix(2 0 0; 0 3 0; 0 0 5);");
+	auto microwave = std::make_shared<SpinAPI::Interaction>(
+		"mw",
+		"type=zeeman;spins=E;field=1 0 0;ignoretensors=false;commonprefactor=false;prefactor=1;");
+
+	SpinAPI::SpinSystem spinsys("System");
+	spinsys.Add(spin);
+	spinsys.Add(microwave);
+	spinsys.ValidateInteractions();
+
+	SpinAPI::SpinSpace space(spinsys);
+	space.UseSuperoperatorSpace(false);
+	space.UseFullTensorRotation(true);
+
+	arma::mat identity = arma::eye<arma::mat>(3, 3);
+	const double beta = M_PI / 2.0;
+	arma::mat beta90 = {
+		{std::cos(beta), 0.0, std::sin(beta)},
+		{0.0, 1.0, 0.0},
+		{-std::sin(beta), 0.0, std::cos(beta)}};
+
+	arma::sp_cx_mat Hidentity;
+	arma::sp_cx_mat Hrotated;
+	arma::sp_cx_mat Sx;
+
+	bool isCorrect = true;
+	isCorrect &= space.BaseHamiltonianRotatedZYZ({"mw"}, identity, Hidentity);
+	isCorrect &= space.BaseHamiltonianRotatedZYZ({"mw"}, beta90, Hrotated);
+	isCorrect &= space.CreateOperator(spin->Sx(), spin, Sx);
+
+	// A lab-fixed B1 along x sees gxx=2 for the identity crystallite. Rotating
+	// the crystallite by beta=pi/2 moves molecular z onto lab x, so B1 sees gzz=5.
+	isCorrect &= equal_matrices(Hidentity, 2.0 * Sx, 1e-12);
+	isCorrect &= equal_matrices(Hrotated, 5.0 * Sx, 1e-12);
+	isCorrect &= (arma::norm(arma::cx_mat(Hrotated - Hidentity), "fro") > 1.0);
 
 	return isCorrect;
 }
@@ -2590,6 +2706,117 @@ bool test_spinapi_operator_copy_preserves_relaxation_configuration()
 }
 //////////////////////////////////////////////////////////////////////////////
 
+
+//////////////////////////////////////////////////////////////////////////////
+// CHANGED 2026-07-07: Physics regression tests for the electron high-field
+// secular powder Hamiltonian used by the spectroscopy tasks. These tests are
+// deliberately small matrix tests: they preserve the required RWA/secular
+// invariants without changing the public SpinAPI interface.
+bool test_spinapi_secular_isotropic_hyperfine_is_sziz()
+{
+	auto e = std::make_shared<SpinAPI::Spin>("E", "type=electron;spin=1/2;");
+	auto n = std::make_shared<SpinAPI::Spin>("N", "type=nucleus;spin=1/2;");
+	auto hf = std::make_shared<SpinAPI::Interaction>("hf", "type=hyperfine;group1=E;group2=N;tensor=isotropic(1);commonprefactor=false;prefactor=1;");
+
+	SpinAPI::SpinSystem spinsys("System");
+	spinsys.Add(e);
+	spinsys.Add(n);
+	spinsys.Add(hf);
+	spinsys.ValidateInteractions();
+
+	SpinAPI::SpinSpace space(spinsys);
+	space.UseSuperoperatorSpace(false);
+
+	arma::mat R = arma::eye<arma::mat>(3, 3);
+	arma::sp_cx_mat H;
+	arma::sp_cx_mat Sez;
+	arma::sp_cx_mat Nsz;
+	bool isCorrect = true;
+	isCorrect &= space.InteractionOperatorRotated_SA(hf, R, H);
+	isCorrect &= space.CreateOperator(e->Sz(), e, Sez);
+	isCorrect &= space.CreateOperator(n->Sz(), n, Nsz);
+
+	// In an electron rotating/high-field secular Hamiltonian isotropic A S.I
+	// becomes A S_z I_z. The S_x I_x + S_y I_y flip-flop terms are nonsecular.
+	isCorrect &= equal_matrices(H, Sez * Nsz, 1e-12);
+	return isCorrect;
+}
+//////////////////////////////////////////////////////////////////////////////
+
+bool test_spinapi_secular_hyperfine_reversed_order_matches()
+{
+	auto e = std::make_shared<SpinAPI::Spin>("E", "type=electron;spin=1/2;");
+	auto n = std::make_shared<SpinAPI::Spin>("N", "type=nucleus;spin=1;");
+	const std::string tensor = "matrix(1 0.2 0.3;0.2 5 0.7;0.3 0.7 9)";
+	auto hf_en = std::make_shared<SpinAPI::Interaction>("hf_en", "type=hyperfine;group1=E;group2=N;tensor=" + tensor + ";commonprefactor=false;prefactor=1;");
+	auto hf_ne = std::make_shared<SpinAPI::Interaction>("hf_ne", "type=hyperfine;group1=N;group2=E;tensor=" + tensor + ";commonprefactor=false;prefactor=1;");
+
+	SpinAPI::SpinSystem spinsys("System");
+	spinsys.Add(e);
+	spinsys.Add(n);
+	spinsys.Add(hf_en);
+	spinsys.Add(hf_ne);
+	spinsys.ValidateInteractions();
+
+	SpinAPI::SpinSpace space(spinsys);
+	space.UseSuperoperatorSpace(false);
+
+	arma::mat R = arma::eye<arma::mat>(3, 3);
+	arma::sp_cx_mat H_en;
+	arma::sp_cx_mat H_ne;
+	arma::sp_cx_mat Sez;
+	arma::sp_cx_mat Nsx;
+	arma::sp_cx_mat Nsy;
+	arma::sp_cx_mat Nsz;
+	bool isCorrect = true;
+	isCorrect &= space.InteractionOperatorRotated_SA(hf_en, R, H_en);
+	isCorrect &= space.InteractionOperatorRotated_SA(hf_ne, R, H_ne);
+	isCorrect &= space.CreateOperator(e->Sz(), e, Sez);
+	isCorrect &= space.CreateOperator(n->Sx(), n, Nsx);
+	isCorrect &= space.CreateOperator(n->Sy(), n, Nsy);
+	isCorrect &= space.CreateOperator(n->Sz(), n, Nsz);
+
+	// group1=N/group2=E represents I^T A S. After reordering to electron first
+	// inside the secular projection it must embed electron operators on the
+	// electron Hilbert factor and nucleus operators on the nucleus factor.
+	arma::sp_cx_mat expected = Sez * (0.3 * Nsx + 0.7 * Nsy + 9.0 * Nsz);
+	isCorrect &= equal_matrices(H_en, expected, 1e-10);
+	isCorrect &= equal_matrices(H_ne, expected, 1e-10);
+	return isCorrect;
+}
+//////////////////////////////////////////////////////////////////////////////
+
+bool test_spinapi_secular_electron_electron_has_total_q_zero()
+{
+	auto e1 = std::make_shared<SpinAPI::Spin>("E1", "type=electron;spin=1/2;");
+	auto e2 = std::make_shared<SpinAPI::Spin>("E2", "type=electron;spin=1/2;");
+	auto ee = std::make_shared<SpinAPI::Interaction>("ee", "type=doublespin;group1=E1;group2=E2;tensor=matrix(1 0 0;0 2 0;0 0 3);commonprefactor=false;prefactor=1;");
+
+	SpinAPI::SpinSystem spinsys("System");
+	spinsys.Add(e1);
+	spinsys.Add(e2);
+	spinsys.Add(ee);
+	spinsys.ValidateInteractions();
+
+	SpinAPI::SpinSpace space(spinsys);
+	space.UseSuperoperatorSpace(false);
+
+	arma::mat R = arma::eye<arma::mat>(3, 3);
+	arma::sp_cx_mat H;
+	arma::sp_cx_mat Sz1;
+	arma::sp_cx_mat Sz2;
+	bool isCorrect = true;
+	isCorrect &= space.InteractionOperatorRotated_SA(ee, R, H);
+	isCorrect &= space.CreateOperator(e1->Sz(), e1, Sz1);
+	isCorrect &= space.CreateOperator(e2->Sz(), e2, Sz2);
+
+	arma::sp_cx_mat Mz = Sz1 + Sz2;
+	arma::sp_cx_mat comm = H * Mz - Mz * H;
+	isCorrect &= (arma::norm(arma::conv_to<arma::cx_mat>::from(comm), "fro") < 1e-12);
+	return isCorrect;
+}
+//////////////////////////////////////////////////////////////////////////////
+
 // Add all the SpinAPI test cases
 void AddSpinAPITests(std::vector<test_case> &_cases)
 {
@@ -2628,6 +2855,7 @@ void AddSpinAPITests(std::vector<test_case> &_cases)
 	_cases.push_back(test_case("SpinAPI::SpinSpace spin management (Vector Add,Vector Contains, Clear)", test_spinapi_spinspace_spinmanagement2));
 	_cases.push_back(test_case("SpinAPI::StateFunctions validating function parsing", test_function_finding));
 	_cases.push_back(test_case("SpinAPI::StateFunctions grouped superposition factors", test_state_function_grouped_superposition));
+	_cases.push_back(test_case("SpinAPI::StateFunctions EasySpin CISS density convention", test_state_easyspin_ciss_density_convention));
 	_cases.push_back(test_case("SpinAPI::Functions validating function evaluation", test_function_evaluation));
 	_cases.push_back(test_case("SpinAPI::Pulse InstantPulse", test_spinapi_instantpulse));
 	_cases.push_back(test_case("SpinAPI::Pulse LongPulseStaticField", test_spinapi_longpulsestaticfield));
@@ -2639,6 +2867,7 @@ void AddSpinAPITests(std::vector<test_case> &_cases)
 	_cases.push_back(test_case("SpinAPI::Interaction OUGeneralTensor", test_spinapi_interaction_tensor_ornsteinuhlenbeck));
 	_cases.push_back(test_case("SpinAPI::Interaction orientation validation and exchange", test_spinapi_interaction_orientation_validation_and_exchange));
 	_cases.push_back(test_case("SpinSpace::Zeeman orientation rotates g-tensor", test_spinapi_zeeman_orientation_rotates_gtensor));
+	_cases.push_back(test_case("SpinSpace::Rotated Zeeman Hamiltonian follows powder orientation", test_spinapi_rotated_zeeman_hamiltonian_follows_powder_orientation));
 	_cases.push_back(test_case("SpinSpace::ZFS formalism and orientation", test_spinapi_zfs_formalism_and_orientation));
 	_cases.push_back(test_case("SpinSpace::Rotated quadratic spin identity powder", test_spinapi_rotated_quadraticspin_matches_plain_for_identity_powder));
 	_cases.push_back(test_case("SpinSpace::Phenomenological relaxation operator", test_spinapi_phenomenological_relaxation_operator));
@@ -2655,6 +2884,9 @@ void AddSpinAPITests(std::vector<test_case> &_cases)
 	_cases.push_back(test_case("SpinSpace::T1 relaxation exchanges spin-1 populations", test_spinapi_relaxation_t1_spin_one_population_exchange));
 	_cases.push_back(test_case("SpinSpace::T2 relaxation is normalized pure dephasing", test_spinapi_relaxation_t2_is_normalized_pure_dephasing));
 	_cases.push_back(test_case("SpinSpace::Random fields preserve trace and isotropic powder invariance", test_spinapi_relaxation_random_fields_are_trace_preserving_and_powder_invariant));
+	_cases.push_back(test_case("SpinSpace::Secular isotropic hyperfine is SzIz", test_spinapi_secular_isotropic_hyperfine_is_sziz));
+	_cases.push_back(test_case("SpinSpace::Secular hyperfine reversed order matches", test_spinapi_secular_hyperfine_reversed_order_matches));
+	_cases.push_back(test_case("SpinSpace::Secular electron-electron keeps q=0 only", test_spinapi_secular_electron_electron_has_total_q_zero));
 	_cases.push_back(test_case("SpinAPI::Operator copy preserves relaxation configuration", test_spinapi_operator_copy_preserves_relaxation_configuration));
 }
 //////////////////////////////////////////////////////////////////////////////

@@ -2092,7 +2092,9 @@ namespace RunSection
 
 		// Get the Hamiltonian
 		arma::sp_cx_mat H1;
-		if (!_space.ThermalHamiltonian(HamiltonianH1list, H1))
+		// CHANGED 2026-07-07: H1 follows the same powder crystallite as H0.
+		// This preserves frame covariance for tensor-aware microwave interactions.
+		if (!_space.BaseHamiltonianRotatedZYZ(HamiltonianH1list, Rot_mat, H1))
 		{
 			_logstream << "Failed to obtain Hamiltonian in superspace." << std::endl;
 			return false;

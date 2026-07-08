@@ -52,10 +52,10 @@ bool test_utility_block_solver()
 	result = RunSection::ThomasBlockSolver(A,b,3);
 	result2 = arma::solve(arma::cx_mat(A), b);
 
-	double diff = abs(norm(result) - norm(result2));
-    if (diff < 1e-10)
-	    return true;
-    return false;
+	double diff = arma::norm(result - result2);
+	if (diff < 1e-10)
+		return true;
+	return false;
 }
 
 

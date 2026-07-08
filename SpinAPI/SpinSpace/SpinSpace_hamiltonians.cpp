@@ -956,15 +956,19 @@ namespace SpinAPI
 			arma::cx_mat S2z;
 
 			std::string interaction_type;
+			bool transpose_tensor_for_electron_second = false;
 
 			// Fill the matrix with the sum of all the interactions
 			for (auto i = spins1.cbegin(); i != spins1.cend(); i++)
 			{
 				for (auto j = spins2.cbegin(); j != spins2.cend(); j++)
 				{
+					transpose_tensor_for_electron_second = false;
 					if ((*i)->Type() == SpinAPI::SpinType::Electron)
 					{
-						// Obtain the magnetic moment operators within the Hilbert space. S1 always electron
+						// For better understanding: In the secular builder S1 is always the electron.
+						// This keeps the electron coherence-order projection independent of
+						// whether the user writes group1=electron/group2=nucleus or vice versa.
 						this->CreateOperator(arma::conv_to<arma::cx_mat>::from((*i)->Sx()), (*i), S1x);
 						this->CreateOperator(arma::conv_to<arma::cx_mat>::from((*i)->Sy()), (*i), S1y);
 						this->CreateOperator(arma::conv_to<arma::cx_mat>::from((*i)->Sz()), (*i), S1z);
@@ -987,17 +991,20 @@ namespace SpinAPI
 					}
 					else if ((*j)->Type() == SpinAPI::SpinType::Electron)
 					{
-						// Obtain the magnetic moment operators within the Hilbert space. S1 always electron
-						this->CreateOperator(arma::conv_to<arma::cx_mat>::from((*i)->Sx()), (*j), S1x);
-						this->CreateOperator(arma::conv_to<arma::cx_mat>::from((*i)->Sy()), (*j), S1y);
-						this->CreateOperator(arma::conv_to<arma::cx_mat>::from((*i)->Sz()), (*j), S1z);
-						this->CreateOperator(arma::conv_to<arma::cx_mat>::from((*j)->Sx()), (*i), S2x);
-						this->CreateOperator(arma::conv_to<arma::cx_mat>::from((*j)->Sy()), (*i), S2y);
-						this->CreateOperator(arma::conv_to<arma::cx_mat>::from((*j)->Sz()), (*i), S2z);
+						// Correct reversed hyperfine ordering. The old code
+						// embedded the nucleus local matrices on the electron spin and vice versa.
+						// Here S1 is the electron operator on spin j and S2 is the partner on spin i.
+						this->CreateOperator(arma::conv_to<arma::cx_mat>::from((*j)->Sx()), (*j), S1x);
+						this->CreateOperator(arma::conv_to<arma::cx_mat>::from((*j)->Sy()), (*j), S1y);
+						this->CreateOperator(arma::conv_to<arma::cx_mat>::from((*j)->Sz()), (*j), S1z);
+						this->CreateOperator(arma::conv_to<arma::cx_mat>::from((*i)->Sx()), (*i), S2x);
+						this->CreateOperator(arma::conv_to<arma::cx_mat>::from((*i)->Sy()), (*i), S2y);
+						this->CreateOperator(arma::conv_to<arma::cx_mat>::from((*i)->Sz()), (*i), S2z);
 
 						if ((*i)->Type() == SpinAPI::SpinType::Nucleus)
 						{
 							interaction_type = "Hyperfine";
+							transpose_tensor_for_electron_second = true;
 						}
 						else
 						{
@@ -1009,14 +1016,31 @@ namespace SpinAPI
 						std::cerr << "Could not construct hamiltonian in the secular approximation. Unrecognized type of spins. Please specify in the Spin object 'type = electron' or 'type = nucleus'. Additionally, currently there is no supported nucleus-nucleus interaction in the secular approximation." << std::endl;
 					}
 
+					// Project bilinear interactions onto the terms that are stationary
+					// in a common electron-z rotating frame. Electron-electron
+					// interactions retain total electron coherence order q=0, whereas
+					// electron-nuclear hyperfine interactions retain only electron q=0.
+					// In particular, isotropic A S.I becomes A Sz Iz in this frame.
 					if (ATensor != nullptr && !IsIsotropic(*ATensor))
 					{
-							arma::mat A = arma::conv_to<arma::mat>::from(ATensor->LabFrame());
-							A = RotateTensorFrameAndPowder(A);
+						arma::mat A = arma::conv_to<arma::mat>::from(ATensor->LabFrame());
+						A = RotateTensorFrameAndPowder(A);
+						if (transpose_tensor_for_electron_second)
+						{
+							// For better understanding: group1=nucleus/group2=electron represents
+							// I^T A S. After reordering to S^T A' I for electron-secular
+							// projection, the tensor must become A' = A^T.
+							A = A.t();
+						}
 
 						if (interaction_type == "Dipolar")
 						{
-							tmp += S1x * S2x * A(0, 0) + S1y * S2y * A(1, 1) + S1z * S2z * A(2, 2);
+							// q=0 projection under simultaneous z rotation of both electrons.
+							const double Aperp = 0.5 * (A(0, 0) + A(1, 1));
+							const double Aanti = 0.5 * (A(0, 1) - A(1, 0));
+							tmp += Aperp * (S1x * S2x + S1y * S2y);
+							tmp += Aanti * (S1x * S2y - S1y * S2x);
+							tmp += A(2, 2) * S1z * S2z;
 						}
 						else if (interaction_type == "Hyperfine")
 						{
@@ -1027,15 +1051,24 @@ namespace SpinAPI
 							std::cerr << "Unrecognized type of interaction. Could not construct hamiltonian in the secular approximation." << std::endl;
 						}
 					}
+					else if (interaction_type == "Dipolar")
+					{
+						// Isotropic electron-electron coupling is already q=0.
+						tmp += S1x * S2x + S1y * S2y + S1z * S2z;
+					}
+					else if (interaction_type == "Hyperfine")
+					{
+						// Electron-secular isotropic hyperfine limit.
+						tmp += S1z * S2z;
+					}
 					else
 					{
-							// If there is no interaction tensor or if the tensor is isotropic, just take the dot product
-							tmp += S1x * S2x + S1y * S2y + S1z * S2z;
-						}
+						std::cerr << "Unrecognized type of interaction. Could not construct hamiltonian in the secular approximation." << std::endl;
 					}
 				}
 			}
-				else if (_interaction->Type() == InteractionType::QuadraticSpin)
+		}
+		else if (_interaction->Type() == InteractionType::QuadraticSpin)
 				{
 					auto spins1 = _interaction->Group1();
 					arma::sp_cx_mat Sx;
