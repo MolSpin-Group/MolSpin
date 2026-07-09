@@ -6,6 +6,7 @@
 // See LICENSE.txt for license information.
 //////////////////////////////////////////////////////////////////////////////
 #include <iostream>
+#include <numeric>
 #include <omp.h>
 #include <memory>
 #include "TaskStaticSSNakajimaZwanzig.h"

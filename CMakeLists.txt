@@ -1,36 +1,29 @@
 ﻿# Set cmake version requirement
-cmake_minimum_required(VERSION 3.14)
+cmake_minimum_required(VERSION 3.16)
 
-project(MolSpin)
+project(MolSpin LANGUAGES CXX)
 
-# Search for OpenMP
-find_package(OpenMP)
-if (OPENMP_FOUND)
-    set (CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${OpenMP_C_FLAGS}")
-    set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
-    set (CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${OpenMP_EXE_LINKER_FLAGS}")
-endif()
+include(CTest)
 
-find_package(Armadillo)
-include_directories(${ARMADILLO_INCLUDE_DIRS})
+option(MOLSPIN_ENABLE_NATIVE_OPTIMIZATIONS "Enable non-portable CPU-specific optimizations." OFF)
+option(MOLSPIN_ENABLE_UNROLL_LOOPS "Enable loop unrolling compiler hints when supported." ON)
 
-option(LINK_OPENBLAS "Whether OpenBLAS should be linked." ON)
-option(LINK_LAPACK "Whether LAPACK should be linked." ON)
-option(ENABLE_OPENMP "Whether OpenMP should be available from the MolSpin code." ON)
-
-# Compiler options
 set(CMAKE_CXX_STANDARD 17)
-add_compile_options(-O3 -g -Wall -march=native -funroll-loops -fopenmp -DARMA_DONT_PRINT_FAST_MATH_WARNING)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
+find_package(Armadillo REQUIRED)
+find_package(OpenMP REQUIRED)
+
+find_library(MOLSPIN_OPENBLAS_LIBRARY
+    NAMES openblas libopenblas
+)
 
 # Paths
 set(PATH_SOURCE_SPINAPI "${CMAKE_CURRENT_SOURCE_DIR}/SpinAPI")
 set(PATH_SOURCE_MSDPARSER "${CMAKE_CURRENT_SOURCE_DIR}/MSDParser")
 set(PATH_SOURCE_RUNSECTION "${CMAKE_CURRENT_SOURCE_DIR}/RunSection")
 set(PATH_SOURCE_TESTS "${CMAKE_CURRENT_SOURCE_DIR}/Tests")
-
-# Include directories
-include_directories(${PATH_SOURCE_SPINAPI} ${PATH_SOURCE_MSDPARSER} ${PATH_SOURCE_RUNSECTION} ${PATH_SOURCE_TESTS})
-include_directories("${PATH_SOURCE_RUNSECTION}/Tasks" "${PATH_SOURCE_RUNSECTION}/Tasks/Custom" "${PATH_SOURCE_RUNSECTION}/Actions")
 
 # --------------------------------------------------------------------------
 # SpinAPI Module
@@ -149,10 +142,71 @@ set(SOURCES_TESTS
 # Core functionality libraries
 add_library(molspin_core STATIC ${SOURCES_SPINAPI} ${SOURCES_MSDPARSER} ${SOURCES_RUNSECTION} ${SOURCES_RUNSECTION_TASKS} ${SOURCES_RUNSECTION_ACTIONS})
 
+target_include_directories(molspin_core
+    PUBLIC
+        ${PATH_SOURCE_SPINAPI}
+        ${PATH_SOURCE_MSDPARSER}
+        ${PATH_SOURCE_RUNSECTION}
+        ${PATH_SOURCE_TESTS}
+        "${PATH_SOURCE_RUNSECTION}/Tasks"
+        "${PATH_SOURCE_RUNSECTION}/Tasks/Custom"
+        "${PATH_SOURCE_RUNSECTION}/Actions"
+)
+
+if (MSVC)
+    target_compile_options(molspin_core PRIVATE /O2 /W4 /EHsc /bigobj)
+    target_compile_definitions(molspin_core PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX _USE_MATH_DEFINES ARMA_DONT_PRINT_FAST_MATH_WARNING)
+else()
+    target_compile_options(molspin_core PRIVATE -O3 -Wall)
+    target_compile_definitions(molspin_core PRIVATE ARMA_DONT_PRINT_FAST_MATH_WARNING)
+
+    if (MOLSPIN_ENABLE_NATIVE_OPTIMIZATIONS)
+        target_compile_options(molspin_core PRIVATE -march=native)
+    endif()
+
+    if (MOLSPIN_ENABLE_UNROLL_LOOPS)
+        target_compile_options(molspin_core PRIVATE -funroll-loops)
+    endif()
+endif()
+
+if (TARGET Armadillo::Armadillo)
+    target_link_libraries(molspin_core PUBLIC Armadillo::Armadillo)
+elseif (TARGET Armadillo::armadillo)
+    target_link_libraries(molspin_core PUBLIC Armadillo::armadillo)
+elseif (TARGET armadillo)
+    target_link_libraries(molspin_core PUBLIC armadillo)
+else()
+    target_include_directories(molspin_core PUBLIC ${ARMADILLO_INCLUDE_DIRS})
+    target_link_libraries(molspin_core PUBLIC ${ARMADILLO_LIBRARIES})
+endif()
+
+target_link_libraries(molspin_core PUBLIC OpenMP::OpenMP_CXX)
+
+if (MOLSPIN_OPENBLAS_LIBRARY)
+    target_link_libraries(molspin_core PUBLIC ${MOLSPIN_OPENBLAS_LIBRARY})
+    target_compile_definitions(molspin_core PUBLIC MOLSPIN_HAS_OPENBLAS=1)
+endif()
+
 # MolSpin application
 add_executable(molspin ${CMAKE_CURRENT_SOURCE_DIR}/main.cpp)
-target_link_libraries(molspin molspin_core ${ARMADILLO_LIBRARIES} -lopenblas -llapack -fopenmp)
+target_link_libraries(molspin PRIVATE molspin_core)
+
+# Keep lookup of bundled runtime libraries relative to the executable.
+if (APPLE)
+    set_target_properties(molspin PROPERTIES
+        BUILD_RPATH "@loader_path/lib"
+        INSTALL_RPATH "@loader_path/lib"
+        BUILD_WITH_INSTALL_RPATH TRUE
+    )
+elseif (UNIX)
+    set_target_properties(molspin PROPERTIES
+        BUILD_RPATH "\$ORIGIN/lib"
+        INSTALL_RPATH "\$ORIGIN/lib"
+        BUILD_WITH_INSTALL_RPATH TRUE
+    )
+endif()
 
 # Unit tests
 add_executable(molspintest ${SOURCES_TESTS})
-target_link_libraries(molspintest molspin_core ${ARMADILLO_LIBRARIES} -lopenblas -llapack -fopenmp)
+target_link_libraries(molspintest PRIVATE molspin_core)
+add_test(NAME molspintest COMMAND molspintest)

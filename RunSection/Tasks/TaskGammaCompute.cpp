@@ -91,7 +91,7 @@ namespace RunSection
 					{
 						if ((*j)->GetTDFrequency() > 1e-4)
 						{
-							double p = 2.0 * M_PI / (*j)->GetTDFrequency();
+							double p = 2.0 * arma::datum::pi / (*j)->GetTDFrequency();
 							this->Log() << "Found interaction with period " << p << " (angular frequency " << (*j)->GetTDFrequency() << " rad/ns, frequency " << (1000.0 / p) << " MHz).\n";
 							if (p > period)
 							{
@@ -212,7 +212,7 @@ namespace RunSection
 
 			// Check condition on number of steps
 			{
-				unsigned int minsteps = static_cast<unsigned int>(arma::max(arma::abs(preOmega)) * period / M_PI);
+				unsigned int minsteps = static_cast<unsigned int>(arma::max(arma::abs(preOmega)) * period / arma::datum::pi);
 				if (steps <= minsteps)
 				{
 					this->Log() << "Warning: Number of steps (" << steps << ") may be too small! Use at least " << minsteps << "." << std::endl;
@@ -291,7 +291,7 @@ namespace RunSection
 				double w;
 				for (unsigned int j = 0; j < steps; j++)
 				{
-					w = static_cast<double>(j) * 2.0 * M_PI / period;
+					w = static_cast<double>(j) * 2.0 * arma::datum::pi / period;
 
 					F = L + arma::ones<arma::mat>(size(L)) * w;
 					F.transform([k](double val)
@@ -299,10 +299,10 @@ namespace RunSection
 					T += arma::abs(G.get()[j]) % F;
 				}
 
-				double yield = std::sqrt(2.0 * M_PI) / std::abs(arma::trace(stateProjections[*s]) * static_cast<double>(steps * steps)) * arma::accu(T);
+				double quantumYield = std::sqrt(2.0 * arma::datum::pi) / std::abs(arma::trace(stateProjections[*s]) * static_cast<double>(steps * steps)) * arma::accu(T);
 
-				this->Log() << "Calculated quantum yield of " << yield << " for state " << (*s)->Name() << "." << std::endl;
-				this->Data() << yield << " ";
+				this->Log() << "Calculated quantum yield of " << quantumYield << " for state " << (*s)->Name() << "." << std::endl;
+				this->Data() << quantumYield << " ";
 			}
 
 			this->Log() << "\nDone with SpinSystem \"" << (*i)->Name() << "\"" << std::endl;

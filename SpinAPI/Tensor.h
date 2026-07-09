@@ -11,6 +11,7 @@
 #ifndef MOD_SpinAPI_Tensor
 #define MOD_SpinAPI_Tensor
 
+#include <array>
 #include <armadillo>
 #include "Trajectory.h"
 #include "ActionTarget.h"

@@ -1882,14 +1882,14 @@ namespace RunSection
 			for (unsigned int t = 0; t < (steps + 1); t++)
 			{
 #pragma omp parallel for collapse(3) firstprivate(tmp) shared(spincorr, L, S_flattend, time_vec)
-				for (unsigned int m = 0; m < 3; m++)
-				{
-					for (unsigned int n = 0; n < 3; n++)
+					for (int m = 0; m < 3; ++m)
 					{
-						for (unsigned int l = 3; l < 6; l++)
+						for (int n = 0; n < 3; ++n)
 						{
-							for (unsigned int h = 3; h < 6; h++)
+							for (int l = 3; l < 6; ++l)
 							{
+								for (int h = 3; h < 6; ++h)
+								{
 
 								// std::cout << S_flattend[m].t() * S_flattend[n] << std::endl;
 								tmp *= 0.0;

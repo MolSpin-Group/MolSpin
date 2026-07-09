@@ -10,6 +10,9 @@
 // See LICENSE.txt for license information.
 /////////////////////////////////////////////////////////////////////////
 #include <iostream>
+#include <limits>
+#include <numeric>
+#include <stdexcept>
 #include "ObjectParser.h"
 #include "RunSection.h"
 #include "BasicTask.h"
@@ -18,10 +21,6 @@
 #include "Interaction.h"
 #include "Transition.h"
 #include "SpinSystem.h"
-
-// #ifdef USE_OPENBLAS
-extern "C" void openblas_set_num_threads(int);
-// #endif
 
 namespace RunSection
 {
@@ -302,7 +301,7 @@ namespace RunSection
 				{
 					AllWeights[0].push_back((*e)->GetOriWeights());
 					std::vector<double> BL = (*e)->VL();
-					double BMax = std::reduce(BL.begin(), BL.end());
+					double BMax = std::accumulate(BL.begin(), BL.end(), 0.0);
 					BLandSamples.first.push_back(BMax);
 					BLandSamples.second.push_back((*e)->Orientations());
 					SampleSpacing.push_back((*e)->GetSpacing());
@@ -314,8 +313,12 @@ namespace RunSection
 		this->Log() << "Ready to perform calculation." << std::endl;
 		
 		//#pragma omp parallel for
+		if (As.size() > static_cast<size_t>(std::numeric_limits<int>::max()))
+			throw std::runtime_error("Too many samples for OpenMP loop indexing.");
+
+		const int sample_count = static_cast<int>(As.size());
 		#pragma omp parallel for
-		for (unsigned int i = 0; i < As.size(); i++)
+		for (int i = 0; i < sample_count; ++i)
 		{
 			arma::cx_vec result = -1 * solve(arma::conv_to<arma::cx_mat>::from(As[i]), rho0vec);
 			std::cout << "Sample " << i << " trace: " << arma::trace(arma::reshape(result, std::sqrt(result.n_rows), std::sqrt(result.n_rows))) << std::endl;

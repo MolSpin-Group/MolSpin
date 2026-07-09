@@ -10,12 +10,18 @@
 #include <memory>
 #include <iostream>
 #include <cmath>
+#include <numeric>
 #include <Spin.h>
 #include "ObjectParser.h"
 #include "Interaction.h"
 
 namespace SpinAPI
 {
+	namespace
+	{
+		const double kInversePi = 1.0 / arma::datum::pi;
+	}
+
 	// -----------------------------------------------------
 	// Interaction Constructors and Destructor
 	// -----------------------------------------------------
@@ -308,7 +314,7 @@ namespace SpinAPI
 				{
 					FreelyJointedPolymerBL(this->BondLengths, this->hffield, this->tau, this->orientations);
 
-					double prefactor = this->tau * 0.25 * M_1_PI; // tua^2 / 4pi
+					double prefactor = this->tau * 0.25 * kInversePi; // tua^2 / 4pi
 					prefactor = std::pow(prefactor, 3.0 / 2.0);
 					double exp1 = -0.25 * this->tau;
 					this->f = FreelyJointedPolymerD(prefactor, exp1);
@@ -401,7 +407,7 @@ namespace SpinAPI
 
 					// define all the distributions for broadband noise and fill out vectors
 					std::normal_distribution<double> amp_dist(0.0, 1.0);
-					std::uniform_real_distribution<double> phase_dist(0, 2.0 * M_PI);
+						std::uniform_real_distribution<double> phase_dist(0, 2.0 * arma::datum::pi);
 					std::uniform_real_distribution<double> freq_dist(this->tdMinFreq, this->tdMaxFreq);
 
 					this->tdAmps.set_size(this->tdComponents, 3);
@@ -430,7 +436,7 @@ namespace SpinAPI
 						this->tdThetas.set_size(this->tdComponents, 3);
 						this->tdPhis.set_size(this->tdComponents, 3);
 						std::uniform_real_distribution<double> cos_theta_dist(-1.0, 1.0);
-						std::uniform_real_distribution<double> phi_dist(0.0, 2 * M_PI);
+							std::uniform_real_distribution<double> phi_dist(0.0, 2.0 * arma::datum::pi);
 						for (int j_tens = 0; j_tens < 3; j_tens++)
 						{
 							for (int i_comp = 0; i_comp < this->tdComponents; i_comp++)
@@ -531,7 +537,7 @@ namespace SpinAPI
 
 					// define all the distributions for broadband noise and fill out vectors
 					std::normal_distribution<double> amp_dist(0.0, 1.0);
-					std::uniform_real_distribution<double> phase_dist(0, 2.0 * M_PI);
+						std::uniform_real_distribution<double> phase_dist(0, 2.0 * arma::datum::pi);
 					std::uniform_real_distribution<double> freq_dist(this->tdMinFreq, this->tdMaxFreq);
 
 					this->tdAmps.set_size(this->tdComponents, 6);
@@ -641,7 +647,7 @@ namespace SpinAPI
 
 					// define all the distributions for broadband noise and fill out vectors
 					std::normal_distribution<double> amp_dist(0.0, 1.0);
-					std::uniform_real_distribution<double> phase_dist(0, 2.0 * M_PI);
+						std::uniform_real_distribution<double> phase_dist(0, 2.0 * arma::datum::pi);
 					std::uniform_real_distribution<double> freq_dist(this->tdMinFreq, this->tdMaxFreq);
 
 					this->tdAmps.set_size(this->tdComponents, 6);
@@ -1691,7 +1697,7 @@ namespace SpinAPI
 				tau_sum.push_back(std::pow(bondlength, 2));
 			}
 		}
-		tau = std::reduce(tau_sum.begin(), tau_sum.end());
+		tau = std::accumulate(tau_sum.begin(), tau_sum.end(), 0.0);
 		if (tau == 0)
 		{
 			tau = 0;

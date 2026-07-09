@@ -8,6 +8,7 @@
 // See LICENSE.txt for license information.
 /////////////////////////////////////////////////////////////////////////
 #include <iostream>
+#include <numeric>
 #include "TaskMultiStaticSSTimeEvoSpectra.h"
 #include "Transition.h"
 #include "Settings.h"

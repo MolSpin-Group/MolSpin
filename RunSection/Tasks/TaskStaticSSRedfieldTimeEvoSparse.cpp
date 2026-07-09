@@ -53,10 +53,9 @@ namespace RunSection
 
 		// Obtain spin systems
 		auto systems = this->SpinSystems();
-		std::pair<arma::cx_mat, arma::cx_vec> P[systems.size()]; // Create array containing a propagator and the current state of each system
-		SpinAPI::SpinSpace spaces[systems.size()];				 // Keep a SpinSpace object for each spin system
-
-		arma::cx_mat *ptr_eigen_vec[systems.size()];
+		std::vector<std::pair<arma::cx_mat, arma::cx_vec>> P(systems.size()); // Create array containing a propagator and the current state of each system
+		std::vector<SpinAPI::SpinSpace> spaces(systems.size());				  // Keep a SpinSpace object for each spin system
+		std::vector<arma::cx_mat> eigen_bases(systems.size());
 
 		// Loop through all SpinSystems
 		int ic = 0; // System counter
@@ -114,6 +113,7 @@ namespace RunSection
 			this->Log() << "Starting diagonalization..." << std::endl;
 			arma::eig_sym(eigen_val, eigen_vec, H);
 			this->Log() << "Diagonalization done! Eigenvalues: " << eigen_val.n_elem << ", eigenvectors: " << eigen_vec.n_cols << std::endl;
+			eigen_bases[ic] = eigen_vec;
 
 			// ----------------------------------------------------------------
 			// CONSTRUCTING TRANSITION MATRIX "domega" OUT OF EIGENVALUES OF H0
@@ -2144,7 +2144,7 @@ namespace RunSection
 					}
 
 					// Transform into eigenbasis of H0
-					PState = ((*ptr_eigen_vec[ic]).t() * PState * (*ptr_eigen_vec[ic]));
+					PState = (eigen_bases[ic].t() * PState * eigen_bases[ic]);
 					this->Data() << std::abs(arma::trace(PState * rho0)) << " ";
 				}
 
@@ -2190,7 +2190,7 @@ namespace RunSection
 						}
 
 						// Transform into eigenbasis of H0
-						PState = ((*ptr_eigen_vec[ic]).t() * PState * (*ptr_eigen_vec[ic]));
+						PState = (eigen_bases[ic].t() * PState * eigen_bases[ic]);
 						this->Data() << std::abs(arma::trace(PState * rho0)) << " ";
 					}
 

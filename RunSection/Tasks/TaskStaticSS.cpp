@@ -6,6 +6,7 @@
 // See LICENSE.txt for license information.
 /////////////////////////////////////////////////////////////////////////
 #include <iostream>
+#include <numeric>
 #include "TaskStaticSS.h"
 #include "Transition.h"
 #include "Operator.h"

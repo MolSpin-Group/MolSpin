@@ -10,6 +10,7 @@
 // See LICENSE.txt for license information.
 /////////////////////////////////////////////////////////////////////////
 #include <exception>
+#include <numeric>
 namespace SpinAPI
 {
 	// -----------------------------------------------------
@@ -1724,7 +1725,7 @@ namespace SpinAPI
 		auto spinlist = _interaction->Group1();
 		//  Grab amplitude parameters
 		std::vector<double> B = _interaction->VL();
-		double BMax = std::reduce(B.begin(), B.end());
+		double BMax = std::accumulate(B.begin(), B.end(), 0.0);
 
 		// Build Sx, Sy, Sz for *each* electron in Group1
 		arma::sp_cx_mat Sx;

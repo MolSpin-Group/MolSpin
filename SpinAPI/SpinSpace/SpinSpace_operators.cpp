@@ -941,8 +941,8 @@ namespace SpinAPI
 			(*l)->Properties()->Get("type", spintype);
 			if (spintype != "electron")
 			{
-				double theta = M_PI * distr(generator);
-				double phi = M_PI * distr(generator);
+				double theta = arma::datum::pi * distr(generator);
+				double phi = arma::datum::pi * distr(generator);
 				arma::cx_colvec tempstate;
 				tempstate.zeros((*l)->Multiplicity());
 				tempstate(0, 0) = 1;

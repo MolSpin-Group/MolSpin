@@ -7,6 +7,7 @@
 /////////////////////////////////////////////////////////////////////////
 #include <iostream>
 #include <iomanip>
+#include <numeric>
 #include "TaskStaticSSPowderSpectraNakajimaZwanzig.h"
 #include "Transition.h"
 #include "Settings.h"
@@ -32,7 +33,7 @@ namespace RunSection
 	{
 	}
 
-	bool TaskStaticSSPowderSpectraNakajimaZwanzig::BuildNakajimaZwanzigLiouvillian(auto &_i, SpinAPI::SpinSpace &_space, const arma::cx_mat &_H, arma::cx_mat &_A, arma::cx_mat &_eigenvec)
+	bool TaskStaticSSPowderSpectraNakajimaZwanzig::BuildNakajimaZwanzigLiouvillian(SystemIterator &_i, SpinAPI::SpinSpace &_space, const arma::cx_mat &_H, arma::cx_mat &_A, arma::cx_mat &_eigenvec)
 	{
 		_space.UseSuperoperatorSpace(false);
 
@@ -492,7 +493,7 @@ namespace RunSection
 		return true;
 	}
 
-	bool TaskStaticSSPowderSpectraNakajimaZwanzig::ConvertSuperspaceToLab(auto &_space, const arma::cx_vec &_rho_vec_eig, const arma::cx_mat &_eigenvec, arma::cx_vec &_rho_vec_lab)
+	bool TaskStaticSSPowderSpectraNakajimaZwanzig::ConvertSuperspaceToLab(SpinAPI::SpinSpace &_space, const arma::cx_vec &_rho_vec_eig, const arma::cx_mat &_eigenvec, arma::cx_vec &_rho_vec_lab)
 	{
 		arma::cx_mat rho_eig;
 		if (!_space.OperatorFromSuperspace(_rho_vec_eig, rho_eig))
@@ -1435,7 +1436,7 @@ namespace RunSection
 		return ReturnVec;
 	}
 
-	bool TaskStaticSSPowderSpectraNakajimaZwanzig::ProjectAndPrintOutputLine(auto &_i, SpinAPI::SpinSpace &_space, arma::cx_vec &_rhovec, double &_printedtime, double _timestep, unsigned int &_n, bool &_cidsp, std::ostream &_datastream, std::ostream &_logstream)
+	bool TaskStaticSSPowderSpectraNakajimaZwanzig::ProjectAndPrintOutputLine(SystemIterator &_i, SpinAPI::SpinSpace &_space, arma::cx_vec &_rhovec, double &_printedtime, double _timestep, unsigned int &_n, bool &_cidsp, std::ostream &_datastream, std::ostream &_logstream)
 	{
 		arma::cx_mat rho0;
 
@@ -1551,7 +1552,7 @@ namespace RunSection
 		return true;
 	}
 
-	bool TaskStaticSSPowderSpectraNakajimaZwanzig::ProjectAndPrintOutputLineInf(auto &_i, SpinAPI::SpinSpace &_space, arma::cx_vec &_rhovec, double &_printedtime, double _timestep, bool &_cidsp, std::ostream &_datastream, std::ostream &_logstream)
+	bool TaskStaticSSPowderSpectraNakajimaZwanzig::ProjectAndPrintOutputLineInf(SystemIterator &_i, SpinAPI::SpinSpace &_space, arma::cx_vec &_rhovec, double &_printedtime, double _timestep, bool &_cidsp, std::ostream &_datastream, std::ostream &_logstream)
 	{
 		arma::cx_mat rho0;
 
@@ -1693,7 +1694,7 @@ namespace RunSection
 
 		_uniformGrid.resize(_Npoints);
 
-		const double golden = M_PI * (1.0 + std::sqrt(5.0)); // not standart golden angle
+		const double golden = arma::datum::pi * (1.0 + std::sqrt(5.0)); // not standart golden angle
 
 		for (int i = 0; i < _Npoints; ++i)
 		{
@@ -1701,7 +1702,7 @@ namespace RunSection
 
 			theta[i] = std::acos(1.0 - index / _Npoints);		  // hemisphere
 			phi[i] = golden * index;							  // hemisphere
-			weight[i] = std::sin(theta[i]) * 2 * M_PI / _Npoints; // 2 * pi for hemisphere
+			weight[i] = std::sin(theta[i]) * 2 * arma::datum::pi / _Npoints; // 2 * pi for hemisphere
 			_uniformGrid[i] = {theta[i], phi[i], weight[i]};
 		}
 
@@ -1724,12 +1725,12 @@ namespace RunSection
 
 			for (int j = 0; j < _Npoints; ++j)
 			{
-				double ph = (j + 0.5) * (M_PI / 2.0) / _Npoints; // uniform φ
+				double ph = (j + 0.5) * (arma::datum::pi / 2.0) / _Npoints; // uniform φ
 
 				theta[idx] = th;
 				phi[idx] = ph;
 
-				weight[idx] = (M_PI / 2.0 / _Npoints) * (1.0 / _Npoints); // Δφ * Δ(cosθ)
+				weight[idx] = (arma::datum::pi / 2.0 / _Npoints) * (1.0 / _Npoints); // Δφ * Δ(cosθ)
 				_Grid[idx] = {theta[idx], phi[idx], weight[idx]};
 				idx++;
 			}

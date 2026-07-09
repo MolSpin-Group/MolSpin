@@ -6,6 +6,7 @@
 // See LICENSE.txt for license information.
 //////////////////////////////////////////////////////////////////////////////
 #include <iostream>
+#include <numeric>
 #include <omp.h>
 #include <memory>
 #include "TaskStaticSSNakajimaZwanzigTimeEvo.h"
@@ -54,10 +55,9 @@ namespace RunSection
 
 		// Obtain spin systems
 		auto systems = this->SpinSystems();
-		std::pair<arma::cx_mat, arma::cx_vec> P[systems.size()]; // Create array containing a propagator and the current state of each system
-		SpinAPI::SpinSpace spaces[systems.size()];				 // Keep a SpinSpace object for each spin system
-
-		arma::cx_mat *ptr_eigen_vec[systems.size()];
+		std::vector<std::pair<arma::cx_mat, arma::cx_vec>> P(systems.size()); // Create array containing a propagator and the current state of each system
+		std::vector<SpinAPI::SpinSpace> spaces(systems.size());				  // Keep a SpinSpace object for each spin system
+		std::vector<arma::cx_mat> eigen_bases(systems.size());
 
 		// Loop through all SpinSystems
 		int ic = 0; // System counter
@@ -214,8 +214,8 @@ namespace RunSection
 			rho0 = (eigen_vec.t() * rho0 * eigen_vec);
 			rho0 = rho0 / trace(rho0);
 
-			// Put eigenbasis on pointer to sue for PState (projection operator) in final calculation
-			ptr_eigen_vec[ic] = {&eigen_vec};
+			// Keep a copy of the eigenbasis for state projections during propagation.
+			eigen_bases[ic] = eigen_vec;
 
 			// ----------------------------------------------------------------
 			// CONSTRUCTING TRANSITION MATRIX "lambda" OUT OF EIGENVALUES OF H0 FOR SPECTRAL DENSITIES
@@ -1923,7 +1923,7 @@ namespace RunSection
 					}
 
 					// Transform into eigenbasis of H0
-					PState = ((*ptr_eigen_vec[ic]).t() * PState * (*ptr_eigen_vec[ic]));
+					PState = (eigen_bases[ic].t() * PState * eigen_bases[ic]);
 					this->Data() << std::abs(arma::trace(PState * rho0)) << " ";
 				}
 
@@ -1968,7 +1968,7 @@ namespace RunSection
 						}
 
 						// Transform into eigenbasis of H0
-						PState = ((*ptr_eigen_vec[ic]).t() * PState * (*ptr_eigen_vec[ic]));
+						PState = (eigen_bases[ic].t() * PState * eigen_bases[ic]);
 						this->Data() << std::abs(arma::trace(PState * rho0)) << " ";
 					}
 

@@ -393,7 +393,7 @@ namespace SpinAPI
                 }
                 index2++;
             }
-            if ((unsigned int)index2 == AllTransitions.size() and tr->target == "")
+            if ((unsigned int)index2 == AllTransitions.size() && tr->target == "")
             {
                 tr->type = 0;
             }

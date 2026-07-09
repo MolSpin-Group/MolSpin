@@ -6,6 +6,9 @@
 // See LICENSE.txt for license information.
 /////////////////////////////////////////////////////////////////////////
 #include <iostream>
+#include <limits>
+#include <numeric>
+#include <stdexcept>
 #include "TaskStaticSSTimeEvo.h"
 #include "Transition.h"
 #include "Operator.h"
@@ -16,9 +19,6 @@
 #include "SpinSystem.h"
 #include "ObjectParser.h"
 
-// #ifdef USE_OPENBLAS
-extern "C" void openblas_set_num_threads(int);
-// #endif
 namespace RunSection
 {
 	// -----------------------------------------------------
@@ -51,10 +51,10 @@ namespace RunSection
 
 		// Obtain spin systems
 		auto systems = this->SpinSystems();
-		std::pair<arma::cx_mat, arma::cx_vec> P[systems.size()]; // Create array containing a propagator and the current state of each system //LINE MODIFIED FOR SW
-		SpinAPI::SpinSpace spaces[systems.size()];				 // Keep a SpinSpace object for each spin system
-		SCData SWdata[systems.size()];
-		bool SW[systems.size()];
+		std::vector<std::pair<arma::cx_mat, arma::cx_vec>> P(systems.size()); // Create array containing a propagator and the current state of each system //LINE MODIFIED FOR SW
+		std::vector<SpinAPI::SpinSpace> spaces(systems.size());				  // Keep a SpinSpace object for each spin system
+		std::vector<SCData> SWdata(systems.size());
+		std::vector<bool> SW(systems.size(), false);
 
 		// Loop through all SpinSystems
 		int ic = 0; // System counter
@@ -265,7 +265,7 @@ namespace RunSection
 					{
 						AllWeights[ic][0].push_back((*e)->GetOriWeights());
 						std::vector<double> BL = (*e)->VL();
-						double BMax = std::reduce(BL.begin(), BL.end());
+						double BMax = std::accumulate(BL.begin(), BL.end(), 0.0);
 						BLandSamples[ic].first.push_back(BMax);
 						BLandSamples[ic].second.push_back((*e)->Orientations());
 						SampleSpacing[ic].push_back((*e)->GetSpacing());
@@ -321,25 +321,29 @@ namespace RunSection
 					SCweights[ic].push_back({0,0.0});
 					rho0s[ic].push_back({e,temp_vec});
 				}
-				unsigned int threads = GetNumThreads();
-				//threads = (unsigned int)std::floor((double)threads / 2.0);
-				#pragma omp parallel for num_threads(threads)
-				for (unsigned int e = 0; e < As[ic].size(); e++)
-				{
-					arma::cx_mat expP = arma::expmat(arma::conv_to<arma::cx_mat>::from(As[ic][e]) * this->timestep);
-					std::vector<double> weights = SampleWeights[ic][e];
-					double weight_product = 1.0;
-					for(unsigned int j = 0; j < weights.size(); j++)
+					unsigned int threads = GetNumThreads();
+					//threads = (unsigned int)std::floor((double)threads / 2.0);
+					if (As[ic].size() > static_cast<size_t>(std::numeric_limits<int>::max()))
+						throw std::runtime_error("Too many semi-classical samples for OpenMP loop indexing.");
+
+					const int sample_count = static_cast<int>(As[ic].size());
+					#pragma omp parallel for num_threads(threads)
+					for (int e = 0; e < sample_count; ++e)
 					{
-						weight_product *= weights[j];
+						arma::cx_mat expP = arma::expmat(arma::conv_to<arma::cx_mat>::from(As[ic][e]) * this->timestep);
+						std::vector<double> weights = SampleWeights[ic][e];
+						double weight_product = 1.0;
+						for(unsigned int j = 0; j < weights.size(); j++)
+						{
+							weight_product *= weights[j];
+						}
+						#pragma omp critical
+						{
+							exp_prop[e] = {e,expP};
+							SCweights[ic][e] = {e,weight_product};
+							rho0s[ic][e] = {e,P[ic].second};
+						}
 					}
-					#pragma omp critical
-					{
-						exp_prop[e] = {e,expP};
-						SCweights[ic][e] = {e,weight_product};
-						rho0s[ic][e] = {e,P[ic].second};
-					}
-				}
 				Propagators.push_back(exp_prop);
 			}
 			else
@@ -361,21 +365,25 @@ namespace RunSection
 			for(auto i = systems.cbegin(); i != systems.cend(); i++)
 			{
 				arma::cx_vec result = arma::zeros<arma::cx_vec>(rho0vec.n_rows);
-				if(SW[ic])
-				{
-					SCresults[ic].clear();
-					#pragma omp parallel for
-					for(unsigned int e = 0; e < Propagators[ic].size(); e++)
+					if(SW[ic])
 					{
-						arma::cx_vec tmp = Propagators[ic][e].second * rho0s[ic][e].second;
-						#pragma omp critical
+						SCresults[ic].clear();
+						if (Propagators[ic].size() > static_cast<size_t>(std::numeric_limits<int>::max()))
+							throw std::runtime_error("Too many propagators for OpenMP loop indexing.");
+
+						const int propagator_count = static_cast<int>(Propagators[ic].size());
+						#pragma omp parallel for
+						for (int e = 0; e < propagator_count; ++e)
 						{
-							SCresults[ic].push_back({Propagators[ic][e].first, tmp * SCweights[ic][e].second});
-							//SCresults[ic].push_back({e, tmp * SCweights[ic][e].second});
-							//std::cout << arma::trace(tmp) << std::endl;
+							arma::cx_vec tmp = Propagators[ic][e].second * rho0s[ic][e].second;
+							#pragma omp critical
+							{
+								SCresults[ic].push_back({Propagators[ic][e].first, tmp * SCweights[ic][e].second});
+								//SCresults[ic].push_back({e, tmp * SCweights[ic][e].second});
+								//std::cout << arma::trace(tmp) << std::endl;
+							}
+							rho0s[ic][e] = {Propagators[ic][e].first,tmp};
 						}
-						rho0s[ic][e] = {Propagators[ic][e].first,tmp};
-					}
 					std::pair<arma::cx_vec, double> results = IntegrateSC(SCresults[ic], SCweights[ic], SCIntegrationProperties{BLandSamples[ic].first, BLandSamples[ic].second, SampleSpacing[ic]});
 					result = results.first;
 					P[ic].second = result;

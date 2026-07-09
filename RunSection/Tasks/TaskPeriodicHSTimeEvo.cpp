@@ -380,7 +380,7 @@ namespace RunSection
 				{
 					if ((*j)->GetTDFrequency() > 1e-4)
 					{
-						double p = 2.0 * M_PI / (*j)->GetTDFrequency();
+						double p = 2.0 * arma::datum::pi / (*j)->GetTDFrequency();
 						this->Log() << "Found interaction with period " << p << " (angular frequency " << (*j)->GetTDFrequency() << " rad/ns, frequency " << (1000.0 / p) << " MHz).\n";
 						if (p > period)
 						{

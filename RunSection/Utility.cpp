@@ -10,9 +10,7 @@
 #include "Utility.h"
 #include <random>
 #include <thread>
-#ifdef _OPENMP
 #include <omp.h>
-#endif
 
 namespace RunSection
 {
@@ -26,7 +24,7 @@ namespace RunSection
             return nullptr;
         }
 
-        double phi = M_PI * (3.0 - std::sqrt(5.0)); //Golden angle in radians
+        double phi = arma::datum::pi * (3.0 - std::sqrt(5.0)); //Golden angle in radians
         for (int i = 0; i < n; i++)
         {
             double y = 1.0 - ((double)i / (double)(n-1)) * 2;
@@ -64,8 +62,8 @@ MCSpherePoint* CalculateMCSpherePoints(int n, double rmax_x, double rmax_y, doub
         }
         std::random_device RandDev;
         std::mt19937 Generator(RandDev());
-        std::uniform_real_distribution<double> distPhi(0,2.0*M_PI);
-        std::uniform_real_distribution<double> distTheta(0,M_PI);
+        std::uniform_real_distribution<double> distPhi(0, 2.0 * arma::datum::pi);
+        std::uniform_real_distribution<double> distTheta(0, arma::datum::pi);
         std::uniform_real_distribution<double> distScale(0,1);
         
         for(int i = 0; i < n; i++)

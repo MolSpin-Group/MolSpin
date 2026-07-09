@@ -6,6 +6,7 @@
 // See LICENSE.txt for license information.
 /////////////////////////////////////////////////////////////////////////
 #include <iostream>
+#include <numeric>
 #include "TaskStaticSSCIDNP.h"
 #include "Transition.h"
 #include "Settings.h"

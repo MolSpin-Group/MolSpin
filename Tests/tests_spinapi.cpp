@@ -248,7 +248,7 @@ bool test_spinapi_interaction_fieldcircularpolarization_tilted()
 
 	double frequency = 0.159154943e+6;
 	double phase = 24;
-	double outofplane_angle = 45.0 / 180.0 * M_PI;
+	double outofplane_angle = 45.0 / 180.0 * arma::datum::pi;
 
 	auto testfield1 = arma::vec("0 0 0");
 	testfield1(0) = cos(phase) * cos(outofplane_angle) * sqrt(2);

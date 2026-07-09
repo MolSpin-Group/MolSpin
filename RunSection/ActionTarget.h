@@ -35,9 +35,9 @@ namespace RunSection
 
 	public:
 		// Constructors / Destructors
-		ActionTarget<T>(T &_data, CheckFunction<T> _check, bool _readonly = false) : data(&_data), readonly(_readonly), initialValue(_data), check(_check){}; // Normal constructor
-		ActionTarget<T>(const ActionTarget<T> &_at) : data(_at.data), readonly(_at.readonly), initialValue(_at.initialValue), check(_at.check){};			  // Copy-constructor
-		~ActionTarget<T>(){};																																  // Destructor
+		ActionTarget(T &_data, CheckFunction<T> _check, bool _readonly = false) : data(&_data), readonly(_readonly), initialValue(_data), check(_check){}; // Normal constructor
+		ActionTarget(const ActionTarget<T> &_at) : data(_at.data), readonly(_at.readonly), initialValue(_at.initialValue), check(_at.check){};			  // Copy-constructor
+		~ActionTarget(){};																																	  // Destructor
 
 		// Operators
 		ActionTarget<T> &operator=(const ActionTarget<T> &_at) // Copy-assignment

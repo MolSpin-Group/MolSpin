@@ -1,37 +1,153 @@
-name: C/C++ CI
+name: CI / Release Binaries
 
 on:
-  push:
-    branches: [ "main" ]
   pull_request:
-    branches: [ "main" ]
+  push:
+    branches:
+      - main
   release:
-    types: [published]
+    types:
+      - published
+
+permissions:
+  contents: write
 
 jobs:
   build:
-    runs-on: ubuntu-latest
-    container: ghcr.io/molspin-group/molspin-build-env:dockerenv
-    permissions:
-      contents: write
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux x64
+            runner: ubuntu-24.04
+            platform: linux
+            artifact: molspin-linux-x64.tar.gz
+          - name: macOS arm64
+            runner: macos-15
+            platform: macos
+            artifact: molspin-macos-arm64.tar.gz
+          - name: Windows x64
+            runner: windows-2025
+            platform: windows
+            triplet: x64-windows
+            artifact: molspin-windows-x64.zip
+
     steps:
-    - uses: actions/checkout@v4
-    - name: ccache
-      uses: hendrikmuhs/ccache-action@v1.2
-    - name: make
-      run: make CC="ccache g++ -std=c++17" -j 16
-    - uses: actions/upload-artifact@v4
-      with:
-        name: Molspin Executable
-        path: molspin
-    - name: Upload Artifact to release
-      if: github.event_name == 'release'
-      run: |
-        curl -L \
-          -X POST \
-          -H "Accept: application/vnd.github+json" \
-          -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-          -H "X-GitHub-Api-Version: 2022-11-28" \
-          -H "Content-Type: application/octet-stream" \
-          "https://uploads.github.com/repos/${{ github.repository }}/releases/${{ github.event.release.id }}/assets?name=molspin" \
-          --data-binary "@molspin"
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up MSVC environment
+        if: matrix.platform == 'windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Cache vcpkg binary packages
+        if: matrix.platform == 'windows'
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.vcpkg-cache
+          key: windows-vcpkg-binaries-${{ matrix.triplet }}-${{ hashFiles('vcpkg-triplets/*.cmake', '.github/workflows/c-cpp.yml') }}
+          restore-keys: |
+            windows-vcpkg-binaries-${{ matrix.triplet }}-
+
+      - name: Install Linux dependencies
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build patchelf libarmadillo-dev libopenblas-dev liblapack-dev
+
+      - name: Install macOS dependencies
+        if: matrix.platform == 'macos'
+        run: |
+          brew update
+          brew install cmake ninja armadillo openblas libomp
+
+      - name: Install Windows dependencies with vcpkg
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          $overlay = Join-Path (Get-Location) "vcpkg-triplets"
+          $vcpkgRoot = Join-Path $env:GITHUB_WORKSPACE "vcpkg"
+          $binaryCache = Join-Path $env:GITHUB_WORKSPACE ".vcpkg-cache"
+          New-Item -ItemType Directory -Force -Path $binaryCache | Out-Null
+          if (-not (Test-Path (Join-Path $vcpkgRoot "vcpkg.exe"))) {
+            git clone --depth 1 https://github.com/microsoft/vcpkg $vcpkgRoot
+          }
+          & (Join-Path $vcpkgRoot "bootstrap-vcpkg.bat") -disableMetrics
+          $env:VCPKG_DEFAULT_BINARY_CACHE = $binaryCache
+          & (Join-Path $vcpkgRoot "vcpkg.exe") install armadillo openblas --triplet "${{ matrix.triplet }}" --overlay-triplets "$overlay"
+          "VCPKG_ROOT=$vcpkgRoot" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "VCPKG_DEFAULT_BINARY_CACHE=$binaryCache" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Configure on Linux
+        if: matrix.platform == 'linux'
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DMOLSPIN_ENABLE_NATIVE_OPTIMIZATIONS=OFF
+
+      - name: Configure on macOS
+        if: matrix.platform == 'macos'
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="$(brew --prefix);$(brew --prefix openblas);$(brew --prefix libomp)" \
+            -DMOLSPIN_ENABLE_NATIVE_OPTIMIZATIONS=OFF
+
+      - name: Configure on Windows
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          $overlay = Join-Path (Get-Location) "vcpkg-triplets"
+          cmake -S . -B build -G Ninja `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_C_COMPILER=clang-cl `
+            -DCMAKE_CXX_COMPILER=clang-cl `
+            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" `
+            -DVCPKG_TARGET_TRIPLET="${{ matrix.triplet }}" `
+            -DVCPKG_OVERLAY_TRIPLETS="$overlay" `
+            -DMOLSPIN_ENABLE_NATIVE_OPTIMIZATIONS=OFF
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Run tests
+        id: tests
+        continue-on-error: true
+        run: ctest --test-dir build --output-on-failure --parallel
+
+      - name: Package Linux artifact
+        if: matrix.platform == 'linux'
+        run: |
+          bash ./.github/scripts/package-linux.sh "${{ matrix.artifact }}"
+
+      - name: Package macOS artifact
+        if: matrix.platform == 'macos'
+        run: |
+          bash ./.github/scripts/package-macos.sh "${{ matrix.artifact }}"
+
+      - name: Package Windows artifact
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          & ./.github/scripts/package-windows.ps1 -Artifact "${{ matrix.artifact }}" -Triplet "${{ matrix.triplet }}"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}
+
+      - name: Upload artifact to release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "${{ github.event.release.tag_name }}" "${{ matrix.artifact }}" --clobber
+
+      - name: Fail job if tests failed
+        if: steps.tests.outcome == 'failure'
+        run: |
+          echo "Tests failed. Build artifacts were still packaged and uploaded."
+          exit 1

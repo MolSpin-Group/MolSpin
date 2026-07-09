@@ -46,8 +46,8 @@ namespace RunSection
 
 		// Obtain spin systems
 		auto systems = this->SpinSystems();
-		std::pair<arma::cx_mat, arma::cx_vec> P[systems.size()]; // Create array containing a propagator and the current state of each system
-		SpinAPI::SpinSpace spaces[systems.size()];				 // Keep a SpinSpace object for each spin system
+		std::vector<std::pair<arma::cx_mat, arma::cx_vec>> P(systems.size()); // Create array containing a propagator and the current state of each system
+		std::vector<SpinAPI::SpinSpace> spaces(systems.size());				  // Keep a SpinSpace object for each spin system
 
 		// Loop through all SpinSystems
 		int ic = 0; // System counter

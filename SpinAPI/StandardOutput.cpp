@@ -154,7 +154,7 @@ namespace SpinAPI
 		{
 			arma::vec v = this->vector->Get();
 			if (v.n_elem == 3)
-				output << (this->prefactor * acos(dot(normalise(v), this->reference)) * 180.0 / M_PI);
+				output << (this->prefactor * acos(dot(normalise(v), this->reference)) * 180.0 / arma::datum::pi);
 			else
 				output << '-';
 		}

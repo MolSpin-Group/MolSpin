@@ -51,7 +51,7 @@ namespace RunSection
 		double angle = atan2(ref2Proj, ref1Proj);
 
 		// Do the rotation
-		angle += this->Value() / 180.0 * M_PI;
+		angle += this->Value() / 180.0 * arma::datum::pi;
 
 		// Get the new vector
 		vec = planeLength * (this->refAxis1 * cos(angle) + this->refAxis2 * sin(angle)) + this->axis * axisProj;

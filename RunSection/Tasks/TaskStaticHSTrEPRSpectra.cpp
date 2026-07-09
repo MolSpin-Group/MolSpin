@@ -22,10 +22,7 @@
 #include "SpinSystem.h"
 #include "State.h"
 #include "Interaction.h"
-
-#ifdef _OPENMP
 #include <omp.h>
-#endif
 
 namespace RunSection
 {

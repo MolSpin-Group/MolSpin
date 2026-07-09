@@ -259,7 +259,7 @@ namespace RunSection
 				this->Log() << i << " ";
 				this->Log() << j << " ";
 				this->Log() << std::abs(_e[j] - _e[i]) << " ";
-				this->Log() << (std::abs(_e[j] - _e[i]) / (2.0 * M_PI) * 1000.0) << " ";
+				this->Log() << (std::abs(_e[j] - _e[i]) / (2.0 * arma::datum::pi) * 1000.0) << " ";
 
 				// Transition matrix elements
 				for (const std::pair<SpinAPI::spin_ptr, std::vector<arma::cx_mat>> &s : spins)

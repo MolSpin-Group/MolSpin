@@ -478,15 +478,15 @@ namespace RunSection
 			{
 				if(n % flush == 0) //clears the trajectory vector and evaluates the yields
 				{
-					auto yield = EvaluateYield(trajectory, SpinSpace->first, SubSystemSpins, SubSystemsTransitions);
+					auto evaluatedYields = EvaluateYield(trajectory, SpinSpace->first, SubSystemSpins, SubSystemsTransitions);
 					//grab last trajectory entry
 					auto last = trajectory.back();
 					trajectory.clear();
 					trajectory.push_back(last);
 					this->Log() << "Flushing trajectory vector, current time: " << Currenttime << ", yields: ";
-					for(unsigned int i = 0; i < yield.size(); i++)
+					for(unsigned int i = 0; i < evaluatedYields.size(); i++)
 					{
-						RollingYield[i] += yield[i];
+						RollingYield[i] += evaluatedYields[i];
 						this->Log() << RollingYield[i] << " ";
 					}
 					this->Log() << std::endl;
@@ -552,14 +552,14 @@ namespace RunSection
 					break;
 				}
 				double rate = e->transition->Rate();
-				double yield = 0;
+				double stateYield = 0;
 				std::vector<std::complex<double>> state_data;
 				for(auto a : data)
 				{
 					state_data.push_back(a[index]);
 				}
-				StateYield(rate, yield, state_data, time);
-				yields[index] += yield;
+				StateYield(rate, stateYield, state_data, time);
+				yields[index] += stateYield;
 			}
 		}
 		for (unsigned int i = 0; i < yields.size(); i++)
@@ -627,14 +627,14 @@ namespace RunSection
 					break;
 				}
 				double rate = e->transition->Rate();
-				double yield = 0;
+				double stateYield = 0;
 				std::vector<std::complex<double>> state_data;
 				for(auto a : data)
 				{
 					state_data.push_back(a[index]);
 				}
-				StateYield(rate, yield, state_data, time);
-				yields[index] += yield;
+				StateYield(rate, stateYield, state_data, time);
+				yields[index] += stateYield;
 			}
 		}
 

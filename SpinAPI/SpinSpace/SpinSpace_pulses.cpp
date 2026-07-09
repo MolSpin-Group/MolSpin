@@ -1778,7 +1778,7 @@ namespace SpinAPI
     {
         if (_angle_deg <= 360.0 || _angle_deg >= -360.0)
         {
-            result = _angle_deg * M_PI / 180.0;
+            result = _angle_deg * arma::datum::pi / 180.0;
         }
         else
         {

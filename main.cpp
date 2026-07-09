@@ -17,18 +17,16 @@
 // #include "Action.h"
 #include <fstream>
 #include <cstdlib>
+#include <string>
 #include <thread>
-#include <unistd.h>
+#include <omp.h>
 
 #define EMERGENCY_MEMORY_ALLOCATION_SIZE 16384
 
 //////////////////////////////////////////////////////////////////////////////
-// #ifdef USE_OPENBLAS
+#ifdef MOLSPIN_HAS_OPENBLAS
 extern "C" void openblas_set_num_threads(int);
-// #endif
-// #ifdef USE_OPENMP
-extern "C" void omp_set_num_threads(int);
-// #endif
+#endif
 //////////////////////////////////////////////////////////////////////////////
 namespace
 {
@@ -66,6 +64,41 @@ namespace
 			return MAX_THREADS;
 		}
 		return static_cast<int>(count);
+	}
+
+	bool ReadEnvVar(const char *name, std::string &value)
+	{
+#ifdef _WIN32
+		char *buffer = nullptr;
+		size_t bufferLength = 0;
+		if (_dupenv_s(&buffer, &bufferLength, name) != 0 || buffer == nullptr)
+		{
+			free(buffer);
+			return false;
+		}
+
+		value.assign(buffer);
+		free(buffer);
+		return true;
+#else
+		const char *envValue = std::getenv(name);
+		if (envValue == nullptr)
+		{
+			return false;
+		}
+
+		value = envValue;
+		return true;
+#endif
+	}
+
+	bool WriteEnvVar(const char *name, const std::string &value)
+	{
+#ifdef _WIN32
+		return _putenv_s(name, value.c_str()) == 0;
+#else
+		return setenv(name, value.c_str(), 1) == 0;
+#endif
 	}
 }
 
@@ -437,12 +470,12 @@ int main(int argc, char **argv)
 	// -----------------------------------------------------
 	{
 		auto readEnvThreads = [](const char *name, int &value) -> bool {
-			const char *envValue = std::getenv(name);
-			if (envValue == nullptr)
+			std::string envValue;
+			if (!ReadEnvVar(name, envValue))
 			{
 				return false;
 			}
-			if (ParseThreadCount(envValue, value))
+			if (ParseThreadCount(envValue.c_str(), value))
 			{
 				return true;
 			}
@@ -476,11 +509,21 @@ int main(int argc, char **argv)
 
 		std::string ompThreadsStr = std::to_string(ompThreads);
 		std::string blasThreadsStr = std::to_string(blasThreads);
-		setenv("OMP_NUM_THREADS", ompThreadsStr.c_str(), 1);
-		setenv("OPENBLAS_NUM_THREADS", blasThreadsStr.c_str(), 1);
+		if (!WriteEnvVar("OMP_NUM_THREADS", ompThreadsStr))
+		{
+			std::cout << "# - Warning: failed to set OMP_NUM_THREADS." << std::endl;
+		}
+		if (!WriteEnvVar("OPENBLAS_NUM_THREADS", blasThreadsStr))
+		{
+			std::cout << "# - Warning: failed to set OPENBLAS_NUM_THREADS." << std::endl;
+		}
 
+#ifdef MOLSPIN_HAS_OPENBLAS
 		openblas_set_num_threads(blasThreads);
+#endif
+#ifdef _OPENMP
 		omp_set_num_threads(ompThreads);
+#endif
 
 		std::cout << "# - Thread configuration: OMP=" << ompThreads << ", OpenBLAS=" << blasThreads << "." << std::endl;
 		if (ompThreads > 1 && blasThreads > 1)

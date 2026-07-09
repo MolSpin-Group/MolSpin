@@ -15,6 +15,7 @@
 // #include <Eigen/Core>
 #include "SpinAPIfwd.h"
 #include <utility>
+#include <array>
 
 namespace RunSection
 {
