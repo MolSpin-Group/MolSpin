@@ -328,6 +328,7 @@ namespace SpinAPI
 				}
 				
 				auto A = ATensor->LabFrame();
+				std::cout << A << std::endl;
 				//Ex = exz - 1/2(h15/h16)(exx-eyy)
 				double Ex2 = A(0,2) - 0.5 * ((h26 != 0.0) ? (h25/h26) * (A(0,0)-A(1,1)) : 0.0);
 				double Ex1 = A(0,2) - 0.5 * ((h16 != 0.0) ? (h15/h16) * (A(0,0)-A(1,1)) : 0.0);

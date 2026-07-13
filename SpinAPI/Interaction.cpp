@@ -328,6 +328,10 @@ namespace SpinAPI
 				this->Properties()->GetList("e", E, ' ');
 				if (E.size() == 1)
 				{
+					this->Properties()->GetList("e",E,',');
+				}
+				if (E.size() == 1)
+				{
 					double temp_E = E[0];
 					E = {temp_E, temp_E, temp_E};
 				}
@@ -1041,9 +1045,15 @@ namespace SpinAPI
 			h15 = d_list[6];
 		}
 
-		auto A = this->CouplingTensor()->LabFrame();
-		double Ex1 = A(0,2) - 0.5 * ((h16 != 0.0) ? (h15/h16) * (A(0,0)-A(1,1)) : 0.0);
-		double Ex2 = A(0,2) - 0.5 * ((h26 != 0.0) ? (h25/h26) * (A(0,0)-A(1,1)) : 0.0);
+		double exx,eyy,ezz,exy,exz,eyz;
+		exx = this->strain_components[0];
+		exy = this->strain_components[1];
+		exz = this->strain_components[2];
+		eyy = this->strain_components[3];
+		eyz = this->strain_components[4];
+		ezz = this->strain_components[5];
+		double Ex1 = exz - 0.5 * ((h16 != 0.0) ? (h15/h16) * (exx-eyy) : 0.0);
+		double Ex2 = exz - 0.5 * ((h26 != 0.0) ? (h25/h26) * (exx-eyy) : 0.0);
 		return pow(((Ex1*Ex1 + Ex2*Ex2)/2),0.5);
     }
 

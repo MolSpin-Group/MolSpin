@@ -382,12 +382,16 @@ namespace RunSection
 		{
 			// Propagate
 			//evaluate pulse sequence 
+			int previous_current_block = current_block;
 			ClampTimeEvolution(CurrentTime, this->totaltime, time_blocks, current_block, this->timestep, params);
+			if(current_block != previous_current_block)
+				this->timestep = timestep / 100;
+			arma::sp_cx_mat pulse_mat = GetPulses(CurrentTime,sequence_space_pair,rho0);
 			SpinAPI::SpinSpace::TimePropReturnInfo r;
 			L = L_base + GetCreationOperators();
 			dL = UpdateTimeDependentL(CurrentTime);
 			//std::cout << L << std::endl;
-			L = L + dL + GetPulses(CurrentTime,sequence_space_pair,rho0);
+			L = L + dL + pulse_mat;
 			//std::cout << L << std::endl;
 
 			if(this->timestep + CurrentTime > this->totaltime)

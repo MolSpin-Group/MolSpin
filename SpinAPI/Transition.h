@@ -96,7 +96,7 @@ namespace SpinAPI
 			if (this->Pulsed == true)
 			{
 				bool act = this->Active;
-				this->Active = false; //this essentially ensures the interaction/transition is only active during the pulse time
+				//this->Active = false; //this essentially ensures the interaction/transition is only active during the pulse time
 				return act;
 			}
 			return true;

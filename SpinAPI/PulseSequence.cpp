@@ -184,9 +184,15 @@ namespace SpinAPI
             if (pulse != nullptr)
                 pulse_duration = (pulse->Type() == SpinAPI::PulseType::InstantPulse) ? 0.0 : pulse->Pulsetime();
             else if(interaction != nullptr)
+            {
                 pulse_duration = interaction->ActiveTime();
+                //interaction->SetActive(false);
+            }
             else if(transition != nullptr)
+            {
                 pulse_duration = transition->ActiveTime();
+                //transition->SetActive(false);
+            }
             else
                 return {SequenceObject(), 0.0};
 
@@ -212,6 +218,10 @@ namespace SpinAPI
 
             if (abs_time >= track_time && abs_time < (track_time + gap_duration))
             {
+                if (transition)
+                    transition->SetActive(false);
+                else if(interaction)
+                    interaction->SetActive(false);
                 return {SequenceObject(), 0.0 };
             }
 
