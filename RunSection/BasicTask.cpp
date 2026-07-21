@@ -193,6 +193,8 @@ namespace RunSection
 					(*j)->SetTime(this->runsection.settings->Time());
 					(*j)->SetTrajectoryStep(this->runsection.settings->TrajectoryStep());
 				}
+
+				(*j)->SetActive(false);
 			}
 
 			// Prepare Transition objects
@@ -209,6 +211,8 @@ namespace RunSection
 					(*j)->SetTime(this->runsection.settings->Time());
 					(*j)->SetTrajectoryStep(this->runsection.settings->TrajectoryStep());
 				}
+
+				(*j)->SetActive(false);
 			}
 
 			// Prepare Spin objects
