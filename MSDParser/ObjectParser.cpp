@@ -725,7 +725,10 @@ namespace MSDParser
 			else
 			{
 				// Use a factor of two if the spin quantum number is not specified with "/2"
-				tmp2 = 2 * std::stoi(str.c_str());
+				double tmp3 = 2 * std::stod(str.c_str());
+				if(double(int(tmp3)) - tmp3 != 0.0)
+					return false;
+				tmp2 = int(tmp3);
 			}
 
 			if (std::stoi(str) < 0)
