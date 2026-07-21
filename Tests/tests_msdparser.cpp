@@ -220,6 +220,25 @@ bool test_msdparser_objectparser_gettensor()
 	return isCorrect;
 }
 //////////////////////////////////////////////////////////////////////////////
+// Tests that comma-separated string lists ignore whitespace around entries.
+bool test_msdparser_objectparser_getlist_string_trims()
+{
+	MSDParser::ObjectParser parser("test", "values=alpha, beta ,\tgamma ;");
+
+	std::vector<std::string> values;
+	bool isCorrect = true;
+	isCorrect &= parser.GetList("values", values, ',');
+	isCorrect &= (values.size() == 3);
+	if (values.size() == 3)
+	{
+		isCorrect &= (values[0] == "alpha");
+		isCorrect &= (values[1] == "beta");
+		isCorrect &= (values[2] == "gamma");
+	}
+
+	return isCorrect;
+}
+//////////////////////////////////////////////////////////////////////////////
 // Tests the ObjectParser::GetPulseSequence method with the syntax used by MSD inputs
 bool test_msdparser_objectparser_getpulsesequence_quoted()
 {
@@ -249,6 +268,7 @@ void AddMSDParserTests(std::vector<test_case> &_cases)
 	_cases.push_back(test_case("MSDParser::ObjectParser::Get to get boolean", test_msdparser_objectparser_getbool));
 	_cases.push_back(test_case("MSDParser::ObjectParser::Get to get vector", test_msdparser_objectparser_getvector));
 	_cases.push_back(test_case("MSDParser::ObjectParser::Get to get tensor", test_msdparser_objectparser_gettensor));
+	_cases.push_back(test_case("MSDParser::ObjectParser::GetList trims string entries", test_msdparser_objectparser_getlist_string_trims));
 	_cases.push_back(test_case("MSDParser::ObjectParser::Get quoted pulse sequence", test_msdparser_objectparser_getpulsesequence_quoted));
 }
 //////////////////////////////////////////////////////////////////////////////

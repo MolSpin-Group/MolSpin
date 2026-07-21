@@ -17,6 +17,7 @@
 #include "SpinSpace.h"
 #include "Function.h"
 #include "Pulse.h"
+#include "PowderGrid.h"
 #include <cmath>
 #include <sstream>
 //////////////////////////////////////////////////////////////////////////////
@@ -2706,6 +2707,128 @@ bool test_spinapi_operator_copy_preserves_relaxation_configuration()
 }
 //////////////////////////////////////////////////////////////////////////////
 
+bool test_spinapi_powder_grid_weights_and_rotation()
+{
+	SpinAPI::PowderGrid hemisphere;
+	SpinAPI::PowderGrid fullSphere;
+	bool isCorrect = true;
+	isCorrect &= SpinAPI::CreateUniformPowderGrid(11, SpinAPI::PowderGridDomain::UpperHemisphere, hemisphere);
+	isCorrect &= SpinAPI::CreateUniformPowderGrid(12, SpinAPI::PowderGridDomain::FullSphere, fullSphere);
+	isCorrect &= (hemisphere.size() == 11);
+	isCorrect &= (fullSphere.size() == 12);
+
+	double hemisphereWeight = 0.0;
+	for (const auto &orientation : hemisphere)
+		hemisphereWeight += orientation.weight;
+	double fullSphereWeight = 0.0;
+	for (const auto &orientation : fullSphere)
+		fullSphereWeight += orientation.weight;
+
+	isCorrect &= (std::abs(hemisphereWeight - 2.0 * arma::datum::pi) < 1e-12);
+	isCorrect &= (std::abs(fullSphereWeight - 4.0 * arma::datum::pi) < 1e-12);
+
+	arma::mat R;
+	isCorrect &= SpinAPI::CreateZYZRotationMatrix(0.0, arma::datum::pi / 2.0, 0.0, R);
+	arma::vec z = {0.0, 0.0, 1.0};
+	arma::vec rotated = R * z;
+	isCorrect &= (arma::norm(rotated - arma::vec({1.0, 0.0, 0.0})) < 1e-12);
+
+	return isCorrect;
+}
+//////////////////////////////////////////////////////////////////////////////
+
+bool test_spinapi_powder_grid_sophe_projection_helpers()
+{
+	bool isCorrect = true;
+
+	SpinAPI::SopheGridParameters params;
+	isCorrect &= SpinAPI::GetSopheGridParameters("Ci", params);
+	isCorrect &= (std::abs(params.maxPhi - 2.0 * arma::datum::pi) < 1e-12);
+	isCorrect &= (!params.closedPhi);
+	isCorrect &= (params.nOctants == 4);
+
+	SpinAPI::PowderGrid ciGrid;
+	isCorrect &= SpinAPI::CreateSophePowderGrid(4, "ci", ciGrid);
+	isCorrect &= (ciGrid.size() == static_cast<size_t>(SpinAPI::SopheGridPointCount(4, params.nOctants, params.closedPhi)));
+
+	SpinAPI::PowderGrid axialGrid;
+	isCorrect &= SpinAPI::CreateSophePowderGrid(5, "dinfh", axialGrid);
+	double axialWeight = 0.0;
+	for (const auto &orientation : axialGrid)
+		axialWeight += orientation.weight;
+	isCorrect &= (axialGrid.size() == 5);
+	isCorrect &= (std::abs(axialWeight - 4.0 * arma::datum::pi) < 1e-12);
+
+	SpinAPI::PowderGrid o3Grid;
+	isCorrect &= SpinAPI::CreateSophePowderGrid(1, "o3", o3Grid);
+	isCorrect &= (o3Grid.size() == 1);
+	isCorrect &= (std::abs(o3Grid[0].weight - 4.0 * arma::datum::pi) < 1e-12);
+
+	SpinAPI::PowderGrid octantGrid;
+	isCorrect &= SpinAPI::CreateOctantPowderGrid(3, octantGrid);
+	double octantWeight = 0.0;
+	for (const auto &orientation : octantGrid)
+		octantWeight += orientation.weight;
+	isCorrect &= (octantGrid.size() == 9);
+	isCorrect &= (std::abs(octantWeight - arma::datum::pi / 2.0) < 1e-12);
+
+	SpinAPI::PowderGrid d2hGrid;
+	SpinAPI::PowderProjectionMesh mesh;
+	isCorrect &= SpinAPI::CreateSophePowderGrid(4, "d2h", d2hGrid);
+	isCorrect &= SpinAPI::BuildSopheProjectionMesh(1, true, 4, d2hGrid, mesh);
+	double meshWeight = 0.0;
+	for (double weight : mesh.weights)
+		meshWeight += weight;
+	isCorrect &= (!mesh.axial);
+	isCorrect &= (mesh.triangles.size() == 9);
+	isCorrect &= (std::abs(meshWeight - 4.0 * arma::datum::pi) < 1e-12);
+
+	return isCorrect;
+}
+//////////////////////////////////////////////////////////////////////////////
+
+bool test_spinapi_powder_hamiltonian_helper_matches_explicit_builders()
+{
+	auto spin = std::make_shared<SpinAPI::Spin>("E", "type=electron;spin=1/2;tensor=matrix(2 0 0; 0 3 0; 0 0 5);");
+	auto staticField = std::make_shared<SpinAPI::Interaction>(
+		"B0",
+		"type=zeeman;spins=E;field=0 0 1;ignoretensors=false;commonprefactor=false;prefactor=1;");
+	auto microwave = std::make_shared<SpinAPI::Interaction>(
+		"mw",
+		"type=zeeman;spins=E;field=1 0 0;ignoretensors=false;commonprefactor=false;prefactor=1;");
+
+	SpinAPI::SpinSystem spinsys("System");
+	spinsys.Add(spin);
+	spinsys.Add(staticField);
+	spinsys.Add(microwave);
+	spinsys.ValidateInteractions();
+
+	SpinAPI::SpinSpace space(spinsys);
+	space.UseSuperoperatorSpace(false);
+	space.UseFullTensorRotation(true);
+
+	arma::mat rotation;
+	SpinAPI::CreateZYZRotationMatrix(0.0, arma::datum::pi / 2.0, 0.0, rotation);
+
+	arma::sp_cx_mat directH0;
+	arma::sp_cx_mat directH1;
+	arma::sp_cx_mat helperH0;
+	arma::sp_cx_mat helperH1;
+	arma::sp_cx_mat helperH;
+
+	bool isCorrect = true;
+	isCorrect &= space.BaseHamiltonianRotated_SA({"B0"}, rotation, directH0);
+	isCorrect &= space.BaseHamiltonianRotatedZYZ({"mw"}, rotation, directH1);
+	isCorrect &= space.PowderHamiltonianRotatedSA({"B0"}, {"mw"}, rotation, helperH0, helperH1, helperH);
+
+	isCorrect &= equal_matrices(helperH0, directH0, 1e-12);
+	isCorrect &= equal_matrices(helperH1, directH1, 1e-12);
+	isCorrect &= equal_matrices(helperH, directH0 + directH1, 1e-12);
+
+	return isCorrect;
+}
+//////////////////////////////////////////////////////////////////////////////
+
 
 //////////////////////////////////////////////////////////////////////////////
 // CHANGED 2026-07-07: Physics regression tests for the electron high-field
@@ -2786,11 +2909,11 @@ bool test_spinapi_secular_hyperfine_reversed_order_matches()
 }
 //////////////////////////////////////////////////////////////////////////////
 
-bool test_spinapi_secular_electron_electron_has_total_q_zero()
+bool test_spinapi_secular_electron_electron_historical_diagonal_projection()
 {
 	auto e1 = std::make_shared<SpinAPI::Spin>("E1", "type=electron;spin=1/2;");
 	auto e2 = std::make_shared<SpinAPI::Spin>("E2", "type=electron;spin=1/2;");
-	auto ee = std::make_shared<SpinAPI::Interaction>("ee", "type=doublespin;group1=E1;group2=E2;tensor=matrix(1 0 0;0 2 0;0 0 3);commonprefactor=false;prefactor=1;");
+	auto ee = std::make_shared<SpinAPI::Interaction>("ee", "type=doublespin;group1=E1;group2=E2;tensor=matrix(1 4 0;4 1 0;0 0 3);commonprefactor=false;prefactor=1;");
 
 	SpinAPI::SpinSystem spinsys("System");
 	spinsys.Add(e1);
@@ -2803,12 +2926,27 @@ bool test_spinapi_secular_electron_electron_has_total_q_zero()
 
 	arma::mat R = arma::eye<arma::mat>(3, 3);
 	arma::sp_cx_mat H;
+	arma::sp_cx_mat Sx1;
+	arma::sp_cx_mat Sy1;
 	arma::sp_cx_mat Sz1;
+	arma::sp_cx_mat Sx2;
+	arma::sp_cx_mat Sy2;
 	arma::sp_cx_mat Sz2;
 	bool isCorrect = true;
 	isCorrect &= space.InteractionOperatorRotated_SA(ee, R, H);
+	isCorrect &= space.CreateOperator(e1->Sx(), e1, Sx1);
+	isCorrect &= space.CreateOperator(e1->Sy(), e1, Sy1);
 	isCorrect &= space.CreateOperator(e1->Sz(), e1, Sz1);
+	isCorrect &= space.CreateOperator(e2->Sx(), e2, Sx2);
+	isCorrect &= space.CreateOperator(e2->Sy(), e2, Sy2);
 	isCorrect &= space.CreateOperator(e2->Sz(), e2, Sz2);
+
+	// The historical _SA electron-electron projection keeps only the diagonal
+	// tensor elements after frame/powder rotation. For an axial perpendicular
+	// tensor this is also total-q=0 under common z rotation, and the off-diagonal
+	// xy/yx terms in the input must not leak into the Hamiltonian.
+	arma::sp_cx_mat expected = Sx1 * Sx2 + Sy1 * Sy2 + 3.0 * Sz1 * Sz2;
+	isCorrect &= equal_matrices(H, expected, 1e-12);
 
 	arma::sp_cx_mat Mz = Sz1 + Sz2;
 	arma::sp_cx_mat comm = H * Mz - Mz * H;
@@ -2866,6 +3004,9 @@ void AddSpinAPITests(std::vector<test_case> &_cases)
 	_cases.push_back(test_case("SpinAPI::Interaction BroadbandTensor", test_spinapi_interaction_tensor_broadband));
 	_cases.push_back(test_case("SpinAPI::Interaction OUGeneralTensor", test_spinapi_interaction_tensor_ornsteinuhlenbeck));
 	_cases.push_back(test_case("SpinAPI::Interaction orientation validation and exchange", test_spinapi_interaction_orientation_validation_and_exchange));
+	_cases.push_back(test_case("SpinAPI::PowderGrid weights and ZYZ rotation", test_spinapi_powder_grid_weights_and_rotation));
+	_cases.push_back(test_case("SpinAPI::PowderGrid SOPHE and projection helpers", test_spinapi_powder_grid_sophe_projection_helpers));
+	_cases.push_back(test_case("SpinSpace::Powder Hamiltonian helper matches explicit builders", test_spinapi_powder_hamiltonian_helper_matches_explicit_builders));
 	_cases.push_back(test_case("SpinSpace::Zeeman orientation rotates g-tensor", test_spinapi_zeeman_orientation_rotates_gtensor));
 	_cases.push_back(test_case("SpinSpace::Rotated Zeeman Hamiltonian follows powder orientation", test_spinapi_rotated_zeeman_hamiltonian_follows_powder_orientation));
 	_cases.push_back(test_case("SpinSpace::ZFS formalism and orientation", test_spinapi_zfs_formalism_and_orientation));
@@ -2886,7 +3027,7 @@ void AddSpinAPITests(std::vector<test_case> &_cases)
 	_cases.push_back(test_case("SpinSpace::Random fields preserve trace and isotropic powder invariance", test_spinapi_relaxation_random_fields_are_trace_preserving_and_powder_invariant));
 	_cases.push_back(test_case("SpinSpace::Secular isotropic hyperfine is SzIz", test_spinapi_secular_isotropic_hyperfine_is_sziz));
 	_cases.push_back(test_case("SpinSpace::Secular hyperfine reversed order matches", test_spinapi_secular_hyperfine_reversed_order_matches));
-	_cases.push_back(test_case("SpinSpace::Secular electron-electron keeps q=0 only", test_spinapi_secular_electron_electron_has_total_q_zero));
+	_cases.push_back(test_case("SpinSpace::Secular electron-electron historical diagonal projection", test_spinapi_secular_electron_electron_historical_diagonal_projection));
 	_cases.push_back(test_case("SpinAPI::Operator copy preserves relaxation configuration", test_spinapi_operator_copy_preserves_relaxation_configuration));
 }
 //////////////////////////////////////////////////////////////////////////////

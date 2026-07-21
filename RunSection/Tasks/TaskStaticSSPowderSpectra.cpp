@@ -25,43 +25,6 @@
 
 namespace RunSection
 {
-	void TaskStaticSSPowderSpectra::WriteTransitionYieldHeader(const SpinAPI::system_ptr &_system, std::ostream &_stream) const
-	{
-		auto transitions = _system->Transitions();
-		for (auto transition = transitions.cbegin(); transition != transitions.cend(); ++transition)
-		{
-			if ((*transition)->SourceState() == nullptr)
-				continue;
-			_stream << _system->Name() << "." << (*transition)->Name() << ".yield ";
-		}
-	}
-
-	bool TaskStaticSSPowderSpectra::ProjectTransitionYields(const SpinAPI::system_ptr &_system,
-															SpinAPI::SpinSpace &_space,
-															const arma::cx_mat &_rho,
-															std::ostream &_datastream,
-															std::ostream &_logstream) const
-	{
-		arma::cx_mat P;
-		auto transitions = _system->Transitions();
-		for (auto transition = transitions.cbegin(); transition != transitions.cend(); ++transition)
-		{
-			if ((*transition)->SourceState() == nullptr)
-				continue;
-
-			if (!_space.GetState((*transition)->SourceState(), P))
-			{
-				_logstream << "Failed to obtain projection matrix onto state \""
-						   << (*transition)->Name() << "\" of SpinSystem \""
-						   << _system->Name() << "\"." << std::endl;
-				return false;
-			}
-
-			_datastream << std::setprecision(12) << (*transition)->Rate() * std::abs(arma::trace(P * _rho)) << " ";
-		}
-		return true;
-	}
-
 	// -----------------------------------------------------
 	// TaskStaticSSPowderSpectra Constructors and Destructor
 	// -----------------------------------------------------
@@ -78,6 +41,15 @@ namespace RunSection
 	bool TaskStaticSSPowderSpectra::RunLocal()
 	{
 		this->Log() << "Running method StaticSS-PowderSpectra." << std::endl;
+
+		// Workflow:
+		// 1. Prepare the initial density matrix in Liouville space.
+		// 2. Create the powder grid; the single-orientation path is treated as
+		//    the non-powdered limit unless an explicit orientation was provided.
+		// 3. For each orientation, build the orientation-specific Liouvillian
+		//    from H0, H1, reactions, and relaxation.
+		// 4. Propagate or solve the requested time window and accumulate the
+		//    powder-weighted density vector before projecting outputs.
 
 		// If this is the first step, write first part of header to the data file
 		if (this->RunSettings()->CurrentStep() == 1)
@@ -244,7 +216,7 @@ namespace RunSection
 			double Printedtime = 0;
 
 			// Construct grid
-			std::vector<std::tuple<double, double, double>> grid;
+			SpinAPI::PowderGrid grid;
 			int numPoints = 1000;
 			bool explicitPowderGrid = this->CreateExplicitPowderGrid(grid);
 			if (explicitPowderGrid)
@@ -415,16 +387,6 @@ namespace RunSection
 
 								for (int grid_num = 0; grid_num < numPoints; ++grid_num)
 								{
-									auto [theta, phi, weight] = grid[grid_num];
-
-									// Single-point grid: use the non-powdered limit.
-									if (numPoints <= 1 && !explicitPowderGrid)
-									{
-										theta = 0.0;
-										phi = 0.0;
-										weight = 1.0;
-									}
-
 									rhovec[grid_num] = pulse_operator * rhovec[grid_num];
 								}
 
@@ -1287,6 +1249,7 @@ namespace RunSection
 		_stream << std::endl;
 	}
 
+
 	// Validation
 	bool TaskStaticSSPowderSpectra::Validate()
 	{
@@ -1342,6 +1305,51 @@ namespace RunSection
 			}
 		}
 
+		return true;
+	}
+
+
+
+	// -----------------------------------------------------
+	// Task-specific helper methods
+	// -----------------------------------------------------
+	// -----------------------------------------------------
+	// TaskStaticSSPowderSpectra output helper methods
+	// -----------------------------------------------------
+	void TaskStaticSSPowderSpectra::WriteTransitionYieldHeader(const SpinAPI::system_ptr &_system, std::ostream &_stream) const
+	{
+		auto transitions = _system->Transitions();
+		for (auto transition = transitions.cbegin(); transition != transitions.cend(); ++transition)
+		{
+			if ((*transition)->SourceState() == nullptr)
+				continue;
+			_stream << _system->Name() << "." << (*transition)->Name() << ".yield ";
+		}
+	}
+
+	bool TaskStaticSSPowderSpectra::ProjectTransitionYields(const SpinAPI::system_ptr &_system,
+															SpinAPI::SpinSpace &_space,
+															const arma::cx_mat &_rho,
+															std::ostream &_datastream,
+															std::ostream &_logstream) const
+	{
+		arma::cx_mat P;
+		auto transitions = _system->Transitions();
+		for (auto transition = transitions.cbegin(); transition != transitions.cend(); ++transition)
+		{
+			if ((*transition)->SourceState() == nullptr)
+				continue;
+
+			if (!_space.GetState((*transition)->SourceState(), P))
+			{
+				_logstream << "Failed to obtain projection matrix onto state \""
+						   << (*transition)->Name() << "\" of SpinSystem \""
+						   << _system->Name() << "\"." << std::endl;
+				return false;
+			}
+
+			_datastream << std::setprecision(12) << (*transition)->Rate() * std::abs(arma::trace(P * _rho)) << " ";
+		}
 		return true;
 	}
 
@@ -1401,7 +1409,7 @@ namespace RunSection
 		return ReturnVec;
 	}
 
-	bool TaskStaticSSPowderSpectra::ProjectAndPrintOutputLine(auto &_i, SpinAPI::SpinSpace &_space, arma::cx_vec &_rhovec, double &_printedtime, double _timestep, unsigned int &_n, bool &_cidsp, std::ostream &_datastream, std::ostream &_logstream)
+	bool TaskStaticSSPowderSpectra::ProjectAndPrintOutputLine(std::vector<SpinAPI::system_ptr>::const_iterator &_i, SpinAPI::SpinSpace &_space, arma::cx_vec &_rhovec, double &_printedtime, double _timestep, unsigned int &_n, bool &_cidsp, std::ostream &_datastream, std::ostream &_logstream)
 	{
 		arma::cx_mat rho0;
 
@@ -1528,7 +1536,7 @@ namespace RunSection
 		return true;
 	}
 
-	bool TaskStaticSSPowderSpectra::ProjectAndPrintOutputLine(auto &_i, SpinAPI::SpinSpace &_space, arma::cx_vec &_rhovec, arma::sp_cx_mat &_eigen_vec, double &_printedtime, double _timestep, unsigned int &_n, bool &_cidsp, std::ostream &_datastream, std::ostream &_logstream)
+	bool TaskStaticSSPowderSpectra::ProjectAndPrintOutputLine(std::vector<SpinAPI::system_ptr>::const_iterator &_i, SpinAPI::SpinSpace &_space, arma::cx_vec &_rhovec, arma::sp_cx_mat &_eigen_vec, double &_printedtime, double _timestep, unsigned int &_n, bool &_cidsp, std::ostream &_datastream, std::ostream &_logstream)
 	{
 		arma::cx_mat rho0;
 
@@ -1663,7 +1671,7 @@ namespace RunSection
 		return true;
 	}
 
-	bool TaskStaticSSPowderSpectra::ProjectAndPrintOutputLineInf(auto &_i, SpinAPI::SpinSpace &_space, arma::cx_vec &_rhovec, double &_printedtime, double _timestep, bool &_cidsp, std::ostream &_datastream, std::ostream &_logstream)
+	bool TaskStaticSSPowderSpectra::ProjectAndPrintOutputLineInf(std::vector<SpinAPI::system_ptr>::const_iterator &_i, SpinAPI::SpinSpace &_space, arma::cx_vec &_rhovec, double &_printedtime, double _timestep, bool &_cidsp, std::ostream &_datastream, std::ostream &_logstream)
 	{
 		arma::cx_mat rho0;
 
@@ -1786,7 +1794,7 @@ namespace RunSection
 		return true;
 	}
 
-	bool TaskStaticSSPowderSpectra::ProjectAndPrintOutputLineInf(auto &_i, SpinAPI::SpinSpace &_space, arma::cx_vec &_rhovec, arma::sp_cx_mat &_eigen_vec, double &_printedtime, double _timestep, bool &_cidsp, std::ostream &_datastream, std::ostream &_logstream)
+	bool TaskStaticSSPowderSpectra::ProjectAndPrintOutputLineInf(std::vector<SpinAPI::system_ptr>::const_iterator &_i, SpinAPI::SpinSpace &_space, arma::cx_vec &_rhovec, arma::sp_cx_mat &_eigen_vec, double &_printedtime, double _timestep, bool &_cidsp, std::ostream &_datastream, std::ostream &_logstream)
 	{
 		arma::cx_mat rho0;
 
@@ -1917,134 +1925,30 @@ namespace RunSection
 		return true;
 	}
 
+	// -----------------------------------------------------
+	// TaskStaticSSPowderSpectra powder-grid and Hamiltonian helpers
+	// -----------------------------------------------------
 	bool TaskStaticSSPowderSpectra::CreateRotationMatrix(double &_alpha, double &_beta, double &_gamma, arma::mat &_R) const
 	{
-		arma::mat R1 = {
-			{std::cos(_alpha), -std::sin(_alpha), 0.0},
-			{std::sin(_alpha), std::cos(_alpha), 0.0},
-			{0.0, 0.0, 1.0}};
-
-		arma::mat R2 = {
-			{std::cos(_beta), 0.0, std::sin(_beta)},
-			{0.0, 1.0, 0.0},
-			{-std::sin(_beta), 0.0, std::cos(_beta)}};
-
-		arma::mat R3 = {
-			{std::cos(_gamma), -std::sin(_gamma), 0.0},
-			{std::sin(_gamma), std::cos(_gamma), 0.0},
-			{0.0, 0.0, 1.0}};
-
-		_R = R1 * R2 * R3;
-
-		return true;
+		return SpinAPI::CreateZYZRotationMatrix(_alpha, _beta, _gamma, _R);
 	}
 
-	bool TaskStaticSSPowderSpectra::CreateUniformGrid(int &_Npoints, std::vector<std::tuple<double, double, double>> &_uniformGrid) const
+	bool TaskStaticSSPowderSpectra::CreateUniformGrid(int &_Npoints, SpinAPI::PowderGrid &_uniformGrid) const
 	{
-		std::vector<double> theta(_Npoints);
-		std::vector<double> phi(_Npoints);
-		std::vector<double> weight(_Npoints);
-
-		_uniformGrid.resize(_Npoints);
-
-		const double golden = M_PI * (1.0 + std::sqrt(5.0)); // not standart golden angle
-
-		for (int i = 0; i < _Npoints; ++i)
-		{
-			double index = static_cast<double>(i) + 0.5;
-
-			theta[i] = std::acos(1.0 - index / _Npoints); // hemisphere, uniform in cos(theta)
-			phi[i] = golden * index;
-			weight[i] = 2 * M_PI / _Npoints;
-			_uniformGrid[i] = {theta[i], phi[i], weight[i]};
-		}
-
-		return true;
+		return SpinAPI::CreateUniformPowderGrid(_Npoints, SpinAPI::PowderGridDomain::UpperHemisphere, _uniformGrid);
 	}
 
-	bool TaskStaticSSPowderSpectra::CreateExplicitPowderGrid(std::vector<std::tuple<double, double, double>> &_grid)
+	bool TaskStaticSSPowderSpectra::CreateExplicitPowderGrid(SpinAPI::PowderGrid &_grid)
 	{
-		// External powder averaging can be decomposed into one MolSpin task
-		// per orientation. The explicit orientation is theta, phi, weight in
-		// radians and MolSpin's hemisphere integration convention. MolSpin
-		// still constructs the rotated Hamiltonian and the correctly rotated
-		// molecular-frame initial density matrix for this single orientation.
-		arma::vec orientation;
-		if (this->Properties()->Get("powderorientation", orientation) ||
-			this->Properties()->Get("powder_orientation", orientation))
-		{
-			if (orientation.n_elem < 2)
-			{
-				this->Log() << "Explicit powder orientation requires at least theta and phi." << std::endl;
-				return false;
-			}
-			double weight = (orientation.n_elem > 2) ? orientation(2) : 1.0;
-			_grid.clear();
-			_grid.push_back({orientation(0), orientation(1), weight});
-			this->Log() << "Using explicit powder orientation theta=" << orientation(0)
-						<< ", phi=" << orientation(1)
-						<< ", weight=" << weight << "." << std::endl;
-			return true;
-		}
-
-		double theta = 0.0;
-		double phi = 0.0;
-		double weight = 1.0;
-		bool hasTheta = this->Properties()->Get("powdertheta", theta) ||
-						this->Properties()->Get("powder_theta", theta);
-		bool hasPhi = this->Properties()->Get("powderphi", phi) ||
-					  this->Properties()->Get("powder_phi", phi);
-		bool hasWeight = this->Properties()->Get("powderweight", weight) ||
-						 this->Properties()->Get("powder_weight", weight);
-		if (!(hasTheta || hasPhi || hasWeight))
-		{
-			return false;
-		}
-		if (!(hasTheta && hasPhi))
-		{
-			this->Log() << "Explicit powder orientation requires powdertheta and powderphi." << std::endl;
-			return false;
-		}
-
-		_grid.clear();
-		_grid.push_back({theta, phi, weight});
-		this->Log() << "Using explicit powder orientation theta=" << theta
-					<< ", phi=" << phi
-					<< ", weight=" << weight << "." << std::endl;
-		return true;
+		return this->ReadExplicitPowderGrid(_grid);
 	}
 
-	bool TaskStaticSSPowderSpectra::CreateCustomGrid(int &_Npoints, std::vector<std::tuple<double, double, double>> &_Grid) const
+	bool TaskStaticSSPowderSpectra::CreateCustomGrid(int &_Npoints, SpinAPI::PowderGrid &_Grid) const
 	{
-		std::vector<double> theta(_Npoints * _Npoints);
-		std::vector<double> phi(_Npoints * _Npoints);
-		std::vector<double> weight(_Npoints * _Npoints);
-
-		_Grid.resize(_Npoints * _Npoints);
-
-		int idx = 0;
-		for (int k = 0; k < _Npoints; ++k)
-		{
-			double u = (k + 0.5) / _Npoints; // cosine-spaced
-			double th = acos(u);			 // θ
-
-			for (int j = 0; j < _Npoints; ++j)
-			{
-				double ph = (j + 0.5) * (M_PI / 2.0) / _Npoints; // uniform φ
-
-				theta[idx] = th;
-				phi[idx] = ph;
-
-				weight[idx] = (M_PI / 2.0 / _Npoints) * (1.0 / _Npoints); // Δφ * Δ(cosθ)
-				_Grid[idx] = {theta[idx], phi[idx], weight[idx]};
-				idx++;
-			}
-		}
-
-		return true;
+		return SpinAPI::CreateOctantPowderGrid(_Npoints, _Grid);
 	}
 
-	bool TaskStaticSSPowderSpectra::Create_A_for_current_orientation(auto &_i, SpinAPI::SpinSpace &_space, double &_theta, double &_phi, arma::sp_cx_mat &_A, std::ostream &_logstream) const
+	bool TaskStaticSSPowderSpectra::Create_A_for_current_orientation(std::vector<SpinAPI::system_ptr>::const_iterator &_i, SpinAPI::SpinSpace &_space, double &_theta, double &_phi, arma::sp_cx_mat &_A, std::ostream &_logstream) const
 	{
 		// Powder orientations are represented with the same rotation matrix
 		// used for tensor rotation and initial-state preparation.
@@ -2062,16 +1966,31 @@ namespace RunSection
 			_logstream << "Failed to obtain an input for a HamiltonianH0." << std::endl;
 		}
 
-		_space.UseSuperoperatorSpace(false);
-		// Get the Hamiltonian
-		arma::sp_cx_mat H0;
-		if (!_space.BaseHamiltonianRotated_SA(HamiltonianH0list, Rot_mat, H0))
+		std::vector<std::string> HamiltonianH1list;
+		if (!this->Properties()->GetList("hamiltonianh1list", HamiltonianH1list, ','))
 		{
-			_logstream << "Failed to obtain Hamiltonian in superspace." << std::endl;
+			_logstream << "Failed to obtain an input for a HamiltonianH1." << std::endl;
+		}
+
+		_space.UseSuperoperatorSpace(false);
+		arma::sp_cx_mat H0;
+		arma::sp_cx_mat H1;
+		arma::sp_cx_mat H;
+		// Shared powder Hamiltonian policy:
+		// - H0 uses BaseHamiltonianRotated_SA, so the high-field static terms
+		//   are secularized after the crystallite has been rotated.
+		// - H1 uses the same rotation without the H0 secular projection. This
+		//   is the rotating-frame drive/microwave term and must follow the same
+		//   molecular orientation as H0 to keep tensor frames covariant.
+		if (!_space.PowderHamiltonianRotatedSA(HamiltonianH0list, HamiltonianH1list, Rot_mat, H0, H1, H))
+		{
+			_logstream << "Failed to obtain orientation-specific powder Hamiltonians." << std::endl;
 			return false;
 		}
 
-		// Transforming into superspace
+		// Liouville-space propagation uses -i[H0, rho] - i[H1, rho]. Keep the
+		// two commutators explicit so developers can see which part came from
+		// the secular static Hamiltonian and which part came from the drive.
 		arma::sp_cx_mat lhs;
 		arma::sp_cx_mat rhs;
 		arma::sp_cx_mat H_SS;
@@ -2082,23 +2001,6 @@ namespace RunSection
 
 		// Get a matrix to collect all the terms (the total Liouvillian)
 		_A = arma::cx_double(0.0, -1.0) * H_SS;
-
-		// Create Hamiltonian H1
-		std::vector<std::string> HamiltonianH1list;
-		if (!this->Properties()->GetList("hamiltonianh1list", HamiltonianH1list, ','))
-		{
-			_logstream << "Failed to obtain an input for a HamiltonianH1." << std::endl;
-		}
-
-		// Get the Hamiltonian
-		arma::sp_cx_mat H1;
-		// CHANGED 2026-07-07: H1 follows the same powder crystallite as H0.
-		// This preserves frame covariance for tensor-aware microwave interactions.
-		if (!_space.BaseHamiltonianRotatedZYZ(HamiltonianH1list, Rot_mat, H1))
-		{
-			_logstream << "Failed to obtain Hamiltonian in superspace." << std::endl;
-			return false;
-		}
 
 		arma::sp_cx_mat H1lhs;
 		arma::sp_cx_mat H1rhs;
@@ -2164,4 +2066,5 @@ namespace RunSection
 	}
 
 	// -----------------------------------------------------
+
 }

@@ -9,6 +9,7 @@
 //////////////////////////////////////////////////////////////////////////////
 #include <algorithm>
 #include <cmath>
+#include <iomanip>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -308,6 +309,82 @@ namespace
 				return;
 		}
 		_rows.pop_back();
+	}
+
+	std::shared_ptr<SpinAPI::SpinSystem> BuildXBandRwaSystem(double _fieldT, double _rotatingFrameFieldT, double _h1FieldT, double _transverseH0FieldT)
+	{
+		const double ge = 2.00231930436256;
+
+		auto spin = std::make_shared<SpinAPI::Spin>("E", "type=electron;spin=1/2;tensor=isotropic(1);");
+
+		std::ostringstream b0Props;
+		b0Props << "type=zeeman;spins=E;field=0 0 " << std::setprecision(16) << _fieldT
+				<< ";ignoretensors=true;commonprefactor=true;prefactor=" << ge << ";";
+		auto b0 = std::make_shared<SpinAPI::Interaction>("B0", b0Props.str());
+
+		std::ostringstream rotProps;
+		rotProps << "type=zeeman;spins=E;field=0 0 " << std::setprecision(16) << _rotatingFrameFieldT
+				 << ";ignoretensors=true;commonprefactor=true;prefactor=" << ge << ";";
+		auto rotatingOffset = std::make_shared<SpinAPI::Interaction>("RotOffset", rotProps.str());
+
+		std::ostringstream transverseProps;
+		transverseProps << "type=zeeman;spins=E;field=" << std::setprecision(16) << _transverseH0FieldT
+						<< " 0 0;ignoretensors=true;commonprefactor=true;prefactor=" << ge << ";";
+		auto transverseH0 = std::make_shared<SpinAPI::Interaction>("TransverseH0", transverseProps.str());
+
+		std::ostringstream h1Props;
+		h1Props << "type=zeeman;spins=E;field=" << std::setprecision(16) << _h1FieldT
+				<< " 0 0;ignoretensors=true;commonprefactor=true;prefactor=" << ge << ";";
+		auto h1 = std::make_shared<SpinAPI::Interaction>("MW", h1Props.str());
+
+		auto stateUp = std::make_shared<SpinAPI::State>("Up", "spin(E)=|1/2>;");
+
+		auto spinsys = std::make_shared<SpinAPI::SpinSystem>("System");
+		spinsys->Add(spin);
+		spinsys->Add(b0);
+		spinsys->Add(rotatingOffset);
+		spinsys->Add(transverseH0);
+		spinsys->Add(h1);
+		spinsys->Add(stateUp);
+		spinsys->ValidateInteractions();
+
+		auto props = std::make_shared<MSDParser::ObjectParser>("spinsyssettings", "initialstate=Up;");
+		spinsys->SetProperties(props);
+		stateUp->ParseFromSystem(*spinsys);
+		return spinsys;
+	}
+
+	bool FinalSzFromRwaTask(const std::string &_taskType,
+							double _fieldT,
+							double _rotatingFrameFieldT,
+							double _h1FieldT,
+							double _transverseH0FieldT,
+							double _totalTime,
+							double _timeStep,
+							double &_sz)
+	{
+		auto spinsys = BuildXBandRwaSystem(_fieldT, _rotatingFrameFieldT, _h1FieldT, _transverseH0FieldT);
+
+		std::ostringstream props;
+		props << "method=timeevo;integration=false;cidsp=false;spinlist=E;powdersamplingpoints=1;"
+			  << "hamiltonianh0list=B0,RotOffset,TransverseH0;hamiltonianh1list=MW;"
+			  << "totaltime=" << std::setprecision(16) << _totalTime << ";"
+			  << "timestep=" << std::setprecision(16) << _timeStep << ";";
+		if (_taskType == "statichs-direct-spectra")
+			props << "propagationmethod=normal;";
+
+		std::string data;
+		std::vector<std::vector<double>> rows;
+		if (!RunPowderTask(spinsys, _taskType, props.str(), data) ||
+			!ParseDataRows(data, rows) ||
+			rows.empty() ||
+			rows.back().size() < 3)
+		{
+			return false;
+		}
+
+		_sz = rows.back()[2];
+		return true;
 	}
 }
 
@@ -816,6 +893,107 @@ bool test_task_staticpowder_timeevo_ss_hs_agree()
 	}
 
 	//////////////////////////////////////////////////////////////////////////////
+	// Real-field rotating-frame sanity check:
+	// X-band EPR at 9.5 GHz gives B_res = omega/(gamma_e g_e) ~= 0.339 T for a
+	// free electron. The time-propagation powder tasks do not read mwfrequency;
+	// the rotating-frame offset is supplied explicitly as a Zeeman H0 term, as
+	// in the Cry input files. At B_res the H0 detuning cancels and the transverse
+	// H1 term performs a pi rotation. A 50 mT detuning suppresses that transfer.
+	// A transverse H0 field is also added and must be removed by the secular H0
+	// builder, so it should not change the resonant result.
+	bool test_task_staticpowder_xband_rwa_and_secular_real_field()
+	{
+		const double gammaElectronRadPerNsT = 8.79410005e+1;
+		const double ge = 2.00231930436256;
+		const double xBandGHz = 9.5;
+		const double omegaXBand = 2.0 * arma::datum::pi * xBandGHz;
+		const double resonanceFieldT = omegaXBand / (gammaElectronRadPerNsT * ge);
+
+		const double h1FieldT = 0.002;
+		const double rabiAngularFrequency = gammaElectronRadPerNsT * ge * h1FieldT;
+		const double piPulseTimeNs = arma::datum::pi / rabiAngularFrequency;
+		const double timestepNs = piPulseTimeNs / 40.0;
+		const double detunedFieldT = resonanceFieldT + 0.050;
+
+		bool ok = true;
+		for (const std::string taskType : {"staticss-powderspectra", "statichs-direct-spectra"})
+		{
+			double resonantSz = 0.0;
+			double resonantWithTransverseH0Sz = 0.0;
+			double detunedSz = 0.0;
+
+			ok &= FinalSzFromRwaTask(taskType, resonanceFieldT, -resonanceFieldT, h1FieldT, 0.0, piPulseTimeNs, timestepNs, resonantSz);
+			ok &= FinalSzFromRwaTask(taskType, resonanceFieldT, -resonanceFieldT, h1FieldT, 0.050, piPulseTimeNs, timestepNs, resonantWithTransverseH0Sz);
+			ok &= FinalSzFromRwaTask(taskType, detunedFieldT, -resonanceFieldT, h1FieldT, 0.0, piPulseTimeNs, timestepNs, detunedSz);
+
+			ok &= (resonantSz < -0.45);
+			ok &= (detunedSz > 0.45);
+			ok &= equal_double(resonantSz, resonantWithTransverseH0Sz, 2e-4);
+		}
+
+		return ok;
+	}
+
+	//////////////////////////////////////////////////////////////////////////////
+	// The HS direct task historically sampled the upper hemisphere. For comparison
+	// with EasySpin GridSymmetry='Ci', users need a true full-sphere grid. This
+	// regression uses an anisotropic one-electron microwave Hamiltonian for which
+	// the two grids give different averaged dynamics; it verifies that the
+	// powderfullsphere keyword is wired into the generated grid.
+	bool test_task_hs_direct_powderfullsphere_changes_grid()
+	{
+		auto spin = std::make_shared<SpinAPI::Spin>("E", "type=electron;spin=1/2;tensor=matrix(2 0 0; 0 3 0; 0 0 5);");
+		auto h0 = std::make_shared<SpinAPI::Interaction>(
+			"B0",
+			"type=zeeman;spins=E;field=0 0 0;ignoretensors=true;commonprefactor=false;prefactor=1;");
+		auto h1 = std::make_shared<SpinAPI::Interaction>(
+			"mw",
+			"type=zeeman;spins=E;field=1 0 0;ignoretensors=false;commonprefactor=false;prefactor=1;");
+		auto state_up = std::make_shared<SpinAPI::State>("Up", "spin(E)=|1/2>;");
+
+		auto spinsys = std::make_shared<SpinAPI::SpinSystem>("System");
+		spinsys->Add(spin);
+		spinsys->Add(h0);
+		spinsys->Add(h1);
+		spinsys->Add(state_up);
+		spinsys->ValidateInteractions();
+		auto spinsysParser = std::make_shared<MSDParser::ObjectParser>("spinsyssettings", "initialstate=Up;");
+		spinsys->SetProperties(spinsysParser);
+
+		auto finalSzFor = [&](bool fullSphere, double &sz) {
+			std::ostringstream props;
+			props << "method=timeevo;integration=false;cidsp=false;spinlist=E;"
+				  << "powdersamplingpoints=2;powderfullsphere=" << (fullSphere ? "true" : "false") << ";"
+				  << "hamiltonianh0list=B0;hamiltonianh1list=mw;"
+				  << "totaltime=0.4;timestep=0.1;propagationmethod=normal;";
+
+			std::string data;
+			std::vector<std::vector<double>> rows;
+			if (!RunPowderTask(spinsys, "statichs-direct-spectra", props.str(), data) ||
+				!ParseDataRows(data, rows) ||
+				rows.empty() ||
+				rows.back().size() < 3)
+			{
+				return false;
+			}
+
+			sz = rows.back()[2];
+			return true;
+		};
+
+		bool ok = state_up->ParseFromSystem(*spinsys);
+		double hemisphereSz = 0.0;
+		double fullSphereSz = 0.0;
+		ok &= finalSzFor(false, hemisphereSz);
+		ok &= finalSzFor(true, fullSphereSz);
+
+		ok &= std::isfinite(hemisphereSz);
+		ok &= std::isfinite(fullSphereSz);
+		ok &= (std::abs(hemisphereSz - fullSphereSz) > 1e-3);
+		return ok;
+	}
+
+	//////////////////////////////////////////////////////////////////////////////
 	// Time-evo powder CW: HS direct spectra should also work for a non-RP one-electron system.
 	bool test_task_staticpowder_timeevo_oneelectron_hs_ss_agree()
 	{
@@ -994,6 +1172,8 @@ void AddTaskStaticPowderSpectraTests(std::vector<test_case> &_cases)
 	_cases.push_back(test_case("Task StaticPowderSpectra Lindblad relaxation axes follow orientation", test_task_staticpowder_lindblad_relaxation_axes_follow_orientation));
 	_cases.push_back(test_case("Task StaticPowderSpectra Hilbert Lindblad axes follow orientation", test_task_staticpowder_hilbert_lindblad_relaxation_axes_follow_orientation));
 	_cases.push_back(test_case("Task StaticPowderSpectra H1 Zeeman follows powder orientation", test_task_staticpowder_h1_zeeman_follows_powder_orientation));
+	_cases.push_back(test_case("Task StaticPowderSpectra X-band RWA and secular H0", test_task_staticpowder_xband_rwa_and_secular_real_field));
+	_cases.push_back(test_case("Task StaticHSDirectSpectra powderfullsphere changes grid", test_task_hs_direct_powderfullsphere_changes_grid));
 	_cases.push_back(test_case("Task StaticPowderSpectra timeevo one-electron HS/SS agree", test_task_staticpowder_timeevo_oneelectron_hs_ss_agree));
 	_cases.push_back(test_case("Task StaticPowderSpectra timeevo one-electron thermal HS/SS agree", test_task_staticpowder_timeevo_oneelectron_thermal_hs_ss_agree));
 	_cases.push_back(test_case("Task StaticPowderSpectra pulse one-electron thermal HS/SS agree", test_task_staticpowder_pulse_oneelectron_thermal_hs_ss_agree));

@@ -300,6 +300,7 @@ namespace SpinAPI
 		bool ThermalHamiltonian(std::vector<std::string> thermalhamiltonian_list, arma::sp_cx_mat &_out) const;							// Time-independent part of the Hamiltonian for thermal state (sparse matrix)
 		bool BaseHamiltonianRotatedZYZ(std::vector<std::string> basehamiltonian_list, arma::mat rotmatrix, arma::sp_cx_mat &_out) const;
 		bool BaseHamiltonianRotated_SA(std::vector<std::string> basehamiltonian_list, arma::mat rotmatrix, arma::sp_cx_mat &_out) const;
+		bool PowderHamiltonianRotatedSA(const std::vector<std::string> &h0list, const std::vector<std::string> &h1list, const arma::mat &rotmatrix, arma::sp_cx_mat &H0, arma::sp_cx_mat &H1, arma::sp_cx_mat &H) const;
 
 		// ------------------------------------------------
 		// Transitions/decay operators (SpinSpace_transitions.cpp)

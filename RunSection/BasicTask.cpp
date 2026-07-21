@@ -537,6 +537,56 @@ namespace RunSection
 		return this->properties;
 	}
 
+	bool BasicTask::ReadExplicitPowderGrid(SpinAPI::PowderGrid &_grid)
+	{
+		// External drivers may decompose a powder average into one MolSpin task
+		// per orientation. Parsing belongs to RunSection, while the grid point
+		// representation and generated grids belong to SpinAPI.
+		arma::vec orientation;
+		if (this->Properties()->Get("powderorientation", orientation) ||
+			this->Properties()->Get("powder_orientation", orientation))
+		{
+			if (orientation.n_elem < 2)
+			{
+				this->Log() << "Explicit powder orientation requires at least theta and phi." << std::endl;
+				return false;
+			}
+
+			const double weight = (orientation.n_elem > 2) ? orientation(2) : 1.0;
+			_grid.clear();
+			_grid.push_back({orientation(0), orientation(1), weight});
+			this->Log() << "Using explicit powder orientation theta=" << orientation(0)
+						<< ", phi=" << orientation(1)
+						<< ", weight=" << weight << "." << std::endl;
+			return true;
+		}
+
+		double theta = 0.0;
+		double phi = 0.0;
+		double weight = 1.0;
+		const bool hasTheta = this->Properties()->Get("powdertheta", theta) ||
+							  this->Properties()->Get("powder_theta", theta);
+		const bool hasPhi = this->Properties()->Get("powderphi", phi) ||
+							this->Properties()->Get("powder_phi", phi);
+		const bool hasWeight = this->Properties()->Get("powderweight", weight) ||
+							   this->Properties()->Get("powder_weight", weight);
+		if (!(hasTheta || hasPhi || hasWeight))
+			return false;
+
+		if (!(hasTheta && hasPhi))
+		{
+			this->Log() << "Explicit powder orientation requires powdertheta and powderphi." << std::endl;
+			return false;
+		}
+
+		_grid.clear();
+		_grid.push_back({theta, phi, weight});
+		this->Log() << "Using explicit powder orientation theta=" << theta
+					<< ", phi=" << phi
+					<< ", weight=" << weight << "." << std::endl;
+		return true;
+	}
+
 	// Returns the log stream
 	std::ostream &BasicTask::Log(const MessageType &_msgtype)
 	{
