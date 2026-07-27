@@ -44,6 +44,8 @@ namespace SpinAPI
 		arma::vec field;				// Field vector for one-spin interactions, i.e. "B" in "S1 * B". Example: Magnetic field in Zeeman interaction.
 		double dvalue, evalue;			// D and E value for zero-field splitting
 		bool EnergyShift;
+		std::vector<double> strain_components; //Strain components - {epsilon_x, epsilon_y, epsilon_z}
+		std::vector<double> strain_succeptability; //strain succeptibility components - {D_||, D_⊥, D_⊥'}
 		std::vector<spin_ptr> group1;	// Spins to use for one-spin interaction and left-hand-side of two-spin interaction
 		std::vector<spin_ptr> group2;	// Spins to use on right-hand-side of coupling tensor in two-spin interaction
 		InteractionType type;			// Interaction type (one-spin / two-spin)
@@ -89,6 +91,8 @@ namespace SpinAPI
 		double tdAmp;
 		bool tdPrintTensor;
 		bool tdPrintField;
+		bool tdPhaseDrift;
+		double RWDiffusionCoefficient;
 
 		//Special data members for Semi-Classical
 		std::vector<SCHyperfineField> hffield;
@@ -118,6 +122,11 @@ namespace SpinAPI
 
 		// Helper method called by ParseSpinGroups
 		bool AddSpinList(const std::string &, const std::vector<spin_ptr> &, std::vector<spin_ptr> &, const std::vector<spin_ptr> *_crossCheck = nullptr);
+
+		//flags for pulsing
+		bool Pulsed;
+		bool Active;
+		double active_time;
 
 	public:
 		// Constructors / Destructors
@@ -154,6 +163,8 @@ namespace SpinAPI
 		const double Dvalue() const;
 		const double Evalue() const;
 		const bool ES() const {return this->EnergyShift; };
+		const std::vector<double> Strain_Components() const { return this->strain_components; };
+		const std::vector<double> Strain_Succeptability() const { return this->strain_succeptability; };
 		//const double Hfiamplitude() const;
 		const std::vector<SCHyperfineField> Hfiamplitude() const;
 		const int Orientations() const;
@@ -164,6 +175,10 @@ namespace SpinAPI
 		bool HasTensorTimeDependence() const;
 		bool HasTimeDependence() const;
 		const arma::vec Framelist() const;
+
+		double Ex();
+		double Ey();
+		double Ez();
 
 		// Get time-dependency parameters
 		double GetTDFrequency() const { return this->tdFrequency; };
@@ -187,6 +202,38 @@ namespace SpinAPI
 
 		//get distribution functiom
 		SCDistributionF f;
+
+		bool IsActive()
+		{
+			if (this->Pulsed == true)
+			{
+				bool act = this->Active;
+				//this->Active = false; //this essentially ensures the interaction/transition is only active during the pulse time
+				return act;
+			}
+			return true;
+		}
+
+		void SetPulsed(bool pulsed)
+		{
+			this->Pulsed = pulsed;
+		}
+
+		void SetActive(bool act)
+		{
+			this->Active = act;
+		}
+
+		bool GetPulsed()
+		{
+			return this->Pulsed;
+		}
+
+		double ActiveTime()
+		{
+			return this->active_time;
+		}
+
 	};
 
 	// Define alias for interaction-pointers

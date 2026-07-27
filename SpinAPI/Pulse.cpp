@@ -12,6 +12,7 @@
 #include <Spin.h>
 #include "ObjectParser.h"
 #include "Pulse.h"
+#include "Utility.h"
 
 namespace SpinAPI
 {
@@ -341,6 +342,8 @@ namespace SpinAPI
 		while (std::getline(ss, str, ','))
 		{
 			spin_was_found = false;
+			str = RunSection::trim(str);
+			str = RunSection::lowercase(str);
 
 			// Get the spin with the name held by str
 			for (auto i = _spinlist.cbegin(); i != _spinlist.cend(); i++)

@@ -13,6 +13,7 @@
 #include "Tensor.h"
 #include "ObjectParser.h"
 #include "SpinAPIfwd.h"
+#include "Utility.h"
 
 namespace MSDParser
 {
@@ -378,9 +379,12 @@ namespace MSDParser
 			// Attemp to parse the values
 			for (auto i = strs.cbegin(); i != strs.cend(); i++)
 			{
-				if ((*i).compare("true") == 0 || (*i).compare("yes") == 0 || (*i).compare("1") == 0)
+				std::string str = (*i);
+				str = RunSection::trim(str);
+				str = RunSection::lowercase(str);
+				if (str.compare("true") == 0 || str.compare("yes") == 0 || str.compare("1") == 0)
 					tmpBool = true;
-				else if ((*i).compare("false") == 0 || (*i).compare("no") == 0 || (*i).compare("0") == 0)
+				else if (str.compare("false") == 0 || str.compare("no") == 0 || str.compare("0") == 0)
 					tmpBool = false;
 				else
 					return false;
@@ -742,7 +746,10 @@ namespace MSDParser
 			else
 			{
 				// Use a factor of two if the spin quantum number is not specified with "/2"
-				tmp2 = 2 * std::stoi(str.c_str());
+				double tmp3 = 2 * std::stod(str.c_str());
+				if(double(int(tmp3)) - tmp3 != 0.0)
+					return false;
+				tmp2 = int(tmp3);
 			}
 
 			if (std::stoi(str) < 0)

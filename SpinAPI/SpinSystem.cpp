@@ -13,6 +13,7 @@
 #include "Transition.h"
 #include "Operator.h"
 #include "Pulse.h"
+#include "PulseSequence.h"
 #include "State.h"
 #include "SubSystem.h"
 #include "ObjectParser.h"
@@ -75,11 +76,16 @@ namespace SpinAPI
 	{
 		return this->subsystems;
 	}
-	// -----------------------------------------------------
-	// Public methods to find objects by name
-	// -----------------------------------------------------
-	// Returns the Spin object with the given name
-	spin_ptr SpinSystem::spins_find(const std::string &_name) const
+
+    std::vector<PulseSequence_ptr> SpinSystem::PulseSequences()
+    {
+        return this->pulses_seq;
+    }
+    // -----------------------------------------------------
+    // Public methods to find objects by name
+    // -----------------------------------------------------
+    // Returns the Spin object with the given name
+    spin_ptr SpinSystem::spins_find(const std::string &_name) const
 	{
 		for (auto i = this->spins.cbegin(); i != this->spins.cend(); i++)
 			if ((*i)->Name().compare(_name) == 0)
@@ -128,6 +134,15 @@ namespace SpinAPI
 		return nullptr;
 	}
 
+	PulseSequence_ptr SpinSystem::pulses_seq_find(const std::string &_name) const
+	{
+		for (auto i = this->pulses_seq.cbegin(); i != this->pulses_seq.cend(); i++)
+			if ((*i)->Name().compare(_name) == 0)
+				return (*i);
+
+		return nullptr;
+	}
+
 	// Returns the state object with given name
 	state_ptr SpinSystem::states_find(const std::string &_name) const
 	{
@@ -168,6 +183,11 @@ namespace SpinAPI
 	unsigned int SpinSystem::pulses_size() const
 	{
 		return this->pulses.size();
+	}
+
+	unsigned int SpinSystem::pulse_seq_size() const
+	{
+		return this->pulses_seq.size();
 	}
 
 	// Returns the number of State objects defined for the SpinSystem
@@ -223,7 +243,16 @@ namespace SpinAPI
 				return true;
 		return false;
 	}
+
+	bool SpinSystem::Contains(const PulseSequence_ptr & ptr) const
+	{
+		if (this->pulses_seq_find(ptr->Name()) == nullptr)
+			return false;
+		return true;
+	}
+
 	// Checks whether a state object is contained by the SpinSystem
+
 	bool SpinSystem::Contains(const state_ptr &_state) const
 	{
 		for (auto i = this->states.cbegin(); i != this->states.cend(); i++)
@@ -292,6 +321,7 @@ namespace SpinAPI
 		return true;
 	}
 
+	
 	// Adds an Pulse object to the SpinSystem. The Interaction objects are not valid until SpinSystem::ValidateInteractions is called.
 	bool SpinSystem::Add(const pulse_ptr &_pulse)
 	{
@@ -299,6 +329,14 @@ namespace SpinAPI
 			return false;
 
 		this->pulses.push_back(_pulse);
+		return true;
+	}
+
+	bool SpinSystem::Add(const PulseSequence_ptr &pulseseq)
+	{
+		if(this->Contains(pulseseq))
+			return false;
+		this->pulses_seq.push_back(pulseseq);
 		return true;
 	}
 
@@ -448,6 +486,25 @@ namespace SpinAPI
 		
 		RemoveFailedObjects<pulse_ptr>(failedPulses, this->pulses);
 		return failedPulses;
+	}
+
+	std::vector<PulseSequence_ptr> SpinSystem::ValidatePulseSequences()
+	{
+		std::vector<PulseSequence_ptr>failedPulseSequences;
+		for(auto i = this->pulses_seq.cbegin(); i != this->pulses_seq.cend(); i++)
+		{
+			if((*i)->ParsePulseSequence(this->pulses,this->interactions,this->transitions))
+			{
+				if(!(*i)->IsValid())
+					failedPulseSequences.push_back(*i);
+			}
+			else
+			{
+				failedPulseSequences.push_back(*i);
+			}
+		}
+		RemoveFailedObjects<PulseSequence_ptr>(failedPulseSequences, this->pulses_seq);
+		return failedPulseSequences;
 	}
 
 	// Method that loads the state objects and checks whether they are valid

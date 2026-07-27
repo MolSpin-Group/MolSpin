@@ -74,7 +74,7 @@ SpinSystem GroundState
 
     //consider all possible nuclear spin configurations
 
-    State T0      {spin(e1) = |1>;}
+    State T0      {spin(e1) = |0>;}
 
     State T0_U    {spin(e1) = |0>; spin(N14) = |1>;}
     State T0_Z    {spin(e1) = |0>; spin(N14) = |0>;}

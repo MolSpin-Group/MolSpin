@@ -193,6 +193,8 @@ namespace RunSection
 					(*j)->SetTime(this->runsection.settings->Time());
 					(*j)->SetTrajectoryStep(this->runsection.settings->TrajectoryStep());
 				}
+
+				(*j)->SetActive(false);
 			}
 
 			// Prepare Transition objects
@@ -209,6 +211,8 @@ namespace RunSection
 					(*j)->SetTime(this->runsection.settings->Time());
 					(*j)->SetTrajectoryStep(this->runsection.settings->TrajectoryStep());
 				}
+
+				(*j)->SetActive(false);
 			}
 
 			// Prepare Spin objects
@@ -250,15 +254,120 @@ namespace RunSection
 			this->prop = Propagator::exp;
 			return;
 		}
-		if(str == "RK45")
+		if(str == "rk45")
 		{
 			this->prop = Propagator::RK45;
+			return;
+		}
+		if(str == "krylov")
+		{
+			this->prop = Propagator::Krylov;
 			return;
 		}
 		this->prop = Propagator::Default;
     }
 
-	void BasicTask::GetSamples(std::vector<arma::sp_cx_mat>& H, arma::sp_cx_mat& A, std::vector<SCData>& ori, std::vector<std::vector<double>>& SampleWeights, std::vector<std::vector<std::vector<double>>>& AllWeights)
+	void BasicTask::DetermineBestPropagator(arma::sp_cx_mat & L)
+	{
+		if(propogator_cached)
+			return;
+		double stiffness = EstimateStiffnessArmadillo(L);
+		if(stiffness > 10.0) //need to change this as krylov isn't available everywhere
+		{
+			this->prop = Propagator::Krylov;
+			this->Log() << "The Liouvillian is stiff (stiffness = " << stiffness << "). Using the Krylov propagator." << std::endl;
+		}
+		else
+		{
+			this->prop = Propagator::RK45;
+			this->Log() << "The Liouvillian is non-stiff (stiffness = " << stiffness << "). Using the Runge-Kutta-Fehlberg (RK45) propagator." << std::endl;
+		}
+		propogator_cached = true;
+	}
+
+    void BasicTask::DetermineBestPropagator(arma::cx_mat &L)
+    {
+		arma::sp_cx_mat Lsp = arma::conv_to<arma::sp_cx_mat>::from(L);
+		DetermineBestPropagator(Lsp);
+    }
+
+    void BasicTask::CheckPropagator(arma::sp_cx_mat& L, double initial_t)
+    {
+		if(propogator_cached)
+			return;
+		double stiffness = EstimateStiffnessArmadillo(L);
+		double theta = initial_t * stiffness;
+
+		if(this->prop == Propagator::RK45 && theta > 2.85)
+		{
+			this->Log(MessageType_Warning) << "The chosen propagator (RK45) may not be suitable for the given system and timestep (theta = " << theta << " > 2.85)." << std::endl;
+		}
+		else if((this->prop == Propagator::Krylov || this->prop == Propagator::exp) && theta <= 2.85)
+		{
+			this->Log(MessageType_Normal) << "The chosen propagator (exp or Krylov) may be inefficient for the given system and timestep (theta = " << theta << " <= 2.85). Consider using RK45 instead." << std::endl;
+		}
+		return;
+    }
+
+    SpinAPI::SpinSpace::PropParam BasicTask::GetTimeAdaptiveProperties(double InitialTimeStep)
+    {
+		double MinTimeStep, MaxTimeStep = 0.0;
+		double MinTolerance, MaxTolerance = 0.0;
+		if (!this->Properties()->Get("minimumtimestep", MinTimeStep) && !this->Properties()->Get("minimum timestep", MinTimeStep))
+		{
+			MinTimeStep = InitialTimeStep * 1e-3;
+		}
+		if (!this->Properties()->Get("maximumtimestep", MaxTimeStep) && !this->Properties()->Get("maximum timestep", MaxTimeStep))
+		{
+			MaxTimeStep = InitialTimeStep * 1e4;
+		}
+
+		if (!this->Properties()->Get("absolutetolerance", MinTolerance) && !this->Properties()->Get("absolute tolerance", MinTolerance) && !this->Properties()->Get("atol", MinTolerance))
+		{
+			MinTolerance = 1e-8;
+		}
+		if (!this->Properties()->Get("relativetolerance", MaxTolerance) && !this->Properties()->Get("relative tolerance", MaxTolerance) && !this->Properties()->Get("rtol", MinTolerance))
+		{
+			MaxTolerance = 1e-10;
+		}
+		
+		SpinAPI::SpinSpace::PropParam params;
+		params.atol = MinTolerance;
+		params.rtol = MaxTolerance;
+		params.min = MinTimeStep;
+		params.max = MaxTimeStep;
+		params.safety = 0.8;
+		params.f1 = 0.1;
+		params.f2 = 5.0;
+
+		return params;
+    }
+
+    std::string BasicTask::PropogatorToString(Propagator prop)
+    {
+		std::string str;
+		switch (prop)
+		{
+		case Propagator::Default:
+			str = "Default";
+			break;
+		case Propagator::exp:
+			str = "exp";
+			break;
+		case Propagator::RK4:
+			str = "RK4";
+			break;
+		case Propagator::RK45:
+			str = "RK45";
+			break;
+		case Propagator::Krylov:
+			str = "Krylov";
+			break;
+		}
+		return str;
+    }
+
+    void BasicTask::GetSamples(std::vector<arma::sp_cx_mat>& H, arma::sp_cx_mat& A, std::vector<SCData>& ori, std::vector<std::vector<double>>& SampleWeights, std::vector<std::vector<std::vector<double>>>& AllWeights)
     {
 		std::vector<SampleCombination> Combinations; 
 		std::vector<std::vector<int>> samples;

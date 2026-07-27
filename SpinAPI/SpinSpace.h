@@ -25,6 +25,7 @@
 
 #include <vector>
 #include <memory>
+#include <functional>
 #include <armadillo>
 #include "SpinAPIDefines.h"
 #include "SpinAPIfwd.h"
@@ -271,15 +272,153 @@ namespace SpinAPI
 		// New added functions for wavefucntion formalism and SSE (by Gediminas Pazera and Luca Gerhards)
 		// ------------------------------------------------
 
+		struct return_struct
+		{
+			arma::cx_colvec result;
+			arma::cx_mat PropMat;
+			double error_estimate;
+
+			operator arma::cx_colvec()
+			{
+				return result;
+			}
+		};
+
+		struct return_structMat
+		{
+			arma::cx_mat result;
+			arma::cx_mat phi1;
+			arma::cx_mat phi2;
+			arma::cx_mat krybasis;
+			double error_estimate;
+
+			operator arma::cx_mat()
+			{
+				return result;
+			}
+		};
+
+		typedef std::function<arma::cx_mat(const arma::sp_cx_mat&, const arma::cx_mat)> GeneratorFunctionMat;
+		typedef std::function<arma::cx_vec(const arma::sp_cx_mat&, const arma::cx_vec)> GeneratorFunctionVec;
+		
+		arma::cx_mat reconstruct_block(const arma::cx_mat& C, const arma::cx_mat& KryBasis, int m, int p);
+		arma::cx_mat project_block(const arma::cx_mat& X, const arma::cx_mat& KryBasis, int m, int p);
+
 		arma::cx_colvec SUZstate(const int &spinmult, std::mt19937 &generator);																					 // returns stochastically determined SU(Z) state
 		arma::cx_colvec CoherentState(std::vector<SpinAPI::system_ptr>::const_iterator i, std::mt19937 &generator);												 // returns stochastically determined coherent state
 		arma::cx_mat HighamProp(arma::sp_cx_mat &H, arma::cx_mat &B, const std::complex<double> t, const std::string precision, arma::mat &M);					 // Propagation method using: https://doi.org/10.1137/100788860
 		arma::mat SelectTaylorDegree(const arma::sp_cx_mat &H, const std::string precision, const int lengthB);													 // Precision of Taylor series used for HighamProp
 		double normAmEst(const arma::sp_cx_mat &H, double m, std::mt19937 &generator);																			 // Used in SelectTaylorDegree to normalize
-		arma::cx_colvec KrylovExpmGeneral(const arma::sp_cx_mat &H, const arma::cx_colvec &b, const arma::cx_double dt, int KryDim, int HilbSize);				 // Krylov subspace method
-		arma::cx_colvec KrylovExpmSymm(const arma::sp_cx_mat &H, const arma::cx_colvec &b, const arma::cx_double dt, int KryDim, int HilbSize);					 // Krylov subspace method for symmetric decay
-		void ArnoldiProcess(const arma::sp_cx_mat &H, const arma::cx_colvec &b, arma::cx_mat &KryBasis, arma::cx_mat &Hessen, int KryDim, double &h_mplusone_m); // Arnoldi process for propagation using Krylov subsspace
-		void LanczosProcess(const arma::sp_cx_mat &H, const arma::cx_colvec &b, arma::cx_mat &KryBasis, arma::cx_mat &Hessen, int KryDim, double &h_mplusone_m); // Lanczos process for propagation using Krylov subsspace
+		return_struct KrylovExpmGeneral(const arma::sp_cx_mat &H, const arma::cx_colvec &b, const arma::cx_double dt, int KryDim, int HilbSize, bool NEval = false, GeneratorFunctionVec generator = nullptr);				 // Krylov subspace method
+		return_struct KrylovExpmSymm(const arma::sp_cx_mat &H, const arma::cx_colvec &b, const arma::cx_double dt, int KryDim, int HilbSize, bool NEval = false);					 // Krylov subspace method for symmetric decay
+		bool ArnoldiProcess(const arma::sp_cx_mat &H, const arma::cx_colvec &b, arma::cx_mat &KryBasis, arma::cx_mat &Hessen, int KryDim, double &h_mplusone_m, arma::cx_double dt = arma::cx_double(0.0, 0.0), GeneratorFunctionVec generator = nullptr); // Arnoldi process for propagation using Krylov subsspace
+		bool LanczosProcess(const arma::sp_cx_mat &H, const arma::cx_colvec &b, arma::cx_mat &KryBasis, arma::cx_mat &Hessen, int KryDim, double &h_mplusone_m, arma::cx_double dt = arma::cx_double(0.0, 0.0)); // Lanczos process for propagation using Krylov subsspace
+		
+		return_structMat KrylovExpmGeneral(const arma::sp_cx_mat &H, const arma::cx_mat &b, const arma::cx_double dt, int KryDim, int HilbSize, GeneratorFunctionMat gen, bool NEval = false);
+		bool ArnoldiProcess(const arma::sp_cx_mat &H, const arma::cx_mat &b, arma::cx_mat &KryBasis, arma::cx_mat &Hessen, int KryDim, arma::cx_mat &h_mplusone_m, int p, double beta, GeneratorFunctionMat generator, arma::cx_double dt = arma::cx_double(0.0, 0.0));
+
+		//-----------------------------------------------
+		// Time Adaptive Versions of the KyrlovPropogation Methods
+		//-----------------------------------------------
+
+		struct PropParam
+    	{
+        	double atol = 1e-8;
+        	double rtol = 1e-10;
+        	double min = 1e-6;
+        	double max = 1e6;
+        	double safety = 0.8;
+        	double f1 = 0.1;
+        	double f2 = 5.0;
+
+        	int max_krylov_iterations = 30;
+        	int reject_limit = 2;
+
+			bool dont_evaluate = false;
+			double global_error = 0.0;
+
+        	double CurrentTime = 0.0;
+			std::vector<double> SetTimePoints;
+			unsigned int CurrentTrajectoryStep = 0;
+			bool UsePrefactor = false;
+			bool UseSetTimePoints = false;
+			arma::cx_double TimePrefactor = arma::cx_double(0.0, -1.0);
+
+			bool normalise = true;
+
+			double GetNextTimePoint() {
+				if (CurrentTrajectoryStep < SetTimePoints.size())
+				{
+					double nextTimePoint = SetTimePoints[CurrentTrajectoryStep];
+					CurrentTrajectoryStep++;
+					return nextTimePoint;
+				}
+				else
+				{
+					CurrentTrajectoryStep = 0; // Reset trajectory step if we exceed the number of time points
+					return std::numeric_limits<double>::infinity(); // Return infinity to indicate no more time
+				}
+			}
+
+			void ResetTrajectory() {
+				CurrentTrajectoryStep = 0;
+			}
+    	};
+    	
+		struct TimePropReturnInfo
+    	{
+        	double timestep;
+			double timestep_used;
+			bool step_accepted;
+			arma::cx_colvec result;
+		};
+
+		
+		/// @brief Return struct from time-adaptive propogators
+		/// @param timestep - the proposed new timestep for the following step
+		/// @param timestep_used - the timestep actually used in that step (this may differ from the one provided)
+		/// @param step_accepted - if the step was accepted on the first try - not always populted
+		/// @param result - the result of the propogation (sometimes the density matrix but not always)
+		/// @param krybasis - not always the krybasis but occasially just a random matrix that needs to be returned
+		struct TimePropReturnInfoMat
+    	{
+        	double timestep;
+			double timestep_used;
+			bool step_accepted;
+			arma::cx_mat result;
+
+			arma::cx_mat phi1;
+			arma::cx_mat phi2;
+			arma::cx_mat phi3;
+			arma::cx_mat krybasis;
+		};
+
+		struct TimeAdaptiveKrylovCache
+		{
+			int KrylovDim = 0;
+			double KrylovDimTol = 0.0;
+		};
+
+		double Adjusth(double R, double safety, double f1, double f2, double h, int order = 4);
+
+		TimePropReturnInfo TimeAdapativeKrylovRoutine(const arma::sp_cx_mat &H, const arma::cx_colvec &b, arma::cx_double dt, int kryDim, int HilbSize, PropParam &propParam, bool general, bool reset = true);
+		TimePropReturnInfo TimeAdaptiveKrylovGeneral(const arma::sp_cx_mat &H, const arma::cx_colvec &b, arma::cx_double dt, int kryDim, int HilbSize, PropParam &propParam, bool reset = true);
+		TimePropReturnInfo TimeAdaptiveKrylovSymm(const arma::sp_cx_mat &H, const arma::cx_colvec &b, arma::cx_double dt, int kryDim, int HilbSize, PropParam &propParam, bool reset = true);
+
+		TimePropReturnInfoMat TimeAdapativeKrylovRoutine(const arma::sp_cx_mat &H, const arma::cx_mat &b, arma::cx_double dt, int kryDim, int HilbSize, PropParam &propParam, bool general, GeneratorFunctionVec gen, bool reset = true);
+		TimePropReturnInfoMat TimeAdaptiveKrylovGeneral(const arma::cx_mat &H, const arma::cx_mat &b, arma::cx_double dt, int kryDim, int HilbSize, PropParam &propParam, bool reset = true, GeneratorFunctionVec gen = nullptr);
+
+		typedef std::function<void(std::vector<arma::sp_cx_mat>&, std::vector<arma::cx_mat>)> NonLinearTermEval;
+		struct CachedInfo {
+			arma::cx_mat expH;
+			arma::cx_mat phi1;
+			arma::cx_mat phi2;
+			arma::cx_mat phi3;
+
+			arma::cx_double prev_timestep;
+		};
+
+		std::vector<TimePropReturnInfoMat> ETD2RK_exponential(const std::vector<arma::cx_mat> &H, const std::vector<arma::cx_mat> &b, arma::cx_double dt, PropParam &prop, NonLinearTermEval NLfunc, std::vector<bool> reval = {true}, std::vector<CachedInfo> cache = {});
 
 		// ------------------------------------------------
 		// Hamiltonian representations in the space (SpinSpace_hamiltonians.cpp)
@@ -312,7 +451,7 @@ namespace SpinAPI
 		bool ReactionOperator(const transition_ptr &, arma::sp_cx_mat &, const ReactionOperatorType &_forcedReactionOperatorType = ReactionOperatorType::Unspecified) const; // but by default the reaction operator type of the transition or the spinspace will be used.
 		bool TotalReactionOperator(arma::cx_mat &, const ReactionOperatorType &_forcedReactionOperatorType = ReactionOperatorType::Unspecified) const;						 // Total reaction operator (dense matrix)
 		bool TotalReactionOperator(arma::sp_cx_mat &, const ReactionOperatorType &_forcedReactionOperatorType = ReactionOperatorType::Unspecified) const;					 // Total reaction operator (sparse matrix)
-		bool StaticTotalReactionOperator(arma::cx_mat &, const ReactionOperatorType &_forcedReactionOperatorType = ReactionOperatorType::Unspecified) const;				 // Time-independent part of the total reaction operator (dense matrix)
+		bool StaticTotalReactionOperator(arma::cx_mat &, const ReactionOperatorType &_forcedReactionOperatorType = ReactionOperatorType::Unspecified, bool NoInterSystem = false) const;				 // Time-independent part of the total reaction operator (dense matrix)
 		bool StaticTotalReactionOperator(arma::sp_cx_mat &, const ReactionOperatorType &_forcedReactionOperatorType = ReactionOperatorType::Unspecified) const;				 // Time-independent part of the total reaction operator (sparse matrix)
 		bool DynamicTotalReactionOperator(arma::cx_mat &, const ReactionOperatorType &_forcedReactionOperatorType = ReactionOperatorType::Unspecified) const;				 // Time-dependent part of the total reaction operator (dense matrix)
 		bool DynamicTotalReactionOperator(arma::sp_cx_mat &, const ReactionOperatorType &_forcedReactionOperatorType = ReactionOperatorType::Unspecified) const;			 // Time-dependent part of the total reaction operator (sparse matrix)
@@ -321,6 +460,8 @@ namespace SpinAPI
 		// Methods to create reaction operators in the target spin system (i.e. for creation), where the 'double' describes the amount of source state in the source system
 		bool ReactionTargetOperator(const transition_ptr &, double, arma::cx_mat &) const;
 		bool ReactionTargetOperator(const transition_ptr &, double, arma::sp_cx_mat &) const;
+		bool ReactionSourceOperator(const transition_ptr &, double, arma::cx_mat &) const;
+		bool ReactionSourceOperator(const transition_ptr &, double, arma::sp_cx_mat &) const;
 
 		// ------------------------------------------------
 		// Relaxation operators (SpinSpace_relaxation.cpp)

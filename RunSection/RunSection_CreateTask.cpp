@@ -90,7 +90,7 @@ namespace RunSection
 		{
 			task = std::make_shared<TaskStaticRPOnlyHSSymDec>(_obj, *this);
 		}
-		else if (_tasktype.compare("staticss-timeevolution") == 0)
+		else if (_tasktype.compare("staticss-timeevolution") == 0 || _tasktype.compare("staticss-timeevo") == 0)
 		{
 			task = std::make_shared<TaskStaticSSTimeEvo>(_obj, *this);
 		}

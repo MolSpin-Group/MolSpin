@@ -44,6 +44,17 @@
 		Prefactor = -176.085;                                   //  electron gyromagnetic ratio
         }
 
+        Interaction zeeman1_2
+        {
+                type = zeeman;
+                field = "0.0 0.0 14.1";
+                group1 = E1;
+                ignoretensors=true;                                     // false if using an electron g-factor
+		CommonPrefactor = false;                                // false if using an electron g-factor
+		Prefactor = -176.085;                                   //  electron gyromagnetic ratio
+                duration = 100;
+        }
+
         Interaction zeeman2
         {
                 type = zeeman;
@@ -87,15 +98,15 @@
                 prefactor = 2.0023;
         }
 
-         Interaction exchange
-         {
-                type = exchange;
-                group1 = E1;
-                group2 = E2;
-                tensor=isotropic("-0.00017");
-                ignoretensors=true;
- 	        prefactor = 2.0023;
-         }
+        Interaction exchange
+        {
+               type = exchange;
+               group1 = E1;
+               group2 = E2;
+               tensor=isotropic("-0.00017");
+               ignoretensors=true;
+ 	       prefactor = 2.0023;
+        }
 
       // -------------------------
       // Spin States
@@ -130,19 +141,27 @@
         // ---------------------------------------------------------
         // Transitions
         // ---------------------------------------------------------
-        Transition Product1
-        {
-                type = sink;
-                source = Singlet;
-                rate = 0.001;
-        }
-
-        Transition Product2
-        {
-                type = sink;
-                source = Identity;
-                rate = 0.001;
-        }
+        //Transition Product1
+        //{
+        //        type = sink;
+        //        source = Singlet;
+        //        rate = 0.001;
+        //}
+//
+        //Transition Product2
+        //{
+        //        type = sink;
+        //        source = Identity;
+        //        rate = 0.001;
+        //}
+//
+        //Transition Product3
+        //{
+        //        type = sink;
+        //        source = Identity;
+        //        rate = 0.002;
+        //        duration = 10;
+        //}
 
 
        // -------------------------
@@ -156,8 +175,10 @@
                 //temperature = 293.0;                                    //specify if thermal initial state 
 
                 // example of using weighted initial state//
-                initialstate = T0,Tp,Tm;
-                weights = 0.4,0.3,0.3;
+                //initialstate = T0,Tp,Tm;
+                //weights = 0.4,0.3,0.3;
+
+                initialstate = Tp;
         }
 
         Pulse pulse1
@@ -174,7 +195,7 @@
             field = "0.0 0.0 14.1";                                     // pulse static field vector
             pulsetime = 24.0;                                           // time of pulse durations [ns]
             group = E1,E2,H1;                                           // or spins
-            prefactorlist = -176.085,-176.085,0.267522;                 // list of gyromagnetic ratios, specify if not using electron g-factor
+            prefactorlist = -176.085, -176.085, -176.085, -176.085, -176.085, -176.085, 0.267522, 0.267522, 0.267522;                 // list of gyromagnetic ratios, specify if not using electron g-factor
             commonprefactorlist = false,false,false;                    // true for electrons if using a g-factor
             ignoretensorslist = true,true,true;                         // true if g-matrix tensors should be ignored
             timestep = 0.2;                                             // propagation step in time for the pulse object
@@ -187,10 +208,29 @@
                 frequency = 0.00000395;                                 // frequency of mw field in [rad/ns] 
                 pulsetime = 100.0; 
                 group = E1;
+                prefactorlist = 1.0,1.0,1.0;
                 commonprefactorlist = true;
                 ignoretensorslist = false;
                 timestep = 0.5;   
         }
+
+        //need to remmove this after testing
+        PulseSequence seq
+        {
+                tau1 = 10;
+                tau2 = 15;
+                tau3 = 20;
+                sequence = pulse1, tau1, pulse2, tau2, pulse3, tau3;   
+        }
+
+        //PulseSequence seq2
+        //{
+        //        tau1 = 5;
+        //        tau2 = 10;
+        //        sequence = Product3, tau1, zeeman1_2 , tau2, zeeman1_2, tau1, Product3, tau2;
+        //        offset = 5.0;
+        //}
+
 
     }
 // -------------------------------------------------------------
@@ -226,7 +266,8 @@
     {
         Task Method1
         {
-                type = StaticSS-Spectra;
+                type = MultiStaticSS-timeevolution;
+                //type = StaticSS-Spectra;
                 method = timeevo;                                                        // timeinf or timeevo, timeinf allows to propagate spin density directly to t = inf.
                 integration = false;                                                     // specify if method = timeevo, if true allows to integrate yields in time from [0 to T] where T lies in [0, totaltime] interval with the step = timestep
                 timestep = 0.1;                                                          // specify if method = timeevo [ns]
@@ -236,5 +277,6 @@
                 spinlist = H1,H2;                                                        // list of the spins to calculate polarization for
                 logfile = "test.log";
                 datafile = "test.dat";
+                transitionyields=false;
         }
     }

@@ -85,7 +85,10 @@ namespace SpinAPI
 			else
 			{
 				// Use a factor of two if mz is not specified with "/2"
-				_out = 2 * std::stoi(mzString.c_str());
+				double out = 2.0 * std::stod(_mz.c_str());
+				if(double(int(out)) - out != 0.0)
+					return false;
+				_out = int(out);
 			}
 		}
 		catch (const std::exception &)

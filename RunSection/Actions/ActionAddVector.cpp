@@ -47,16 +47,9 @@ namespace RunSection
 	{
 		// Make sure that a direction is specified
 		arma::vec tmp;
-		if (!this->Properties()->Get("direction", tmp))
+		if (!this->Properties()->Get("direction", tmp) && this->m_ActionMode == MODE::defualt)
 		{
 			std::cout << "ERROR: No direction specified for the AddVector action \"" << this->Name() << "\"!" << std::endl;
-			return false;
-		}
-
-		// Attemp to set the direction
-		if (!this->SetDirection(tmp))
-		{
-			std::cout << "ERROR: Invalid direction specified for the AddVector action \"" << this->Name() << "\"!" << std::endl;
 			return false;
 		}
 
@@ -79,6 +72,29 @@ namespace RunSection
 		if (this->actionVector->IsReadonly())
 		{
 			std::cout << "ERROR: Readonly ActionVector \"" << str << "\" specified for the AddVector action \"" << this->Name() << "\"! Cannot act on this vector!" << std::endl;
+			return false;
+		}
+
+		if(this->m_ActionMode == MODE::linespace)
+		{
+			this->m_startVec = this->actionVector->Get();
+			arma::vec diff = this->m_targetVec - this->m_startVec;
+			double length = std::sqrt(diff(0) * diff(0) + diff(1) * diff(1) + diff(2) * diff(2));
+			if(length <= 0.0)
+			{
+				return false;
+			}
+			
+			tmp = diff / length;
+			this->value = length/((double)this->m_num_steps-1.0);
+			this->first = 1;
+			this->last = this->m_num_steps;
+		}
+
+		// Attemp to set the direction
+		if (!this->SetDirection(tmp))
+		{
+			std::cout << "ERROR: Invalid direction specified for the AddVector action \"" << this->Name() << "\"!" << std::endl;
 			return false;
 		}
 

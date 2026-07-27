@@ -314,6 +314,78 @@ namespace SpinAPI
 
 			InternalCreateSCCompositeMatrix(_interaction, n, tmp);
 		}
+		else if (_interaction->Type() == InteractionType::Strain)
+		{
+			auto spins1 = _interaction->Group1();
+			arma::cx_mat Sx;
+			arma::cx_mat Sy;
+			arma::cx_mat Sz;
+			// Fill the matrix with the sum of all the interactions
+			for (auto i = spins1.cbegin(); i != spins1.cend(); i++)
+			{
+				// Obtain the magnetic moment operators within the Hilbert space
+				double divider = 1.0;
+				if (_interaction->IgnoreTensors())
+				{
+					this->CreateOperator(arma::conv_to<arma::cx_mat>::from((*i)->Sx()), (*i), Sx);
+					this->CreateOperator(arma::conv_to<arma::cx_mat>::from((*i)->Sy()), (*i), Sy);
+					this->CreateOperator(arma::conv_to<arma::cx_mat>::from((*i)->Sz()), (*i), Sz);
+
+				}
+				else
+				{
+					this->CreateOperator(arma::conv_to<arma::cx_mat>::from((*i)->Tx()), (*i), Sx);
+					this->CreateOperator(arma::conv_to<arma::cx_mat>::from((*i)->Ty()), (*i), Sy);
+					this->CreateOperator(arma::conv_to<arma::cx_mat>::from((*i)->Tz()), (*i), Sz);
+					divider = 1.0  / (*i)->GetTensor().Isotropic();
+				}
+
+				auto d_list = _interaction->Strain_Succeptability();
+				double h43,h41,h26,h25,h16,h15 = 0.0;
+				if (d_list.size() == 3)
+				{
+					h43 = d_list[0];
+					h26 = d_list[1];
+					h16 = d_list[2];
+				}
+				else if (d_list.size() == 6)
+				{
+					h43 = d_list[0];
+					h41 = d_list[1];
+					h26 = d_list[2];
+					h25 = d_list[3];
+					h16 = d_list[4];
+					h15 = d_list[6];
+				}
+				
+				auto A = ATensor->LabFrame();
+				std::cout << A << std::endl;
+				//Ex = exz - 1/2(h15/h16)(exx-eyy)
+				double Ex2 = A(0,2) - 0.5 * ((h26 != 0.0) ? (h25/h26) * (A(0,0)-A(1,1)) : 0.0);
+				double Ex1 = A(0,2) - 0.5 * ((h16 != 0.0) ? (h15/h16) * (A(0,0)-A(1,1)) : 0.0);
+				double Ey2 = A(1,2) + ((h26 != 0.0) ? (h25/h26) * A(0,1) : 0.0);
+				double Ey1 = A(1,2) + ((h16 != 0.0) ? (h15/h16) * A(0,1) : 0.0);
+				double Ez = A(2,2) + ((h43 != 0.0) ? (h41/h43) * (A(0,0) + A(1,1)) : 0.0);
+
+				double d0 = h43; //d_parallel
+				double d1 = 0.5 * h16; //h_perp
+				double d2 = 0.5 * h26; //h_perp
+				
+				auto AntiCommutator = [](arma::cx_mat& A, arma::cx_mat& B) {
+					arma::cx_mat return_mat;
+					return_mat = (A * B) + (B * A);
+					return return_mat;
+				};
+
+				{
+					arma::cx_mat H_parallel = d0 * Ez * (Sz * Sz) * divider;
+					arma::cx_mat H_perpendicular = d1 * (((Sx * Sx) - (Sy * Sy)) * Ex1 * divider + AntiCommutator(Sx, Sy) * Ey1 * divider);
+					arma::cx_mat H_off_diagonal = d2 * (AntiCommutator(Sx, Sz) * Ex2 * divider + AntiCommutator(Sy, Sz) * Ey2 * divider);
+					tmp += H_parallel + H_perpendicular + H_off_diagonal;
+				}
+
+			}
+		}
 		else
 		{
 			// The interaction type was not recognized
@@ -321,7 +393,7 @@ namespace SpinAPI
 		}
 
 		// Multiply by the isotropic value, if the tensor was isotropic
-		if (ATensor != nullptr && IsIsotropic(*ATensor))
+		if (ATensor != nullptr && IsIsotropic(*ATensor) && _interaction->Type() != InteractionType::Strain)
 			tmp *= ATensor->Isotropic();
 
 		// Multiply with the given prefactor (or 1.0 if none was specified)
@@ -356,6 +428,7 @@ namespace SpinAPI
 		{
 			// We already have the result in the Hilbert space
 			_out = tmp;
+
 		}
 
 		return true;
@@ -585,6 +658,77 @@ namespace SpinAPI
 
 			InternalCreateSCCompositeMatrix(_interaction, n, tmp);
 		}
+		else if (_interaction->Type() == InteractionType::Strain)
+		{
+			auto spins1 = _interaction->Group1();
+			arma::sp_cx_mat Sx;
+			arma::sp_cx_mat Sy;
+			arma::sp_cx_mat Sz;
+			// Fill the matrix with the sum of all the interactions
+			for (auto i = spins1.cbegin(); i != spins1.cend(); i++)
+			{
+				// Obtain the magnetic moment operators within the Hilbert space
+				double divider = 1.0;
+				if (_interaction->IgnoreTensors())
+				{
+					this->CreateOperator((*i)->Sx(), (*i), Sx);
+					this->CreateOperator((*i)->Sy(), (*i), Sy);
+					this->CreateOperator((*i)->Sz(), (*i), Sz);
+
+				}
+				else
+				{
+					this->CreateOperator((*i)->Tx(), (*i), Sx);
+					this->CreateOperator((*i)->Ty(), (*i), Sy);
+					this->CreateOperator((*i)->Tz(), (*i), Sz);
+					divider = 1.0 / (*i)->GetTensor().Isotropic();
+				}
+
+				auto d_list = _interaction->Strain_Succeptability();
+				double h43,h41,h26,h25,h16,h15 = 0.0;
+				if (d_list.size() == 3)
+				{
+					h43 = d_list[0];
+					h26 = d_list[1];
+					h16 = d_list[2];
+				}
+				else if (d_list.size() == 6)
+				{
+					h43 = d_list[0];
+					h41 = d_list[1];
+					h26 = d_list[2];
+					h25 = d_list[3];
+					h16 = d_list[4];
+					h15 = d_list[5];
+				}
+				
+				auto A = ATensor->LabFrame();
+				//Ex = exz - 1/2(h15/h16)(exx-eyy)
+				double Ex2 = A(0,2) - 0.5 * ((h26 != 0.0) ? (h25/h26) * (A(0,0)-A(1,1)) : 0.0);
+				double Ex1 = A(0,2) - 0.5 * ((h16 != 0.0) ? (h15/h16) * (A(0,0)-A(1,1)) : 0.0);
+				double Ey2 = A(1,2) + ((h26 != 0.0) ? (h25/h26) * A(0,1) : 0.0);
+				double Ey1 = A(1,2) + ((h16 != 0.0) ? (h15/h16) * A(0,1) : 0.0);
+				double Ez = A(2,2) + ((h43 != 0.0) ? (h41/h43) * (A(0,0) + A(1,1)) : 0.0);
+
+				double d0 = h43; //d_parallel
+				double d1 = 0.5 * h16; //h_perp
+				double d2 = 0.5 * h26; //h_perp
+				
+				auto AntiCommutator = [](arma::sp_cx_mat& A, arma::sp_cx_mat& B) {
+					arma::sp_cx_mat return_mat;
+					return_mat = (A * B) + (B * A);
+					return return_mat;
+				};
+
+				{
+					arma::sp_cx_mat H_parallel = d0 * Ez * (Sz * Sz) * divider;
+					arma::sp_cx_mat H_perpendicular = d1 * (((Sx * Sx) - (Sy * Sy)) * Ex1 * divider + AntiCommutator(Sx, Sy) * Ey1 * divider);
+					arma::sp_cx_mat H_off_diagonal = d2 * (AntiCommutator(Sx, Sz) * Ex2 * divider + AntiCommutator(Sy, Sz) * Ey2 * divider);
+					tmp += H_parallel + H_perpendicular + H_off_diagonal;
+				}
+
+			}
+		}
 		else
 		{
 			// The interaction type was not recognized
@@ -592,7 +736,7 @@ namespace SpinAPI
 		}
 
 		// Multiply by the isotropic value, if the tensor was isotropic
-		if (ATensor != nullptr && IsIsotropic(*ATensor))
+		if (ATensor != nullptr && IsIsotropic(*ATensor) && _interaction->Type() != InteractionType::Strain)
 			tmp *= ATensor->Isotropic();
 
 		// Multiply with the given prefactor (or 1.0 if none was specified)
@@ -1534,6 +1678,9 @@ namespace SpinAPI
 			// Skip static interactions
 			if (IsStatic(*(*i)))
 				continue;
+			
+			if(!(*i)->IsActive())
+				continue;
 
 			// Attempt to get the matrix representing the Interaction object in the spin space
 			if ((*i)->Type() == InteractionType::SemiClassicalField)
@@ -1570,6 +1717,9 @@ namespace SpinAPI
 		{
 			// Skip static interactions
 			if (IsStatic(*(*i)))
+				continue;
+			
+			if(!(*i)->IsActive())
 				continue;
 
 			if ((*i)->Type() == InteractionType::SemiClassicalField)

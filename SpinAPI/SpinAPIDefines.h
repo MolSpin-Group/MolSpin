@@ -36,7 +36,8 @@ namespace SpinAPI
 		QuadraticSpin,
 		Exchange,
 		Zfs,
-		SemiClassicalField
+		SemiClassicalField,
+		Strain
 	};
 
 	// Used by the Interaction class to determine the time-dependence of the field for SingleSpin interactions
@@ -130,6 +131,7 @@ namespace SpinAPI
 		MWPulse,
 		ShapedPulse,
 	};
+	//typedef std::vector<std::tuple<std::string, double>> PulseSequence;
 
 	// Types of standard outputs based on ActionTargets, to be used to by the StandardOutput class
 	enum class StandardOutputType

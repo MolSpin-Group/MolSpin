@@ -181,7 +181,9 @@ namespace RunSection
 							//  - The row should be that of the current spin space (the target space)
 							//  - The column should be that of the source spin space (the spin system containing the Transition object)
 							arma::sp_cx_mat Cmod = C * (*t)->Rate();
-							L.submat(nextDimension, nextCDimension, nextDimension + i->second->SpaceDimensions() - 1, nextCDimension + j->second->SpaceDimensions() - 1) += Cmod;
+							int dim1 = nextDimension + i->second->SpaceDimensions();
+							int dim2 = nextCDimension + j->second->SpaceDimensions();
+							L.submat(nextDimension, nextCDimension, dim1 - 1, dim2 - 1) += Cmod;
 							
 							if(!SameDimension)
 								continue;
@@ -210,6 +212,7 @@ namespace RunSection
 		}
 
 		arma::cx_vec result = arma::cx_vec(rho0.n_rows);
+		std::cout << rho0 << std::endl;
 		this->Log() << "Ready to perform calculation." << std::endl;
 		if(BlockCache)
 		{
@@ -220,7 +223,14 @@ namespace RunSection
 		else
 		{
 			this->Log() << "Using Armadillo solver" << std::endl;
-			result = arma::solve(arma::cx_mat(L), rho0);
+			arma::cx_mat L_Dense = arma::conv_to<arma::cx_mat>::from(L);
+			//result = arma::solve(L_Dense, rho0, arma::solve_opts::force_approx);
+			std::vector<int> dim = {};
+			for(auto i = spaces.cbegin(); i != spaces.cend(); i++)
+			{
+				dim.push_back(i->second->SpaceDimensions());
+			}
+			BlockSolver(L, rho0, dim, result);
 		}
 		rho0 = result;
 		this->Log() << "Done with calculation." << std::endl;
@@ -272,12 +282,14 @@ namespace RunSection
 		else
 		{
 			int NextDimension = 0;
+			std::cout << rho0 << std::endl;
 			for (auto i = spaces.cbegin(); i != spaces.cend(); i++)
 			{
 				arma::cx_mat rho_result;
 				int TempDimension = NextDimension + i->second->SpaceDimensions();
-				arma::cx_vec rho_result_vec = rho0.rows(NextDimension,TempDimension);
+				arma::cx_vec rho_result_vec = rho0.rows(NextDimension,TempDimension-1);
 				NextDimension = TempDimension;
+				std::cout << rho_result_vec << std::endl;
 				if (!i->second->OperatorFromSuperspace(rho_result_vec, rho_result))
 				{
 					this->Log() << "ERROR: Failed to convert resulting superspace-vector back to native Hilbert space for spin system \"" << i->first->Name() << "\"!" << std::endl;
@@ -294,6 +306,7 @@ namespace RunSection
 					}
 
 					// Return the yield for this state - note that no reaction rates are included here.
+					std::cout << P * rho_result << std::endl;
 					this->Data() << std::abs(arma::trace(P * rho_result)) << " ";
 				}
 			}
