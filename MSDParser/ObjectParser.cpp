@@ -8,6 +8,8 @@
 /////////////////////////////////////////////////////////////////////////
 #include <iostream>
 #include <regex>
+#include <algorithm>
+#include <cctype>
 #include "Tensor.h"
 #include "ObjectParser.h"
 #include "SpinAPIfwd.h"
@@ -15,6 +17,21 @@
 
 namespace MSDParser
 {
+	namespace
+	{
+		std::string TrimCopy(const std::string &value)
+		{
+			auto begin = std::find_if_not(value.begin(), value.end(), [](unsigned char c)
+										  { return std::isspace(c); });
+			auto end = std::find_if_not(value.rbegin(), value.rend(), [](unsigned char c)
+										{ return std::isspace(c); })
+						   .base();
+			if (begin >= end)
+				return "";
+			return std::string(begin, end);
+		}
+	}
+
 	// -----------------------------------------------------
 	// ObjectParser Constructors and Destructor
 	// -----------------------------------------------------
@@ -232,7 +249,7 @@ namespace MSDParser
 			// Get all the values separated by the delimiter
 			std::istringstream stream(i->second);
 			for (std::string s; std::getline(stream, s, _delimiter);)
-				_out.push_back(s);
+				_out.push_back(TrimCopy(s));
 
 			return true;
 		}
@@ -441,6 +458,8 @@ namespace MSDParser
 			// Remove square brackets
 			modified_str.erase(std::remove(modified_str.begin(), modified_str.end(), '['), modified_str.end());
 			modified_str.erase(std::remove(modified_str.begin(), modified_str.end(), ']'), modified_str.end());
+			modified_str.erase(std::remove(modified_str.begin(), modified_str.end(), '"'), modified_str.end());
+			modified_str.erase(std::remove(modified_str.begin(), modified_str.end(), '\''), modified_str.end());
 
 			// Trim leading and trailing whitespaces
 			trim(modified_str);
@@ -669,6 +688,8 @@ namespace MSDParser
 
 			modified_str.erase(std::remove(modified_str.begin(), modified_str.end(), '['), modified_str.end());
 			modified_str.erase(std::remove(modified_str.begin(), modified_str.end(), ']'), modified_str.end());
+			modified_str.erase(std::remove(modified_str.begin(), modified_str.end(), '"'), modified_str.end());
+			modified_str.erase(std::remove(modified_str.begin(), modified_str.end(), '\''), modified_str.end());
 			trim(modified_str);
 
 			std::istringstream stream(modified_str);

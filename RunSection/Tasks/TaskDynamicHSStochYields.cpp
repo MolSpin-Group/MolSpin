@@ -237,6 +237,8 @@ namespace RunSection
 			std::string samplingmethod;
 
 			this->Properties()->Get("samplingmethod", samplingmethod);
+			std::string samplingmethod_lower(samplingmethod);
+			std::transform(samplingmethod_lower.begin(), samplingmethod_lower.end(), samplingmethod_lower.begin(), ::tolower);
 			if (samplingmethod == "")
 			{
 				for (int it = 0; it < mc_samples; it++)
@@ -245,7 +247,7 @@ namespace RunSection
 				}
 				this->Log() << "No sampling method was defined. Using SU(Z) spin states for Monte Carlo sampling." << std::endl;
 			}
-			else if (samplingmethod == "SUZ")
+			else if (samplingmethod_lower == "suz")
 			{
 				for (int it = 0; it < mc_samples; it++)
 				{
@@ -253,7 +255,7 @@ namespace RunSection
 				}
 				this->Log() << "Using SU(Z) spin states for Monte Carlo sampling." << std::endl;
 			}
-			else if (samplingmethod == "Coherent")
+			else if (samplingmethod_lower == "coherent")
 			{
 				for (int it = 0; it < mc_samples; it++)
 				{

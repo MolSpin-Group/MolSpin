@@ -126,11 +126,13 @@ namespace SpinAPI
 		std::vector<subsystem_ptr> ValidateSubSystems(); 															// Validates Subsystems;
 
 		// Properties
-		bool SetProperties(const std::shared_ptr<MSDParser::ObjectParser> &);
-		std::vector<state_ptr> InitialState() const;
-		double Temperature();		   // Obtain temperature for temperature weighted density matrix
-		std::vector<double> Weights(); // Obtain weights for specifically weighted density matrix
-		std::vector<std::string> ThermalHamiltonianList();
+			bool SetProperties(const std::shared_ptr<MSDParser::ObjectParser> &);
+			std::vector<state_ptr> InitialState() const;
+			StateFrame InitialStateFrame() const;
+			InitialStateCoherenceMode InitialStateCoherences() const;
+			double Temperature();		   // Obtain temperature for temperature weighted density matrix
+			std::vector<double> Weights(); // Obtain weights for specifically weighted density matrix
+			std::vector<std::string> ThermalHamiltonianList();
 
 		// Other public methods
 		void GetActionTargets(std::map<std::string, RunSection::ActionScalar> &, std::map<std::string, RunSection::ActionVector> &) const;

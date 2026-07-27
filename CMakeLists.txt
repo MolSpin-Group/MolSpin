@@ -3,24 +3,38 @@ cmake_minimum_required(VERSION 3.14)
 
 project(MolSpin)
 
+option(LINK_OPENBLAS "Whether OpenBLAS should be linked." ON)
+option(LINK_LAPACK "Whether LAPACK should be linked." ON)
+option(ENABLE_OPENMP "Whether OpenMP should be available from the MolSpin code." ON)
+option(ENABLE_NATIVE_ARCH "Compile with -march=native when supported." ON)
+option(ENABLE_LOOP_UNROLLING "Compile with -funroll-loops when supported." ON)
+option(ENABLE_GNU_CONCEPTS_TS "Compile with GCC -fconcepts for C++17 abbreviated-template compatibility." ON)
+
 # Search for OpenMP
+if (ENABLE_OPENMP)
 find_package(OpenMP)
-if (OPENMP_FOUND)
+if (OpenMP_FOUND)
     set (CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${OpenMP_C_FLAGS}")
     set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
     set (CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${OpenMP_EXE_LINKER_FLAGS}")
+endif()
 endif()
 
 find_package(Armadillo)
 include_directories(${ARMADILLO_INCLUDE_DIRS})
 
-option(LINK_OPENBLAS "Whether OpenBLAS should be linked." ON)
-option(LINK_LAPACK "Whether LAPACK should be linked." ON)
-option(ENABLE_OPENMP "Whether OpenMP should be available from the MolSpin code." ON)
-
 # Compiler options
 set(CMAKE_CXX_STANDARD 17)
-add_compile_options(-O3 -g -Wall -march=native -funroll-loops -fopenmp -DARMA_DONT_PRINT_FAST_MATH_WARNING)
+add_compile_options(-O3 -g -Wall -DARMA_DONT_PRINT_FAST_MATH_WARNING)
+if (ENABLE_NATIVE_ARCH)
+    add_compile_options(-march=native)
+endif()
+if (ENABLE_LOOP_UNROLLING)
+    add_compile_options(-funroll-loops)
+endif()
+if (ENABLE_GNU_CONCEPTS_TS AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    add_compile_options(-fconcepts)
+endif()
 
 # Paths
 set(PATH_SOURCE_SPINAPI "${CMAKE_CURRENT_SOURCE_DIR}/SpinAPI")
@@ -49,6 +63,7 @@ set(SOURCES_SPINAPI
         ${PATH_SOURCE_SPINAPI}/Trajectory.cpp
         ${PATH_SOURCE_SPINAPI}/SubSystem.cpp
         ${PATH_SOURCE_SPINAPI}/Function.cpp
+        ${PATH_SOURCE_SPINAPI}/PowderGrid.cpp
 )
 
 # --------------------------------------------------------------------------
@@ -86,25 +101,41 @@ set(SOURCES_RUNSECTION_TASKS
         ${PATH_SOURCE_RUNSECTION}/Tasks/TaskPeriodicHSTimeEvo.cpp
         ${PATH_SOURCE_RUNSECTION}/Tasks/TaskGammaCompute.cpp
         ${PATH_SOURCE_RUNSECTION}/Tasks/TaskMultiStaticSSTimeEvo.cpp
+        ${PATH_SOURCE_RUNSECTION}/Tasks/TaskMultiStaticSS.cpp
         ${PATH_SOURCE_RUNSECTION}/Tasks/TaskMultiDynamicHSTimeEvo.cpp
+        ${PATH_SOURCE_RUNSECTION}/Tasks/TaskMultiStaticSSTimeEvoSpectra.cpp
         ${PATH_SOURCE_RUNSECTION}/Tasks/TaskStaticSSRedfield.cpp
         ${PATH_SOURCE_RUNSECTION}/Tasks/TaskStaticSSRedfieldSparse.cpp
         ${PATH_SOURCE_RUNSECTION}/Tasks/TaskStaticSSRedfieldTimeEvo.cpp
         ${PATH_SOURCE_RUNSECTION}/Tasks/TaskStaticSSRedfieldTimeEvoSparse.cpp
         ${PATH_SOURCE_RUNSECTION}/Tasks/TaskMultiStaticSSRedfieldTimeEvo.cpp
+        ${PATH_SOURCE_RUNSECTION}/Tasks/TaskStaticSSNakajimaZwanzig.cpp
+        ${PATH_SOURCE_RUNSECTION}/Tasks/TaskStaticSSNakajimaZwanzigTimeEvo.cpp
+        ${PATH_SOURCE_RUNSECTION}/Tasks/TaskMultiStaticSSNakajimaZwanzigTimeEvo.cpp
         ${PATH_SOURCE_RUNSECTION}/Tasks/TaskStaticSSSpectra.cpp
+        ${PATH_SOURCE_RUNSECTION}/Tasks/TaskStaticSSSpectraNakajimaZwanzig.cpp
         ${PATH_SOURCE_RUNSECTION}/Tasks/TaskStaticSSCIDNP.cpp
         ${PATH_SOURCE_RUNSECTION}/Tasks/TaskStaticRPOnlyHSSymDecRedfield.cpp
         ${PATH_SOURCE_RUNSECTION}/Tasks/TaskStaticHSStochYields.cpp
         ${PATH_SOURCE_RUNSECTION}/Tasks/TaskStaticHSStochTimeEvo.cpp
         ${PATH_SOURCE_RUNSECTION}/Tasks/TaskStaticHSDirectYields.cpp
         ${PATH_SOURCE_RUNSECTION}/Tasks/TaskStaticHSDirectTimeEvo.cpp
+        ${PATH_SOURCE_RUNSECTION}/Tasks/TaskStaticHSDirectYieldsSymmUncoupled.cpp
+        ${PATH_SOURCE_RUNSECTION}/Tasks/TaskStaticHSDirectTimeEvoSymmUncoupled.cpp
+        ${PATH_SOURCE_RUNSECTION}/Tasks/TaskStaticHSStochYieldsSymmUncoupled.cpp
+        ${PATH_SOURCE_RUNSECTION}/Tasks/TaskStaticHSStochTimeEvoSymmUncoupled.cpp
         ${PATH_SOURCE_RUNSECTION}/Tasks/TaskDynamicHSDirectYields.cpp
         ${PATH_SOURCE_RUNSECTION}/Tasks/TaskDynamicHSDirectTimeEvo.cpp
         ${PATH_SOURCE_RUNSECTION}/Tasks/TaskDynamicHSStochYields.cpp
         ${PATH_SOURCE_RUNSECTION}/Tasks/TaskDynamicHSStochTimeEvo.cpp
+        ${PATH_SOURCE_RUNSECTION}/Tasks/TaskStaticHSDirectSpectra.cpp
+        ${PATH_SOURCE_RUNSECTION}/Tasks/TaskStaticHSTrEPRSpectra.cpp
         ${PATH_SOURCE_RUNSECTION}/Tasks/TaskStaticSSPowderSpectra.cpp
         ${PATH_SOURCE_RUNSECTION}/Tasks/TaskStaticSSPowderSpectraNakajimaZwanzig.cpp
+        ${PATH_SOURCE_RUNSECTION}/Tasks/TaskActionSpectrumHistogram.cpp
+        ${PATH_SOURCE_RUNSECTION}/Tasks/TaskActionSpectrumHistogramRPOnlyDec.cpp
+        ${PATH_SOURCE_RUNSECTION}/Tasks/TaskStaticSSPump.cpp
+        ${PATH_SOURCE_RUNSECTION}/Tasks/TaskMultiRadicalPairSSTimeEvo.cpp
 )
 
 # --------------------------------------------------------------------------

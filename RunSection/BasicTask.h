@@ -28,6 +28,7 @@
 #include "ActionTarget.h"
 #include "Utility.h"
 #include "SpinAPIDefines.h"
+#include "PowderGrid.h"
 
 namespace RunSection
 {
@@ -102,6 +103,7 @@ namespace RunSection
 		bool WriteStandardOutputHeader(std::ostream &);
 		bool WriteStandardOutput(std::ostream &);
 		const std::vector<std::shared_ptr<Action>> &Actions() const;
+		bool ReadExplicitPowderGrid(SpinAPI::PowderGrid &);
 
 		// ActionTarget access
 		bool Scalar(std::string _name, ActionScalar **_scalar = nullptr);

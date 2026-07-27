@@ -66,6 +66,23 @@ namespace SpinAPI
 			this->Active = false;
 		}
 
+		auto readEulerFrame = [&]() {
+			// "orientation" is an optional passive ZYZ Euler frame attached to
+			// anisotropic interactions. Exchange is intentionally not routed
+			// through here, since the exchange term is isotropic.
+			std::vector<double> frameAngles;
+			if (!this->Properties()->GetList("orientation", frameAngles))
+				return;
+
+			if (frameAngles.size() != 3)
+			{
+				std::cerr << "Error: Orientation array must contain exactly 3 comma-separated angle values in radians like 'orientation = alpha, beta, gamma; '." << std::endl;
+				return;
+			}
+
+			this->framelist = frameAngles;
+		};
+
 		// Get the type of the interaction
 		if (this->properties->Get("type", str))
 		{
@@ -83,33 +100,17 @@ namespace SpinAPI
 					this->field = inField;
 					this->type = InteractionType::SingleSpin;
 				}
-				std::vector<double> _framelist;
-				if (this->Properties()->GetList("orientation", _framelist))
-				{
-					this->framelist = _framelist;
-					if (_framelist.size() != 3)
-					{
-						std::cerr << "Error: Orientation array must contain exactly 3 comma-separated angle values in radians like 'orientation = alpha, beta, gamma; '." << std::endl;
-					}
-				}
+				readEulerFrame();
 			}
 			else if (str.compare("twospin") == 0 || str.compare("doublespin") == 0 || str.compare("hyperfine") == 0 || str.compare("dipole") == 0)
 			{
 				this->type = InteractionType::DoubleSpin;
-
-				std::vector<double> _framelist;
-				if (this->Properties()->GetList("orientation", _framelist))
-				{
-					this->framelist = _framelist;
-					if (_framelist.size() != 3)
-					{
-						std::cerr << "Error: Orientation array must contain exactly 3 comma-separated angle values in radians like 'orientation = alpha, beta, gamma; '." << std::endl;
-					}
-				}
+				readEulerFrame();
 			}
 			else if (str.compare("quadraticspin") == 0)
 			{
 				this->type = InteractionType::QuadraticSpin;
+				readEulerFrame();
 			}
 			else if (str.compare("exchange") == 0)
 			{
@@ -119,9 +120,18 @@ namespace SpinAPI
 			{
 				this->type = InteractionType::Zfs;
 
-				double indvalue, inevalue;
-				this->Properties()->Get("dvalue", indvalue);
-				this->Properties()->Get("evalue", inevalue);
+				double indvalue = 0.0;
+				double inevalue = 0.0;
+				if (!this->Properties()->Get("dvalue", indvalue))
+				{
+					if (!this->Properties()->Get("d", indvalue))
+						this->Properties()->Get("D", indvalue);
+				}
+				if (!this->Properties()->Get("evalue", inevalue))
+				{
+					if (!this->Properties()->Get("e", inevalue))
+						this->Properties()->Get("E", inevalue);
+				}
 				std::string shift;
 				if (this->Properties()->Get("energyshift", shift))
 				{
@@ -133,6 +143,7 @@ namespace SpinAPI
 
 				this->dvalue = indvalue;
 				this->evalue = inevalue;
+				readEulerFrame();
 			}
 			else if (str.compare("semiclassicalfield") == 0)
 			{

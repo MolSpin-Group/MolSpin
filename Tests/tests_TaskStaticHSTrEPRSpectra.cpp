@@ -93,15 +93,17 @@ namespace
 		return !out.empty();
 	}
 
-	bool RunTrEPRTask(const std::shared_ptr<SpinAPI::SpinSystem> &spinsys, bool enforceSync, std::vector<double> &out)
+	bool RunTrEPRTaskWithProperties(const std::shared_ptr<SpinAPI::SpinSystem> &spinsys, bool enforceSync,
+									const std::string &spectrumProperties, std::vector<double> &out)
 	{
 		RunSection::RunSection rs;
 		rs.Add(spinsys);
 
 		MSDParser::ObjectParser taskParser(
 			"testtask",
-			std::string("type=statichs-trepr-spectra;mwfrequency=95.0;linewidth=0.1;lineshape=gaussian;") +
-			"electron1=FE1;electron2=WE2;fieldinteraction=zeeman1;initialstate=Init;" +
+			std::string("type=statichs-trepr-spectra;mwfrequency=95.0;lineshape=gaussian;") +
+			spectrumProperties +
+			"fieldinteraction=zeeman1;initialstate=Init;" +
 			"HamiltonianH0list=zeeman1,zeeman2;powdersamplingpoints=1;powdergridtype=fibonacci;" +
 			"powdergammapoints=1;powderfullsphere=true;fulltensorrotation=true;" +
 			"sweepcache=false;" +
@@ -121,6 +123,11 @@ namespace
 			return false;
 
 		return ExtractColumn(datastream.str(), "System.Total_perp", out);
+	}
+
+	bool RunTrEPRTask(const std::shared_ptr<SpinAPI::SpinSystem> &spinsys, bool enforceSync, std::vector<double> &out)
+	{
+		return RunTrEPRTaskWithProperties(spinsys, enforceSync, "linewidth=0.1;detectspins=FE1,WE2;", out);
 	}
 }
 
@@ -147,6 +154,31 @@ void AddTaskStaticHSTrEPRSpectraTests(std::vector<test_case> &cases)
 		for (size_t i = 0; i < synced.size(); ++i)
 		{
 			if (std::abs(synced[i] - equal[i]) > tol * std::max(1.0, std::abs(equal[i])))
+				return false;
+		}
+
+		return true;
+	}));
+
+	cases.push_back(test_case("TrEPR detectspins list trimming", []() {
+		std::vector<double> compactInput;
+		std::vector<double> spacedInput;
+
+		auto sys_compact = BuildTwoZeemanSystem(3.380, 3.380);
+		if (!RunTrEPRTaskWithProperties(sys_compact, false, "linewidth=0.2;detectspins=FE1,WE2;", compactInput))
+			return false;
+
+		auto sys_spaced = BuildTwoZeemanSystem(3.380, 3.380);
+		if (!RunTrEPRTaskWithProperties(sys_spaced, false, "linewidth=0.2;detectspins=FE1, WE2;", spacedInput))
+			return false;
+
+		if (compactInput.size() != spacedInput.size() || compactInput.empty())
+			return false;
+
+		const double tol = 1e-6;
+		for (size_t i = 0; i < compactInput.size(); ++i)
+		{
+			if (std::abs(compactInput[i] - spacedInput[i]) > tol * std::max(1.0, std::abs(compactInput[i])))
 				return false;
 		}
 
