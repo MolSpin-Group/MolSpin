@@ -30,6 +30,15 @@ namespace RunSection
 		std::vector<std::pair<SpinAPI::state_ptr, std::string>> referenceStates;
 		std::vector<std::string> transitionSpins; // Used for transition matrix element calculations
 
+		//member variables for first order TD pertubation theory
+		bool useMixing;
+		bool useReferenceStates;
+		bool useEigenstates;
+		double degeneracyThreshold; //flag to determine if we need to employ degenerate or non degenerate  
+		arma::vec lambda_prev;
+		arma::cx_mat V_prev;
+		bool hasPreviousStep;
+
 		// Private methods
 		void WriteHeader(std::ostream &); // Write header for the output file
 		void GetResonanceFrequencies(const arma::vec &, const arma::cx_mat &, const std::shared_ptr<SpinAPI::SpinSystem> &, const SpinAPI::SpinSpace &);
