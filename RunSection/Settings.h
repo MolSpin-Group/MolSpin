@@ -63,10 +63,10 @@ namespace RunSection
 		void GetActionTargets(std::map<std::string, ActionScalar> &, std::map<std::string, ActionVector> &);
 
 		// Default values
-		const unsigned int DefaultSteps = 1;
-		const double DefaultTime = 0.0;
-		const unsigned int DefaultTrajectoryStep = 0;
-		const unsigned int DefaultDataPrecision = 6;
+		static constexpr unsigned int DefaultSteps = 1;
+		static constexpr double DefaultTime = 0.0;
+		static constexpr unsigned int DefaultTrajectoryStep = 0;
+		static constexpr unsigned int DefaultDataPrecision = 6;
 	};
 
 	// Non-member non-friend functions for ActionTarget validation

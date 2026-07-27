@@ -1968,13 +1968,13 @@ namespace RunSection
 			arma::cx_vec rhovec = rho0vec;
 
 			// Read a pulse sequence from the input
-			std::vector<std::tuple<std::string, double>> Pulsesequence;
-			if (this->Properties()->GetPulseSequence("pulsesequence", Pulsesequence))
+			std::vector<std::tuple<std::string, double>> pulseSequence;
+			if (this->Properties()->GetPulseSequence("pulsesequence", pulseSequence))
 			{
-				this->Log() << "Pulsesequence" << std::endl;
+				this->Log() << "Pulse sequence" << std::endl;
 
 				// Loop through all pulse sequences
-				for (const auto &seq : Pulsesequence)
+				for (const auto &seq : pulseSequence)
 				{
 					// Write which pulse in pulsesequence is calculating now
 					this->Log() << std::get<0>(seq) << ", " << std::get<1>(seq) << std::endl;

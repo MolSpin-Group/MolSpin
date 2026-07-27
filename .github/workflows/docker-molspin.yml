@@ -6,7 +6,7 @@ on:
   release:
     types: [published]
   push:
-    branches: [ "main", "time_resolved_vs_cw_spectra"]
+    branches: [ "main", "time_resolved_vs_cw_spectra" ]
 
 # Defines two custom environment variables for the workflow. These are used for the Container registry domain, and a name for the Docker image that this workflow builds.
 env:

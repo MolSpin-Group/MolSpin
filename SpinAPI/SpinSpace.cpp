@@ -21,6 +21,7 @@
 #include "Utility.h"
 
 #include <array>
+#include <cmath>
 
 // Include additional source files
 #include "SpinSpace/SpinSpace_management.cpp"

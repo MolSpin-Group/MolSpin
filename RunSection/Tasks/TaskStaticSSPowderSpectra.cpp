@@ -1,7 +1,8 @@
 /////////////////////////////////////////////////////////////////////////
 // TaskStaticSSPowderSpectra implementation (RunSection module)  developed by Irina Anisimova.
 //
-// Notes: no pulses implemented at the current state
+// Notes: supports powder averaging, optional pulse sequences, and
+// orientation-dependent initial-state preparation.
 //
 // Molecular Spin Dynamics Software - developed by Luca Gerhards.
 // (c) 2022 Quantum Biology and Computational Physics Group.
@@ -9,6 +10,7 @@
 /////////////////////////////////////////////////////////////////////////
 #include <iostream>
 #include <iomanip>
+#include <cmath>
 #include "TaskStaticSSPowderSpectra.h"
 #include "Transition.h"
 #include "Settings.h"
@@ -39,6 +41,15 @@ namespace RunSection
 	bool TaskStaticSSPowderSpectra::RunLocal()
 	{
 		this->Log() << "Running method StaticSS-PowderSpectra." << std::endl;
+
+		// Workflow:
+		// 1. Prepare the initial density matrix in Liouville space.
+		// 2. Create the powder grid; the single-orientation path is treated as
+		//    the non-powdered limit unless an explicit orientation was provided.
+		// 3. For each orientation, build the orientation-specific Liouvillian
+		//    from H0, H1, reactions, and relaxation.
+		// 4. Propagate or solve the requested time window and accumulate the
+		//    powder-weighted density vector before projecting outputs.
 
 		// If this is the first step, write first part of header to the data file
 		if (this->RunSettings()->CurrentStep() == 1)
@@ -202,23 +213,38 @@ namespace RunSection
 				this->Log() << "Failed to obtain an input for a CIDSP. Plese use cidsp = true/false. Using cidsp = false by default. " << std::endl;
 			}
 
-			// Read in the number of points on the sampling grid
-			int numPoints = 1000;
-			if (!this->Properties()->Get("powdersamplingpoints", numPoints))
-			{
-				this->Log() << "Failed to obtain an input for a number of sampling points. Plese use powdersamplingpoints = N. Using powdersamplingpoints = 1000 by default. " << std::endl;
-			}
-
 			double Printedtime = 0;
 
 			// Construct grid
-			std::vector<std::tuple<double, double, double>> grid;
-			if (!this->CreateUniformGrid(numPoints, grid))
+			SpinAPI::PowderGrid grid;
+			int numPoints = 1000;
+			bool explicitPowderGrid = this->CreateExplicitPowderGrid(grid);
+			if (explicitPowderGrid)
 			{
-				this->Log() << "Failed to obtain an Uniform grid." << std::endl;
+				numPoints = static_cast<int>(grid.size());
+				this->Log() << "Using explicit single-orientation powder input. This is the external-distribution route; the supplied orientation and weight are preserved." << std::endl;
+			}
+			else
+			{
+				if (!this->Properties()->Get("powdersamplingpoints", numPoints))
+				{
+					this->Log() << "Failed to obtain an input for a number of sampling points. Plese use powdersamplingpoints = N. Using powdersamplingpoints = 1000 by default. " << std::endl;
+				}
+
+				if (!this->CreateUniformGrid(numPoints, grid))
+				{
+					this->Log() << "Failed to obtain an Uniform grid." << std::endl;
+				}
+				else
+				{
+					if (numPoints <= 1)
+						this->Log() << "Using one internally generated identity orientation with unit weight (non-powdered limit)." << std::endl;
+					else
+						this->Log() << "Using internal powder averaging grid with " << numPoints << " orientations." << std::endl;
+				}
 			}
 
-			// Pulse sequence stuff
+			// Optional pulse sequence before the spectrum is sampled.
 			//  Read printtimeframe from the input file
 			std::string Timewindow;
 			if (!this->Properties()->Get("printtimeframe", Timewindow))
@@ -237,23 +263,103 @@ namespace RunSection
 			}
 			this->Log() << "Timewindow for the propagation integration: " << Integrationwindow << std::endl;
 
-			// Create a common density array holder to be able to propagate over the whole time (pulsesequence + calcultion)
-			std::vector<arma::cx_vec> rhovec(numPoints);
-			// Initialize a firststep
-			for (auto &v : rhovec)
+			// Get the initial state frame to determine if density matrix rotation is needed per orientation
+			const SpinAPI::StateFrame initialStateFrame = (*i)->InitialStateFrame();
+			SpinAPI::HilbertStateRotationCache initialStateRotationCache;
+			const SpinAPI::HilbertStateRotationCache *initialStateRotationCachePtr = nullptr;
+			if (initialStateFrame == SpinAPI::StateFrame::Molecular)
 			{
-				// v.zeros(size(rho0vec));
-				v = rho0vec;
+				if (!space.CreateStateRotationCache(rho0, initialStateRotationCache))
+				{
+					this->Log() << "Failed to prepare molecular-frame initial-state rotations." << std::endl;
+					return false;
+				}
+				initialStateRotationCachePtr = &initialStateRotationCache;
+				if (initialStateRotationCache.rotationInvariant)
+					this->Log() << "Initial state frame = molecular, but the density matrix is rotationally invariant. Powder-state rotations are skipped." << std::endl;
+				else
+					this->Log() << "Initial state frame = molecular. Rotating the density matrix once per powder orientation." << std::endl;
+			}
+			else if (initialStateFrame == SpinAPI::StateFrame::Fixed)
+				this->Log() << "Initial state frame = fixed. Reusing the supplied lab-frame density matrix for every orientation." << std::endl;
+			else
+				this->Log() << "Initial state frame = eigen. The prepared density matrix is already defined in its Hamiltonian frame." << std::endl;
+
+			const SpinAPI::InitialStateCoherenceMode initialCoherences = (*i)->InitialStateCoherences();
+			const bool dephaseInitialState = (initialCoherences == SpinAPI::InitialStateCoherenceMode::DephaseEigenbasis);
+			std::vector<std::string> initialStateHamiltonianList;
+			if (dephaseInitialState)
+			{
+				// Coherence removal is done in the eigenbasis of an
+				// orientation-specific Hamiltonian. The regular H0 list is the
+				// default basis unless the input names a separate list.
+				if (!this->Properties()->GetList("initialstatehamiltonian", initialStateHamiltonianList, ',') &&
+					!this->Properties()->GetList("hamiltonianh0list", initialStateHamiltonianList, ','))
+				{
+					this->Log() << "Initial-state eigenbasis dephasing requires initialstatehamiltonian or hamiltonianh0list." << std::endl;
+					return false;
+				}
+				this->Log() << "Initial-state coherences = eigenbasis populations. Off-diagonal elements are discarded per orientation." << std::endl;
+			}
+			else
+			{
+				this->Log() << "Initial-state coherences = keep. Coherences are retained after any molecular-frame rotation." << std::endl;
+			}
+
+			if ((*i)->operators_cbegin() != (*i)->operators_cend())
+			{
+				this->Log() << "Relaxation operators are rebuilt in the orientation-specific H0 eigenbasis for each powder point." << std::endl;
+			}
+
+			// Store the prepared initial state for every orientation. The same
+			// vector is then used across the pulse sequence and the subsequent
+			// detection or integration window.
+			std::vector<arma::cx_vec> rhovec(numPoints);
+			for (int grid_num = 0; grid_num < numPoints; ++grid_num)
+			{
+				auto [theta, phi, weight] = grid[grid_num];
+
+				if (numPoints <= 1 && !explicitPowderGrid)
+				{
+					// Non-powdered calculation through the powder task. Keep
+					// the identity orientation and a unit integration weight.
+					theta = 0.0;
+					phi = 0.0;
+					weight = 1.0;
+				}
+
+				arma::mat Rot_mat;
+				double gamma = 0.0;
+				if (!this->CreateRotationMatrix(gamma, theta, phi, Rot_mat))
+				{
+					this->Log() << "Failed to create rotation matrix for grid point " << grid_num << "." << std::endl;
+					rhovec[grid_num] = rho0vec;
+					continue;
+				}
+
+				arma::cx_mat rho_oriented;
+				if (!space.PrepareInitialDensityForPowder(rho0, Rot_mat, initialStateFrame, dephaseInitialState, initialStateHamiltonianList, initialStateRotationCachePtr, rho_oriented))
+				{
+					this->Log() << "Failed to prepare initial density matrix for grid point " << grid_num << "." << std::endl;
+					rhovec[grid_num] = rho0vec;
+					continue;
+				}
+
+				if (!space.OperatorToSuperspace(rho_oriented, rhovec[grid_num]))
+				{
+					this->Log() << "Failed to convert oriented density matrix to superspace for grid point " << grid_num << "." << std::endl;
+					rhovec[grid_num] = rho0vec;
+				}
 			}
 
 			// Read a pulse sequence from the input
-			std::vector<std::tuple<std::string, double>> Pulsesequence;
-			if (this->Properties()->GetPulseSequence("pulsesequence", Pulsesequence))
+			std::vector<std::tuple<std::string, double>> pulseSequence;
+			if (this->Properties()->GetPulseSequence("pulsesequence", pulseSequence))
 			{
-				this->Log() << "Pulsesequence" << std::endl;
+				this->Log() << "Pulse sequence" << std::endl;
 
 				// Loop through all pulse sequences
-				for (const auto &seq : Pulsesequence)
+				for (const auto &seq : pulseSequence)
 				{
 					// Write which pulse in pulsesequence is calculating now
 					this->Log() << std::get<0>(seq) << ", " << std::get<1>(seq) << std::endl;
@@ -281,16 +387,6 @@ namespace RunSection
 
 								for (int grid_num = 0; grid_num < numPoints; ++grid_num)
 								{
-									auto [theta, phi, weight] = grid[grid_num];
-
-									// Make the option without powdering from inside possible
-									if (numPoints <= 1)
-									{
-										theta = 0.0;
-										phi = 0.0;
-										weight = 1.0;
-									}
-
 									rhovec[grid_num] = pulse_operator * rhovec[grid_num];
 								}
 
@@ -335,8 +431,8 @@ namespace RunSection
 								{
 									auto [theta, phi, weight] = grid[grid_num];
 
-									// Make the option without powdering from inside possible
-									if (numPoints <= 1)
+									// Single-point grid: use the non-powdered limit.
+									if (numPoints <= 1 && !explicitPowderGrid)
 									{
 										theta = 0.0;
 										phi = 0.0;
@@ -346,7 +442,7 @@ namespace RunSection
 									// arma::sp_cx_mat A;
 									if (!this->Create_A_for_current_orientation(i, space, theta, phi, A, this->Log()))
 									{
-										this->Log() << "Could not construc the Liuovillian operator for specific orientation" << std::endl;
+										this->Log() << "Could not construct the Liouvillian operator for this orientation." << std::endl;
 									}
 
 									if (A.n_rows <= 64) // for the systems not bigger than 2 electrons and 1 spin 1/2 nuclei
@@ -472,8 +568,8 @@ namespace RunSection
 								{
 									auto [theta, phi, weight] = grid[grid_num];
 
-									// Make the option without powdering from inside possible
-									if (numPoints <= 1)
+									// Single-point grid: use the non-powdered limit.
+									if (numPoints <= 1 && !explicitPowderGrid)
 									{
 										theta = 0.0;
 										phi = 0.0;
@@ -483,10 +579,10 @@ namespace RunSection
 									// arma::sp_cx_mat A;
 									if (!this->Create_A_for_current_orientation(i, space, theta, phi, A, this->Log()))
 									{
-										this->Log() << "Could not construc the Liuovillian operator for specific orientation" << std::endl;
+										this->Log() << "Could not construct the Liouvillian operator for this orientation." << std::endl;
 									}
 
-									// Here we don't save a tupple anymore, because the A_sp needs to be constructed on every step
+									// The Liouvillian is orientation dependent, so it is rebuilt for each grid point.
 
 									// save the density on the current step
 									arma::cx_vec tmp_rho = rhovec[grid_num];
@@ -612,8 +708,8 @@ namespace RunSection
 								{
 									auto [theta, phi, weight] = grid[grid_num];
 
-									// Make the option without powdering from inside possible
-									if (numPoints <= 1)
+									// Single-point grid: use the non-powdered limit.
+									if (numPoints <= 1 && !explicitPowderGrid)
 									{
 										theta = 0.0;
 										phi = 0.0;
@@ -623,7 +719,7 @@ namespace RunSection
 									// arma::sp_cx_mat A;
 									if (!this->Create_A_for_current_orientation(i, space, theta, phi, A, this->Log()))
 									{
-										this->Log() << "Could not construc the Liuovillian operator for specific orientation" << std::endl;
+										this->Log() << "Could not construct the Liouvillian operator for this orientation." << std::endl;
 									}
 
 									// save the density on the current step
@@ -631,7 +727,7 @@ namespace RunSection
 
 									if (A.n_rows <= 64) // for the systems not bigger than 2 electrons and 1 spin 1/2 nuclei
 									{
-										// Here we don't save a tupple anymore, because the A_sp needs to be constructed on every step
+										// The Liouvillian is orientation dependent, so it is rebuilt for each grid point.
 										for (unsigned int n = firststep; n <= steps; n++)
 										{
 											if (n == 0)
@@ -774,8 +870,8 @@ namespace RunSection
 								{
 									auto [theta, phi, weight] = grid[grid_num];
 
-									// Make the option without powdering from inside possible
-									if (numPoints <= 1)
+									// Single-point grid: use the non-powdered limit.
+									if (numPoints <= 1 && !explicitPowderGrid)
 									{
 										theta = 0.0;
 										phi = 0.0;
@@ -784,7 +880,7 @@ namespace RunSection
 
 									if (!this->Create_A_for_current_orientation(i, space, theta, phi, A, this->Log()))
 									{
-										this->Log() << "Could not construc the Liuovillian operator for specific orientation" << std::endl;
+										this->Log() << "Could not construct the Liouvillian operator for this orientation." << std::endl;
 									}
 
 									if (A.n_rows <= 64) // for the systems not bigger than 2 electrons and 1 spin 1/2 nuclei
@@ -905,8 +1001,8 @@ namespace RunSection
 				{
 					auto [theta, phi, weight] = grid[grid_num];
 
-					// Make the option without powdering from inside possible
-					if (numPoints <= 1)
+					// Single-point grid: use the non-powdered limit.
+					if (numPoints <= 1 && !explicitPowderGrid)
 					{
 						theta = 0.0;
 						phi = 0.0;
@@ -915,7 +1011,7 @@ namespace RunSection
 
 					if (!this->Create_A_for_current_orientation(i, space, theta, phi, A, this->Log()))
 					{
-						this->Log() << "Could not construc the Liuovillian operator for specific orientation" << std::endl;
+						this->Log() << "Could not construct the Liouvillian operator for this orientation." << std::endl;
 					}
 
 					arma::cx_vec result = -solve(arma::conv_to<arma::cx_mat>::from(A), rhovec[grid_num]);
@@ -962,8 +1058,8 @@ namespace RunSection
 					{
 						auto [theta, phi, weight] = grid[grid_num];
 
-						// Make the option without powdering from inside possible
-						if (numPoints <= 1)
+						// Single-point grid: use the non-powdered limit.
+						if (numPoints <= 1 && !explicitPowderGrid)
 						{
 							theta = 0.0;
 							phi = 0.0;
@@ -972,7 +1068,7 @@ namespace RunSection
 
 						if (!this->Create_A_for_current_orientation(i, space, theta, phi, A, this->Log()))
 						{
-							this->Log() << "Could not construct the Liuovillian operator for specific orientation" << std::endl;
+							this->Log() << "Could not construct the Liouvillian operator for this orientation." << std::endl;
 						}
 
 						arma::cx_vec rhoavg_n;
@@ -1095,6 +1191,12 @@ namespace RunSection
 		auto systems = this->SpinSystems();
 		for (auto i = systems.cbegin(); i != systems.cend(); i++)
 		{
+			bool transitionYields = false;
+			if (this->Properties()->Get("transitionyields", transitionYields) && transitionYields)
+			{
+				WriteTransitionYieldHeader((*i), _stream);
+				continue;
+			}
 
 			if (this->Properties()->GetList("spinlist", spinList, ','))
 			{
@@ -1146,6 +1248,7 @@ namespace RunSection
 		}
 		_stream << std::endl;
 	}
+
 
 	// Validation
 	bool TaskStaticSSPowderSpectra::Validate()
@@ -1205,6 +1308,51 @@ namespace RunSection
 		return true;
 	}
 
+
+
+	// -----------------------------------------------------
+	// Task-specific helper methods
+	// -----------------------------------------------------
+	// -----------------------------------------------------
+	// TaskStaticSSPowderSpectra output helper methods
+	// -----------------------------------------------------
+	void TaskStaticSSPowderSpectra::WriteTransitionYieldHeader(const SpinAPI::system_ptr &_system, std::ostream &_stream) const
+	{
+		auto transitions = _system->Transitions();
+		for (auto transition = transitions.cbegin(); transition != transitions.cend(); ++transition)
+		{
+			if ((*transition)->SourceState() == nullptr)
+				continue;
+			_stream << _system->Name() << "." << (*transition)->Name() << ".yield ";
+		}
+	}
+
+	bool TaskStaticSSPowderSpectra::ProjectTransitionYields(const SpinAPI::system_ptr &_system,
+															SpinAPI::SpinSpace &_space,
+															const arma::cx_mat &_rho,
+															std::ostream &_datastream,
+															std::ostream &_logstream) const
+	{
+		arma::cx_mat P;
+		auto transitions = _system->Transitions();
+		for (auto transition = transitions.cbegin(); transition != transitions.cend(); ++transition)
+		{
+			if ((*transition)->SourceState() == nullptr)
+				continue;
+
+			if (!_space.GetState((*transition)->SourceState(), P))
+			{
+				_logstream << "Failed to obtain projection matrix onto state \""
+						   << (*transition)->Name() << "\" of SpinSystem \""
+						   << _system->Name() << "\"." << std::endl;
+				return false;
+			}
+
+			_datastream << std::setprecision(12) << (*transition)->Rate() * std::abs(arma::trace(P * _rho)) << " ";
+		}
+		return true;
+	}
+
 	bool TaskStaticSSPowderSpectra::GetEigenvectors_H0(SpinAPI::SpinSpace &_space, arma::vec &_eigen_val, arma::sp_cx_mat &_eigen_vec_sp) const
 	{
 		_space.UseSuperoperatorSpace(false);
@@ -1261,7 +1409,7 @@ namespace RunSection
 		return ReturnVec;
 	}
 
-	bool TaskStaticSSPowderSpectra::ProjectAndPrintOutputLine(auto &_i, SpinAPI::SpinSpace &_space, arma::cx_vec &_rhovec, double &_printedtime, double _timestep, unsigned int &_n, bool &_cidsp, std::ostream &_datastream, std::ostream &_logstream)
+	bool TaskStaticSSPowderSpectra::ProjectAndPrintOutputLine(std::vector<SpinAPI::system_ptr>::const_iterator &_i, SpinAPI::SpinSpace &_space, arma::cx_vec &_rhovec, double &_printedtime, double _timestep, unsigned int &_n, bool &_cidsp, std::ostream &_datastream, std::ostream &_logstream)
 	{
 		arma::cx_mat rho0;
 
@@ -1289,6 +1437,17 @@ namespace RunSection
 		// Save the current time
 		_datastream << std::setprecision(12) << _printedtime + (_n * _timestep) << " ";
 		this->WriteStandardOutput(_datastream);
+
+		bool transitionYields = false;
+		if (this->Properties()->Get("transitionyields", transitionYields) && transitionYields)
+		{
+			if (!ProjectTransitionYields((*_i), _space, rho0, _datastream, _logstream))
+			{
+				return false;
+			}
+			_datastream << std::endl;
+			return true;
+		}
 
 		if (this->Properties()->GetList("spinlist", spinList, ','))
 		{
@@ -1377,7 +1536,7 @@ namespace RunSection
 		return true;
 	}
 
-	bool TaskStaticSSPowderSpectra::ProjectAndPrintOutputLine(auto &_i, SpinAPI::SpinSpace &_space, arma::cx_vec &_rhovec, arma::sp_cx_mat &_eigen_vec, double &_printedtime, double _timestep, unsigned int &_n, bool &_cidsp, std::ostream &_datastream, std::ostream &_logstream)
+	bool TaskStaticSSPowderSpectra::ProjectAndPrintOutputLine(std::vector<SpinAPI::system_ptr>::const_iterator &_i, SpinAPI::SpinSpace &_space, arma::cx_vec &_rhovec, arma::sp_cx_mat &_eigen_vec, double &_printedtime, double _timestep, unsigned int &_n, bool &_cidsp, std::ostream &_datastream, std::ostream &_logstream)
 	{
 		arma::cx_mat rho0;
 
@@ -1407,6 +1566,17 @@ namespace RunSection
 		// Save the current time
 		_datastream << std::setprecision(12) << _printedtime + (_n * _timestep) << " ";
 		this->WriteStandardOutput(_datastream);
+
+		bool transitionYields = false;
+		if (this->Properties()->Get("transitionyields", transitionYields) && transitionYields)
+		{
+			if (!ProjectTransitionYields((*_i), _space, rho0, _datastream, _logstream))
+			{
+				return false;
+			}
+			_datastream << std::endl;
+			return true;
+		}
 
 		if (this->Properties()->GetList("spinlist", spinList, ','))
 		{
@@ -1501,7 +1671,7 @@ namespace RunSection
 		return true;
 	}
 
-	bool TaskStaticSSPowderSpectra::ProjectAndPrintOutputLineInf(auto &_i, SpinAPI::SpinSpace &_space, arma::cx_vec &_rhovec, double &_printedtime, double _timestep, bool &_cidsp, std::ostream &_datastream, std::ostream &_logstream)
+	bool TaskStaticSSPowderSpectra::ProjectAndPrintOutputLineInf(std::vector<SpinAPI::system_ptr>::const_iterator &_i, SpinAPI::SpinSpace &_space, arma::cx_vec &_rhovec, double &_printedtime, double _timestep, bool &_cidsp, std::ostream &_datastream, std::ostream &_logstream)
 	{
 		arma::cx_mat rho0;
 
@@ -1528,6 +1698,17 @@ namespace RunSection
 		// Save the current time
 		_datastream << "inf" << " ";
 		this->WriteStandardOutput(_datastream);
+
+		bool transitionYields = false;
+		if (this->Properties()->Get("transitionyields", transitionYields) && transitionYields)
+		{
+			if (!ProjectTransitionYields((*_i), _space, rho0, _datastream, _logstream))
+			{
+				return false;
+			}
+			_datastream << std::endl;
+			return true;
+		}
 
 		if (this->Properties()->GetList("spinlist", spinList, ','))
 		{
@@ -1613,7 +1794,7 @@ namespace RunSection
 		return true;
 	}
 
-	bool TaskStaticSSPowderSpectra::ProjectAndPrintOutputLineInf(auto &_i, SpinAPI::SpinSpace &_space, arma::cx_vec &_rhovec, arma::sp_cx_mat &_eigen_vec, double &_printedtime, double _timestep, bool &_cidsp, std::ostream &_datastream, std::ostream &_logstream)
+	bool TaskStaticSSPowderSpectra::ProjectAndPrintOutputLineInf(std::vector<SpinAPI::system_ptr>::const_iterator &_i, SpinAPI::SpinSpace &_space, arma::cx_vec &_rhovec, arma::sp_cx_mat &_eigen_vec, double &_printedtime, double _timestep, bool &_cidsp, std::ostream &_datastream, std::ostream &_logstream)
 	{
 		arma::cx_mat rho0;
 
@@ -1642,6 +1823,17 @@ namespace RunSection
 		// Save the current time
 		_datastream << "inf" << " ";
 		this->WriteStandardOutput(_datastream);
+
+		bool transitionYields = false;
+		if (this->Properties()->Get("transitionyields", transitionYields) && transitionYields)
+		{
+			if (!ProjectTransitionYields((*_i), _space, rho0, _datastream, _logstream))
+			{
+				return false;
+			}
+			_datastream << std::endl;
+			return true;
+		}
 
 		if (this->Properties()->GetList("spinlist", spinList, ','))
 		{
@@ -1733,89 +1925,38 @@ namespace RunSection
 		return true;
 	}
 
+	// -----------------------------------------------------
+	// TaskStaticSSPowderSpectra powder-grid and Hamiltonian helpers
+	// -----------------------------------------------------
 	bool TaskStaticSSPowderSpectra::CreateRotationMatrix(double &_alpha, double &_beta, double &_gamma, arma::mat &_R) const
 	{
-		arma::mat R1 = {
-			{std::cos(_alpha), -std::sin(_alpha), 0.0},
-			{std::sin(_alpha), std::cos(_alpha), 0.0},
-			{0.0, 0.0, 1.0}};
-
-		arma::mat R2 = {
-			{std::cos(_beta), 0.0, std::sin(_beta)},
-			{0.0, 1.0, 0.0},
-			{-std::sin(_beta), 0.0, std::cos(_beta)}};
-
-		arma::mat R3 = {
-			{std::cos(_gamma), -std::sin(_gamma), 0.0},
-			{std::sin(_gamma), std::cos(_gamma), 0.0},
-			{0.0, 0.0, 1.0}};
-
-		_R = R1 * R2 * R3;
-
-		return true;
+		return SpinAPI::CreateZYZRotationMatrix(_alpha, _beta, _gamma, _R);
 	}
 
-	bool TaskStaticSSPowderSpectra::CreateUniformGrid(int &_Npoints, std::vector<std::tuple<double, double, double>> &_uniformGrid) const
+	bool TaskStaticSSPowderSpectra::CreateUniformGrid(int &_Npoints, SpinAPI::PowderGrid &_uniformGrid) const
 	{
-		std::vector<double> theta(_Npoints);
-		std::vector<double> phi(_Npoints);
-		std::vector<double> weight(_Npoints);
-
-		_uniformGrid.resize(_Npoints);
-
-		const double golden = M_PI * (1.0 + std::sqrt(5.0)); // not standart golden angle
-
-		for (int i = 0; i < _Npoints; ++i)
-		{
-			double index = static_cast<double>(i) + 0.5;
-
-			theta[i] = std::acos(1.0 - index / _Npoints);		  // hemisphere
-			phi[i] = golden * index;							  // hemisphere
-			weight[i] = std::sin(theta[i]) * 2 * M_PI / _Npoints; // 2 * pi for hemisphere
-			_uniformGrid[i] = {theta[i], phi[i], weight[i]};
-		}
-
-		return true;
+		return SpinAPI::CreateUniformPowderGrid(_Npoints, SpinAPI::PowderGridDomain::UpperHemisphere, _uniformGrid);
 	}
 
-	bool TaskStaticSSPowderSpectra::CreateCustomGrid(int &_Npoints, std::vector<std::tuple<double, double, double>> &_Grid) const
+	bool TaskStaticSSPowderSpectra::CreateExplicitPowderGrid(SpinAPI::PowderGrid &_grid)
 	{
-		std::vector<double> theta(_Npoints * _Npoints);
-		std::vector<double> phi(_Npoints * _Npoints);
-		std::vector<double> weight(_Npoints * _Npoints);
-
-		_Grid.resize(_Npoints * _Npoints);
-
-		int idx = 0;
-		for (int k = 0; k < _Npoints; ++k)
-		{
-			double u = (k + 0.5) / _Npoints; // cosine-spaced
-			double th = acos(u);			 // θ
-
-			for (int j = 0; j < _Npoints; ++j)
-			{
-				double ph = (j + 0.5) * (M_PI / 2.0) / _Npoints; // uniform φ
-
-				theta[idx] = th;
-				phi[idx] = ph;
-
-				weight[idx] = (M_PI / 2.0 / _Npoints) * (1.0 / _Npoints); // Δφ * Δ(cosθ)
-				_Grid[idx] = {theta[idx], phi[idx], weight[idx]};
-				idx++;
-			}
-		}
-
-		return true;
+		return this->ReadExplicitPowderGrid(_grid);
 	}
 
-	bool TaskStaticSSPowderSpectra::Create_A_for_current_orientation(auto &_i, SpinAPI::SpinSpace &_space, double &_theta, double &_phi, arma::sp_cx_mat &_A, std::ostream &_logstream) const
+	bool TaskStaticSSPowderSpectra::CreateCustomGrid(int &_Npoints, SpinAPI::PowderGrid &_Grid) const
 	{
-		// Create rotation matrix
+		return SpinAPI::CreateOctantPowderGrid(_Npoints, _Grid);
+	}
+
+	bool TaskStaticSSPowderSpectra::Create_A_for_current_orientation(std::vector<SpinAPI::system_ptr>::const_iterator &_i, SpinAPI::SpinSpace &_space, double &_theta, double &_phi, arma::sp_cx_mat &_A, std::ostream &_logstream) const
+	{
+		// Powder orientations are represented with the same rotation matrix
+		// used for tensor rotation and initial-state preparation.
 		arma::mat Rot_mat;
-		double gamma = 0; // here this is not euler angles, but I use the same function for creating rotations
+		double gamma = 0.0;
 		if (!this->CreateRotationMatrix(gamma, _theta, _phi, Rot_mat))
 		{
-			_logstream << "Failed to obtain an Lebedev grid." << std::endl;
+			_logstream << "Failed to obtain a powder rotation matrix." << std::endl;
 		}
 
 		// Create Hamiltonian H0
@@ -1825,16 +1966,31 @@ namespace RunSection
 			_logstream << "Failed to obtain an input for a HamiltonianH0." << std::endl;
 		}
 
-		_space.UseSuperoperatorSpace(false);
-		// Get the Hamiltonian
-		arma::sp_cx_mat H0;
-		if (!_space.BaseHamiltonianRotated_SA(HamiltonianH0list, Rot_mat, H0))
+		std::vector<std::string> HamiltonianH1list;
+		if (!this->Properties()->GetList("hamiltonianh1list", HamiltonianH1list, ','))
 		{
-			_logstream << "Failed to obtain Hamiltonian in superspace." << std::endl;
+			_logstream << "Failed to obtain an input for a HamiltonianH1." << std::endl;
+		}
+
+		_space.UseSuperoperatorSpace(false);
+		arma::sp_cx_mat H0;
+		arma::sp_cx_mat H1;
+		arma::sp_cx_mat H;
+		// Shared powder Hamiltonian policy:
+		// - H0 uses BaseHamiltonianRotated_SA, so the high-field static terms
+		//   are secularized after the crystallite has been rotated.
+		// - H1 uses the same rotation without the H0 secular projection. This
+		//   is the rotating-frame drive/microwave term and must follow the same
+		//   molecular orientation as H0 to keep tensor frames covariant.
+		if (!_space.PowderHamiltonianRotatedSA(HamiltonianH0list, HamiltonianH1list, Rot_mat, H0, H1, H))
+		{
+			_logstream << "Failed to obtain orientation-specific powder Hamiltonians." << std::endl;
 			return false;
 		}
 
-		// Transforming into superspace
+		// Liouville-space propagation uses -i[H0, rho] - i[H1, rho]. Keep the
+		// two commutators explicit so developers can see which part came from
+		// the secular static Hamiltonian and which part came from the drive.
 		arma::sp_cx_mat lhs;
 		arma::sp_cx_mat rhs;
 		arma::sp_cx_mat H_SS;
@@ -1845,21 +2001,6 @@ namespace RunSection
 
 		// Get a matrix to collect all the terms (the total Liouvillian)
 		_A = arma::cx_double(0.0, -1.0) * H_SS;
-
-		// Create Hamiltonian H1
-		std::vector<std::string> HamiltonianH1list;
-		if (!this->Properties()->GetList("hamiltonianh1list", HamiltonianH1list, ','))
-		{
-			_logstream << "Failed to obtain an input for a HamiltonianH1." << std::endl;
-		}
-
-		// Get the Hamiltonian
-		arma::sp_cx_mat H1;
-		if (!_space.ThermalHamiltonian(HamiltonianH1list, H1))
-		{
-			_logstream << "Failed to obtain Hamiltonian in superspace." << std::endl;
-			return false;
-		}
 
 		arma::sp_cx_mat H1lhs;
 		arma::sp_cx_mat H1rhs;
@@ -1883,20 +2024,47 @@ namespace RunSection
 		}
 		_A -= K;
 
-		// Get the relaxation terms, assuming that they can just be added to the Liouvillian superoperator
+		// Relaxation operators are additive Liouvillian terms. Powder
+		// relaxation is assembled through SpinSpace so that every supported
+		// operator is represented in the same orientation-specific H0
+		// eigenbasis before it is transformed back to the propagation basis.
+		arma::vec eigenvalues;
+		arma::cx_mat eigenvectors;
+		bool eigenbasisReady = false;
+
+		auto loadEigenbasis = [&]() -> bool
+		{
+			if (eigenbasisReady)
+				return true;
+
+			arma::cx_mat H0dense(H0);
+			if (!arma::eig_sym(eigenvalues, eigenvectors, H0dense))
+			{
+				_logstream << "Failed to diagonalize H0 for eigenbasis relaxation." << std::endl;
+				return false;
+			}
+
+			eigenbasisReady = true;
+			return true;
+		};
+
 		arma::sp_cx_mat R;
 		for (auto j = (*_i)->operators_cbegin(); j != (*_i)->operators_cend(); j++)
 		{
-			if (_space.RelaxationOperator((*j), R))
+			if (!loadEigenbasis() ||
+				!_space.PowderRelaxationOperator((*j), eigenvectors, Rot_mat, R))
 			{
-				_A += R;
-				_logstream << "Added relaxation operator \"" << (*j)->Name() << "\" to the Liouvillian.\n";
+				_logstream << "Failed to construct powder eigenbasis relaxation operator \"" << (*j)->Name() << "\"." << std::endl;
+				return false;
 			}
+
+			_A += R;
+			// _logstream << "Added powder eigenbasis relaxation operator \"" << (*j)->Name() << "\" to the Liouvillian.\n";
 		}
-		///////////////
 
 		return true;
 	}
 
 	// -----------------------------------------------------
+
 }

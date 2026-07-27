@@ -9,8 +9,96 @@
 // See LICENSE.txt for license information.
 /////////////////////////////////////////////////////////////////////////
 
+#include "SpinSpace.h"
+#include <algorithm>
+#include <cmath>
+
 namespace SpinAPI
 {
+	bool RotationMatrixToAxisAngle(const arma::mat &_rotation, arma::vec &_axis, double &_angle)
+	{
+		if (_rotation.n_rows != 3 || _rotation.n_cols != 3)
+			return false;
+
+		double qw = 0.0;
+		double qx = 0.0;
+		double qy = 0.0;
+		double qz = 0.0;
+		const double trace = _rotation(0, 0) + _rotation(1, 1) + _rotation(2, 2);
+
+		if (trace > 0.0)
+		{
+			const double s = 2.0 * std::sqrt(std::max(0.0, trace + 1.0));
+			if (s == 0.0)
+				return false;
+			qw = 0.25 * s;
+			qx = (_rotation(2, 1) - _rotation(1, 2)) / s;
+			qy = (_rotation(0, 2) - _rotation(2, 0)) / s;
+			qz = (_rotation(1, 0) - _rotation(0, 1)) / s;
+		}
+		else if (_rotation(0, 0) > _rotation(1, 1) && _rotation(0, 0) > _rotation(2, 2))
+		{
+			const double s = 2.0 * std::sqrt(std::max(0.0, 1.0 + _rotation(0, 0) - _rotation(1, 1) - _rotation(2, 2)));
+			if (s == 0.0)
+				return false;
+			qw = (_rotation(2, 1) - _rotation(1, 2)) / s;
+			qx = 0.25 * s;
+			qy = (_rotation(0, 1) + _rotation(1, 0)) / s;
+			qz = (_rotation(0, 2) + _rotation(2, 0)) / s;
+		}
+		else if (_rotation(1, 1) > _rotation(2, 2))
+		{
+			const double s = 2.0 * std::sqrt(std::max(0.0, 1.0 + _rotation(1, 1) - _rotation(0, 0) - _rotation(2, 2)));
+			if (s == 0.0)
+				return false;
+			qw = (_rotation(0, 2) - _rotation(2, 0)) / s;
+			qx = (_rotation(0, 1) + _rotation(1, 0)) / s;
+			qy = 0.25 * s;
+			qz = (_rotation(1, 2) + _rotation(2, 1)) / s;
+		}
+		else
+		{
+			const double s = 2.0 * std::sqrt(std::max(0.0, 1.0 + _rotation(2, 2) - _rotation(0, 0) - _rotation(1, 1)));
+			if (s == 0.0)
+				return false;
+			qw = (_rotation(1, 0) - _rotation(0, 1)) / s;
+			qx = (_rotation(0, 2) + _rotation(2, 0)) / s;
+			qy = (_rotation(1, 2) + _rotation(2, 1)) / s;
+			qz = 0.25 * s;
+		}
+
+		const double qnorm = std::sqrt(qw * qw + qx * qx + qy * qy + qz * qz);
+		if (qnorm == 0.0)
+			return false;
+
+		qw /= qnorm;
+		qx /= qnorm;
+		qy /= qnorm;
+		qz /= qnorm;
+
+		if (qw < 0.0)
+		{
+			qw = -qw;
+			qx = -qx;
+			qy = -qy;
+			qz = -qz;
+		}
+
+		qw = std::max(-1.0, std::min(1.0, qw));
+		_angle = 2.0 * std::acos(qw);
+
+		const double sin_half = std::sqrt(std::max(0.0, 1.0 - qw * qw));
+		if (sin_half < 1.0e-12 || std::abs(_angle) < 1.0e-12)
+		{
+			_axis = arma::vec({1.0, 0.0, 0.0});
+			_angle = 0.0;
+			return true;
+		}
+
+		_axis = arma::vec({qx / sin_half, qy / sin_half, qz / sin_half});
+		return true;
+	}
+
 	// -----------------------------------------------------
 	// Spin state representations in the space
 	// -----------------------------------------------------
@@ -421,6 +509,187 @@ namespace SpinAPI
 		return true;
 	}
 
+	bool SpinSpace::RotateState(const arma::cx_mat &_state, const arma::mat &_rotation, arma::cx_mat &_out) const
+	{
+		HilbertStateRotationCache cache;
+		if (!this->CreateStateRotationCache(_state, cache))
+			return false;
+		return this->RotateState(_state, _rotation, cache, _out);
+	}
+
+	bool SpinSpace::CreateStateRotationCache(const arma::cx_mat &_state, HilbertStateRotationCache &_cache, double _tolerance) const
+	{
+		if (_state.n_rows != _state.n_cols ||
+			_state.n_rows != this->HilbertSpaceDimensions() ||
+			!std::isfinite(_tolerance) ||
+			_tolerance < 0.0)
+		{
+			return false;
+		}
+
+		const arma::uword dim = this->HilbertSpaceDimensions();
+		_cache.Jx.zeros(dim, dim);
+		_cache.Jy.zeros(dim, dim);
+		_cache.Jz.zeros(dim, dim);
+		for (const auto &spin : this->spins)
+		{
+			arma::cx_mat Sx;
+			arma::cx_mat Sy;
+			arma::cx_mat Sz;
+			if (!this->CreateOperator(arma::conv_to<arma::cx_mat>::from(spin->Sx()), spin, Sx) ||
+				!this->CreateOperator(arma::conv_to<arma::cx_mat>::from(spin->Sy()), spin, Sy) ||
+				!this->CreateOperator(arma::conv_to<arma::cx_mat>::from(spin->Sz()), spin, Sz))
+			{
+				return false;
+			}
+
+			_cache.Jx += Sx;
+			_cache.Jy += Sy;
+			_cache.Jz += Sz;
+		}
+
+		// A density matrix is invariant under every global powder rotation iff
+		// it commutes with the three generators. This catches singlet projectors,
+		// identity factors, and isotropic mixtures without relying on state names.
+		const double scale = std::max(1.0, arma::norm(_state, "fro"));
+		const double limit = _tolerance * scale;
+		_cache.rotationInvariant =
+			arma::norm(_cache.Jx * _state - _state * _cache.Jx, "fro") <= limit &&
+			arma::norm(_cache.Jy * _state - _state * _cache.Jy, "fro") <= limit &&
+			arma::norm(_cache.Jz * _state - _state * _cache.Jz, "fro") <= limit;
+		return true;
+	}
+
+	bool SpinSpace::RotateState(const arma::cx_mat &_state, const arma::mat &_rotation, const HilbertStateRotationCache &_cache, arma::cx_mat &_out) const
+	{
+		if (_state.n_rows != _state.n_cols ||
+			_state.n_rows != this->HilbertSpaceDimensions() ||
+			_cache.Jx.n_rows != _state.n_rows ||
+			_cache.Jx.n_cols != _state.n_cols ||
+			_cache.Jy.n_rows != _state.n_rows ||
+			_cache.Jy.n_cols != _state.n_cols ||
+			_cache.Jz.n_rows != _state.n_rows ||
+			_cache.Jz.n_cols != _state.n_cols)
+		{
+			return false;
+		}
+
+		if (_cache.rotationInvariant)
+		{
+			_out = _state;
+			return true;
+		}
+
+		// Convert the spatial powder rotation into the corresponding spin
+		// rotation using the cached total angular-momentum generators.
+		arma::vec axis;
+		double angle = 0.0;
+		if (!RotationMatrixToAxisAngle(_rotation, axis, angle))
+			return false;
+
+		if (std::abs(angle) < 1.0e-12)
+		{
+			_out = _state;
+			return true;
+		}
+
+		const arma::cx_mat generator = axis(0) * _cache.Jx + axis(1) * _cache.Jy + axis(2) * _cache.Jz;
+
+		const arma::cx_double imaginaryUnit(0.0, 1.0);
+		const arma::cx_mat propagator = arma::expmat(-imaginaryUnit * angle * generator);
+		_out = propagator * _state * propagator.t();
+		return true;
+	}
+
+	bool SpinSpace::PrepareInitialDensityForPowder(const arma::cx_mat &_referenceDensity,
+												   const arma::mat &_orientationRotation,
+												   StateFrame _stateFrame,
+												   bool _discardHamiltonianCoherences,
+												   const std::vector<std::string> &_dephasingHamiltonian,
+												   const HilbertStateRotationCache *_rotationCache,
+												   arma::cx_mat &_orientedDensity)
+	{
+		_orientedDensity = _referenceDensity;
+		const bool previousSuperspaceSetting = this->useSuperspace;
+		this->useSuperspace = false;
+
+		if (_stateFrame == StateFrame::Molecular)
+		{
+			const bool rotated = (_rotationCache != nullptr)
+									 ? this->RotateState(_referenceDensity, _orientationRotation, *_rotationCache, _orientedDensity)
+									 : this->RotateState(_referenceDensity, _orientationRotation, _orientedDensity);
+			if (!rotated)
+			{
+				this->useSuperspace = previousSuperspaceSetting;
+				return false;
+			}
+		}
+
+		if (_discardHamiltonianCoherences)
+		{
+			arma::sp_cx_mat H0sp;
+			if (!this->BaseHamiltonianRotated_SA(_dephasingHamiltonian, _orientationRotation, H0sp))
+			{
+				this->useSuperspace = previousSuperspaceSetting;
+				return false;
+			}
+
+			arma::cx_mat rhoDephased;
+			if (!this->DephaseStateInEigenbasis(_orientedDensity, arma::cx_mat(H0sp), rhoDephased))
+			{
+				this->useSuperspace = previousSuperspaceSetting;
+				return false;
+			}
+			_orientedDensity = std::move(rhoDephased);
+		}
+
+		this->useSuperspace = previousSuperspaceSetting;
+		return true;
+	}
+
+	bool SpinSpace::DephaseStateInEigenbasis(const arma::cx_mat &_state, const arma::cx_mat &_hamiltonian, arma::cx_mat &_out) const
+	{
+		if (_state.n_rows != _state.n_cols || _state.n_rows != this->HilbertSpaceDimensions())
+			return false;
+		if (_hamiltonian.n_rows != _hamiltonian.n_cols || _hamiltonian.n_rows != this->HilbertSpaceDimensions())
+			return false;
+
+		arma::vec eigenvalues;
+		arma::cx_mat eigenvectors;
+		if (!arma::eig_sym(eigenvalues, eigenvectors, _hamiltonian))
+			return false;
+
+		// The dephasing operation is performed in the eigenbasis of the
+		// orientation-specific Hamiltonian. Dropping entries in the lab basis
+		// would remove the wrong coherences for anisotropic powder samples.
+		arma::cx_mat rhoInEigenbasis = eigenvectors.t() * _state * eigenvectors;
+		rhoInEigenbasis %= arma::eye<arma::cx_mat>(rhoInEigenbasis.n_rows, rhoInEigenbasis.n_cols);
+		_out = eigenvectors * rhoInEigenbasis * eigenvectors.t();
+		return true;
+	}
+
+	bool SpinSpace::ThermalStateFromHamiltonian(const arma::cx_mat &_hamiltonian, double _Temperature, arma::cx_mat &_mat) const
+	{
+		if (_hamiltonian.n_rows != _hamiltonian.n_cols || _hamiltonian.n_rows != this->HilbertSpaceDimensions())
+			return false;
+
+		if (_Temperature <= 0.0)
+		{
+			std::cout << "Failed to obtain thermal state: temperature must be > 0 K." << std::endl;
+			return false;
+		}
+
+		double Kb = 8.617333262 * std::pow(10, -5);	  // Boltzmann const in eV/K
+		double hbar = 6.582119569 * std::pow(10, -16); // Reduced planck constant in eVs/rads
+		double beta = hbar / (Kb * _Temperature);
+		beta *= std::pow(10, 9);
+
+		arma::cx_mat result = arma::expmat_sym((-beta) * _hamiltonian);
+		result /= arma::trace(result);
+		_mat = result;
+		return true;
+	}
+
 	// Produces the thermal state
 	bool SpinSpace::GetThermalState(SpinAPI::SpinSpace &_space, double _Temperature, std::vector<std::string> thermalhamiltonian_list, arma::cx_mat &_mat) const
 	{
@@ -436,25 +705,11 @@ namespace SpinAPI
 			return false;
 		}
 
-		if (_Temperature <= 0.0)
+		if (!this->ThermalStateFromHamiltonian(H, _Temperature, _mat))
 		{
-			std::cout << "Failed to obtain thermal state: temperature must be > 0 K." << std::endl;
 			_space.UseSuperoperatorSpace(useSuperspaceBeforeThermal);
 			return false;
 		}
-
-		// Helper variables
-		arma::cx_mat result = arma::ones<arma::cx_mat>(1, 1);
-		double Kb = 8.617333262 * std::pow(10, -5);	   // Boltzmann const in eV/K
-		double hbar = 6.582119569 * std::pow(10, -16); // Reduced planck constant in eVs/rads
-		double beta = hbar / (Kb * _Temperature);
-		beta *= std::pow(10, 9);
-
-		// Calculate thermal states here
-		result = (-beta) * H;
-		result = arma::expmat_sym(result);
-		result /= arma::trace(result);
-		_mat = result;
 
 		_space.UseSuperoperatorSpace(useSuperspaceBeforeThermal);
 

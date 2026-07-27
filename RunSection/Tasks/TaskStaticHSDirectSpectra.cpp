@@ -19,6 +19,7 @@
 #include "Pulse.h"
 #include <cmath>
 #include <iomanip> // std::setprecision
+#include <limits>
 #include <numeric>
 #include <sstream>
 #ifdef _OPENMP
@@ -27,194 +28,15 @@
 
 namespace RunSection
 {
-	namespace
-	{
-		double TraceSparseDense(const arma::sp_cx_mat &A, const arma::cx_mat &B)
-		{
-			arma::cx_double sum = arma::cx_double(0.0, 0.0);
-			for (auto it = A.begin(); it != A.end(); ++it)
-			{
-				sum += (*it) * B(it.col(), it.row());
-			}
-			return std::real(sum);
-		}
-
-		std::string TrimCopy(const std::string &value)
-		{
-			const auto begin = value.find_first_not_of(" \t\n\r");
-			if (begin == std::string::npos)
-				return std::string();
-
-			const auto end = value.find_last_not_of(" \t\n\r");
-			return value.substr(begin, end - begin + 1);
-		}
-
-		bool BuildInitialDensityMatrix(const SpinAPI::system_ptr &system,
-									   SpinAPI::SpinSpace &space,
-									   const std::shared_ptr<MSDParser::ObjectParser> &task_properties,
-									   arma::cx_mat &rho0,
-									   std::ostream &log_stream)
-		{
-			auto initial_states = system->InitialState();
-			if (initial_states.empty() && task_properties != nullptr)
-			{
-				std::string legacy_initial_state;
-				if (task_properties->Get("initialstate", legacy_initial_state))
-				{
-					log_stream << "Using legacy task-level initialstate input \"" << legacy_initial_state
-							   << "\". Prefer spin-system initialstate for new inputs." << std::endl;
-
-					std::istringstream stream(legacy_initial_state);
-					for (std::string token; std::getline(stream, token, ',');)
-					{
-						token = TrimCopy(token);
-						if (token.empty())
-							continue;
-
-						if (token == "Thermal" || token == "thermal")
-						{
-							initial_states.push_back(nullptr);
-							continue;
-						}
-
-						bool found = false;
-						auto states = system->States();
-						for (auto state = states.cbegin(); state != states.cend(); ++state)
-						{
-							if ((*state)->Name() == token)
-							{
-								initial_states.push_back(*state);
-								found = true;
-								break;
-							}
-						}
-
-						if (!found)
-						{
-							log_stream << "Failed to resolve legacy initial state \"" << token
-									   << "\" on SpinSystem \"" << system->Name() << "\"." << std::endl;
-						}
-					}
-				}
-			}
-
-			if (initial_states.empty())
-				return false;
-
-			std::vector<double> weights = system->Weights();
-			bool use_weights = (initial_states.size() > 1 && weights.size() == initial_states.size());
-			if (weights.size() > 1 && !use_weights)
-			{
-				log_stream << "Ignoring initial-state weights for SpinSystem \"" << system->Name()
-						   << "\" because the number of weights does not match the number of initial states." << std::endl;
-			}
-
-			if (use_weights)
-			{
-				const double sum_weights = std::accumulate(weights.begin(), weights.end(), 0.0);
-				if (sum_weights > 0.0)
-				{
-					for (double &weight : weights)
-						weight /= sum_weights;
-				}
-				else
-				{
-					log_stream << "Ignoring non-positive initial-state weights for SpinSystem \"" << system->Name()
-							   << "\"." << std::endl;
-					use_weights = false;
-				}
-			}
-
-			bool assigned = false;
-			for (size_t idx = 0; idx < initial_states.size(); ++idx)
-			{
-				arma::cx_mat tmp_rho0;
-				if (initial_states[idx] == nullptr)
-				{
-					auto thermal_hamiltonian_list = system->ThermalHamiltonianList();
-					double temperature = system->Temperature();
-					log_stream << "Initial state = thermal, T = " << temperature << " K." << std::endl;
-					if (!space.GetThermalState(space, temperature, thermal_hamiltonian_list, tmp_rho0))
-					{
-						log_stream << "Failed to obtain thermal initial state for SpinSystem \"" << system->Name() << "\"." << std::endl;
-						continue;
-					}
-				}
-				else
-				{
-					if (!space.GetState(initial_states[idx], tmp_rho0))
-					{
-						log_stream << "Failed to obtain projection matrix onto state \"" << initial_states[idx]->Name()
-								   << "\", initial state of SpinSystem \"" << system->Name() << "\"." << std::endl;
-						continue;
-					}
-				}
-
-				const double weight = use_weights ? weights[idx] : 1.0;
-				if (!assigned)
-				{
-					rho0 = weight * tmp_rho0;
-					assigned = true;
-				}
-				else
-				{
-					rho0 += weight * tmp_rho0;
-				}
-			}
-
-			if (!assigned)
-				return false;
-
-			const arma::cx_double rho_trace = arma::trace(rho0);
-			if (std::abs(rho_trace) == 0.0)
-				return false;
-
-			rho0 /= rho_trace;
-			return true;
-		}
-
-		arma::cx_mat FactorizeDensityMatrix(const arma::cx_mat &rho0, std::ostream &log_stream)
-		{
-			const arma::cx_mat hermitian_rho0 = 0.5 * (rho0 + rho0.st());
-			arma::vec eigenvalues;
-			arma::cx_mat eigenvectors;
-			if (!arma::eig_sym(eigenvalues, eigenvectors, hermitian_rho0))
-			{
-				log_stream << "Failed to diagonalize the initial density matrix in Hilbert space." << std::endl;
-				return arma::cx_mat();
-			}
-
-			const double max_eigenvalue = eigenvalues.is_empty() ? 0.0 : std::abs(eigenvalues.max());
-			const double tolerance = std::max(1.0e-12, 1.0e-10 * max_eigenvalue);
-			if (eigenvalues.min() < -tolerance)
-			{
-				log_stream << "Initial density matrix has significantly negative eigenvalues (" << eigenvalues.min()
-						   << "). Cannot construct Hilbert-space factorization." << std::endl;
-				return arma::cx_mat();
-			}
-
-			arma::uvec keep = arma::find(eigenvalues > tolerance);
-			if (keep.is_empty())
-			{
-				log_stream << "Initial density matrix is numerically rank-zero after factorization." << std::endl;
-				return arma::cx_mat();
-			}
-
-			arma::cx_mat B(rho0.n_rows, keep.n_elem, arma::fill::zeros);
-			for (arma::uword col = 0; col < keep.n_elem; ++col)
-			{
-				const arma::uword idx = keep(col);
-				B.col(col) = std::sqrt(eigenvalues(idx)) * eigenvectors.col(idx);
-			}
-
-			return B;
-		}
-	}
-
 	// -----------------------------------------------------
 	// TaskStaticHSDirectSpectra Constructors and Destructor
 	// -----------------------------------------------------
-	TaskStaticHSDirectSpectra::TaskStaticHSDirectSpectra(const MSDParser::ObjectParser &_parser, const RunSection &_runsection) : BasicTask(_parser, _runsection), timestep(1.0), totaltime(1.0e+4), reactionOperators(SpinAPI::ReactionOperatorType::Haberkorn)
+	TaskStaticHSDirectSpectra::TaskStaticHSDirectSpectra(const MSDParser::ObjectParser &_parser, const RunSection &_runsection) :
+		BasicTask(_parser, _runsection),
+		timestep(1.0),
+		totaltime(1.0e+4),
+		powderFullSphere(false),
+		reactionOperators(SpinAPI::ReactionOperatorType::Haberkorn)
 	{
 	}
 
@@ -227,6 +49,15 @@ namespace RunSection
 	bool TaskStaticHSDirectSpectra::RunLocal()
 	{
 		this->Log() << "Running task StaticHS-Direct-Spectra." << std::endl;
+
+		// Workflow:
+		// 1. Build the Hilbert-space initial density matrix and output projectors.
+		// 2. Resolve static/dynamic Hamiltonian terms, reactions, pulses, and
+		//    optional relaxation in the same basis.
+		// 3. Create the powder grid; each orientation represents one rigid
+		//    molecular/crystallite frame relative to the lab field axes.
+		// 4. Propagate each orientation and accumulate weighted expectation
+		//    values before writing one averaged output row.
 
 		// If this is the first step, write first part of header to the data file
 		if (this->RunSettings()->CurrentStep() == 1)
@@ -246,22 +77,14 @@ namespace RunSection
 			space.SetReactionOperatorType(this->reactionOperators);
 
 			arma::cx_mat rho0;
-			if (!BuildInitialDensityMatrix(*i, space, this->Properties(), rho0, this->Log()))
+			if (!this->BuildInitialDensityMatrix(*i, space, rho0, this->Log()))
 			{
 				this->Log() << "Skipping SpinSystem \"" << (*i)->Name() << "\" as no valid initial state could be constructed." << std::endl;
 				continue;
 			}
 
-			arma::cx_mat Binitial = FactorizeDensityMatrix(rho0, this->Log());
-			if (Binitial.is_empty())
-			{
-				this->Log() << "Skipping SpinSystem \"" << (*i)->Name() << "\" because the initial density matrix could not be factorized." << std::endl;
-				continue;
-			}
-
 			const int dim = static_cast<int>(rho0.n_rows);
 			this->Log() << "Hilbert Space Size " << dim << " x " << dim << std::endl;
-			this->Log() << "Initial-state rank " << Binitial.n_cols << std::endl;
 
 			// Get Information about the polarization of choice
 			bool CIDSP = false;
@@ -270,123 +93,16 @@ namespace RunSection
 				this->Log() << "Failed to obtain input for CIDSP. Using default false." << std::endl;
 			}
 
-			// Get projectors of interest of the spectrum
-			arma::sp_cx_mat Iprojx;
-			arma::sp_cx_mat Iprojy;
-			arma::sp_cx_mat Iprojz;
-
-			std::vector<std::string> spinList;
-			int m;
-
-			// Check transitions, rates and projection operators
-			auto transitions = (*i)->Transitions();
-			arma::sp_cx_mat P;
-			int num_transitions = 0;
-
-			int projection_counter = 0;
-			std::map<int, arma::sp_cx_mat> Operators;
-			std::vector<arma::sp_cx_mat> OperatorsSparse;
-			std::vector<arma::cx_mat> OperatorsDense;
-			arma::vec rates(1, 1);
-
-			// Getting the projection operators
-			if (this->Properties()->GetList("spinlist", spinList, ','))
+			// Output observables are independent of powder orientation. Build
+			// them once in Hilbert space, then reuse the same sparse, dense, and
+			// vectorized contractions throughout the powder/time loops.
+			DetectionOperatorSet detectionOperators;
+			if (!this->BuildDetectionOperators(*i, space, CIDSP, static_cast<arma::uword>(dim), detectionOperators, this->Log()))
 			{
-				for (auto l = (*i)->spins_cbegin(); l != (*i)->spins_cend(); l++)
-				{
-					for (m = 0; m < (int)spinList.size(); m++)
-					{
-						if ((*l)->Name() == spinList[m])
-						{
-							if (!space.CreateOperator(arma::conv_to<arma::sp_cx_mat>::from((*l)->Sx()), (*l), Iprojx))
-							{
-								return false;
-							}
-								if (!space.CreateOperator(arma::conv_to<arma::sp_cx_mat>::from((*l)->Sy()), (*l), Iprojy))
-							{
-								return false;
-							}
-								if (!space.CreateOperator(arma::conv_to<arma::sp_cx_mat>::from((*l)->Sz()), (*l), Iprojz))
-							{
-								return false;
-							}
-
-							if (CIDSP == true)
-							{
-								// Gather rates and operators
-								for (auto j = transitions.cbegin(); j != transitions.cend(); j++)
-								{
-									if ((*j)->SourceState() == nullptr)
-										continue;
-									if (!space.GetState((*j)->SourceState(), P))
-									{
-										this->Log() << "Failed to obtain projection matrix onto state \"" << (*j)->Name() << "\" of SpinSystem \"" << (*i)->Name() << "\"." << std::endl;
-										return 1;
-									}
-									if (num_transitions != 0)
-									{
-										rates.insert_rows(num_transitions, 1);
-									}
-
-									Operators[projection_counter] = (*j)->Rate() * Iprojx * P;
-									projection_counter += 1;
-									Operators[projection_counter] = (*j)->Rate() * Iprojy * P;
-									projection_counter += 1;
-									Operators[projection_counter] = (*j)->Rate() * Iprojz * P;
-									projection_counter += 1;
-
-									rates(num_transitions) = (*j)->Rate();
-									num_transitions++;
-								}
-							}
-							else
-							{
-								// Gather rates and operators
-								Operators[projection_counter] = Iprojx;
-								projection_counter += 1;
-								Operators[projection_counter] = Iprojy;
-								projection_counter += 1;
-								Operators[projection_counter] = Iprojz;
-								projection_counter += 1;
-							
-								for (auto j = transitions.cbegin(); j != transitions.cend(); j++)
-								{
-									if ((*j)->SourceState() == nullptr)
-										continue;
-
-									if (num_transitions != 0)
-									{
-										rates.insert_rows(num_transitions, 1);
-									}
-
-									rates(num_transitions) = (*j)->Rate();
-									num_transitions++;
-								}
-							}
-						}	
-					}
-				}
+				return false;
 			}
-
-			OperatorsSparse.resize(projection_counter);
-			double total_nnz = 0.0;
-			double total_size = 0.0;
-			for (const auto &entry : Operators)
-			{
-				OperatorsSparse[entry.first] = entry.second;
-				total_nnz += static_cast<double>(entry.second.n_nonzero);
-				total_size += static_cast<double>(entry.second.n_rows) * entry.second.n_cols;
-			}
-			bool use_sparse_ops = (total_size > 0.0) && ((total_nnz / total_size) < 0.1);
-			if (!use_sparse_ops)
-			{
-				OperatorsDense.resize(projection_counter);
-				for (const auto &entry : Operators)
-				{
-					OperatorsDense[entry.first] = arma::cx_mat(entry.second);
-				}
-			}
-			else if (projection_counter > 0)
+			const int projection_counter = static_cast<int>(detectionOperators.sparse.size());
+			if (detectionOperators.useSparse && projection_counter > 0)
 			{
 				this->Log() << "Using sparse operators for expectation values." << std::endl;
 			}
@@ -395,6 +111,8 @@ namespace RunSection
 			arma::sp_cx_mat K;
 			K.zeros(dim, dim);
 
+			auto transitions = (*i)->Transitions();
+			arma::sp_cx_mat P;
 			for (auto j = transitions.cbegin(); j != transitions.cend(); j++)
 			{
 				if ((*j)->SourceState() == nullptr)
@@ -402,19 +120,46 @@ namespace RunSection
 				space.GetState((*j)->SourceState(), P);
 				K += (*j)->Rate() / 2 * P;
 			}
-			SpinAPI::HilbertRelaxationCache relaxation_cache;
+			// Phenomenological relaxation is basis-local and has an exact
+			// finite-step map. Explicit spin-operator relaxation must keep
+			// its operator cache so anisotropic axes can be rebuilt for
+			// every powder orientation.
+			std::vector<SpinAPI::HilbertRelaxationPhenomenologicalTerm> phenomenological_relaxation_terms;
+			std::vector<SpinAPI::operator_ptr> explicit_relaxation_operators;
 			bool use_density_matrix = false;
 			for (auto j = (*i)->operators_cbegin(); j != (*i)->operators_cend(); j++)
 			{
-				if (space.RelaxationOperator((*j), relaxation_cache))
+				if ((*j)->Type() == SpinAPI::OperatorType::RelaxationPhenomenological)
 				{
+					if (this->AddPhenomenologicalTerm((*j), phenomenological_relaxation_terms))
+					{
+						use_density_matrix = true;
+						this->Log() << "Added eigenbasis relaxation operator \"" << (*j)->Name() << "\" to Hilbert-space propagation.\n";
+					}
+					continue;
+				}
+
+				SpinAPI::HilbertRelaxationCache validation_cache;
+				if (space.RelaxationOperator((*j), validation_cache))
+				{
+					explicit_relaxation_operators.push_back(*j);
 					use_density_matrix = true;
-					this->Log() << "Added relaxation operator \"" << (*j)->Name() << "\" to Hilbert-space propagation.\n";
+					this->Log() << "Added powder-aware relaxation operator \"" << (*j)->Name() << "\" to Hilbert-space propagation.\n";
 				}
 			}
+			const bool use_phenomenological_relaxation = !phenomenological_relaxation_terms.empty();
+			const bool use_only_phenomenological_relaxation = use_phenomenological_relaxation && explicit_relaxation_operators.empty();
 			if (use_density_matrix)
 			{
 				this->Log() << "Relaxation operators detected. Using density-matrix propagation in Hilbert space." << std::endl;
+			}
+			if (use_phenomenological_relaxation)
+			{
+				this->Log() << "Phenomenological relaxation is evaluated in the orientation-specific H0 eigenbasis." << std::endl;
+			}
+			if (!explicit_relaxation_operators.empty())
+			{
+				this->Log() << "Explicit relaxation operators are rebuilt for every powder orientation so their axes follow the molecular rotation." << std::endl;
 			}
 
 			// Setting or calculating total time.
@@ -467,66 +212,76 @@ namespace RunSection
 			std::string precision;
 			this->Properties()->Get("precision", precision);
 
-			int krylovsize;
+			int krylovsize = 0;
 			this->Properties()->Get("krylovsize", krylovsize);
 
-			double krylovtol;
-			this->Properties()->Get("krylovtol", krylovtol);
+			double krylovtol = 0.0;
+			const bool hasKrylovTol = this->Properties()->Get("krylovtol", krylovtol);
 
 			if (propmethod == "autoexpm")
 			{
-				this->Log() << "Autoexpm is chosen as the propagation method." << std::endl;
-				if (precision == "double")
+				if (use_density_matrix)
 				{
-					this->Log() << "Double precision is chosen for the autoexpm method." << std::endl;
-				}
-				else if (precision == "single")
-				{
-					this->Log() << "Single precision is chosen for the autoexpm method." << std::endl;
-				}
-				else if (precision == "half")
-				{
-					this->Log() << "Half precision is chosen for the autoexpm method." << std::endl;
+					this->Log() << "Autoexpm was requested. The relaxation-aware propagation strategy is selected below." << std::endl;
 				}
 				else
 				{
-					this->Log() << "Undefined precision for autoexpm method. Using single precision." << std::endl;
-					precision = "single";
+					this->Log() << "Autoexpm is chosen as the propagation method." << std::endl;
+					if (precision == "double")
+					{
+						this->Log() << "Double precision is chosen for the autoexpm method." << std::endl;
+					}
+					else if (precision == "single")
+					{
+						this->Log() << "Single precision is chosen for the autoexpm method." << std::endl;
+					}
+					else if (precision == "half")
+					{
+						this->Log() << "Half precision is chosen for the autoexpm method." << std::endl;
+					}
+					else
+					{
+						this->Log() << "Undefined precision for autoexpm method. Using single precision." << std::endl;
+						precision = "single";
+					}
 				}
 			}
 			else if (propmethod == "krylov")
 			{
-				if (krylovsize > 0)
+				if (use_density_matrix)
 				{
-					this->Log() << "Krylov basis size is chosen as " << krylovsize << "." << std::endl;
-					if (krylovtol > 0)
-					{
-						this->Log() << "Tolerance for krylov propagation is chosen as " << krylovtol << "." << std::endl;
-					}
-					else
-					{
-						this->Log() << "Undefined tolerance for the krylov subspace. Using the default of 1e-16." << std::endl;
-						krylovtol = 1e-16;
-					}
+					this->Log() << "Krylov propagation was requested. The relaxation-aware propagation strategy is selected below." << std::endl;
 				}
 				else
 				{
-					this->Log() << "Undefined size of the krylov subspace. Using the default size of 16." << std::endl;
-					krylovsize = 16;
-					if (krylovtol > 0)
+					if (krylovsize > 0)
 					{
-						this->Log() << "Tolerance for krylov propagation is chosen as " << krylovtol << "." << std::endl;
+						this->Log() << "Krylov basis size is chosen as " << krylovsize << "." << std::endl;
 					}
 					else
 					{
-						this->Log() << "Undefined tolerance for the krylov subspace. Using the default of 1e-16." << std::endl;
-						krylovtol = 1e-16;
+						this->Log() << "Undefined size of the krylov subspace. Using the default size of 16." << std::endl;
+						krylovsize = 16;
+					}
+					if (hasKrylovTol)
+					{
+						this->Log() << "Warning: krylovtol = " << krylovtol
+									<< " is currently parsed for compatibility but is not used by the Krylov propagator; krylovsize controls this branch." << std::endl;
 					}
 				}
 			}
 			else if (propmethod == "rk4" || propmethod == "explicit")
 			{
-				this->Log() << "Explicit RK4 is chosen as the propagation method." << std::endl;
+				this->Log() << "Explicit RK4 was requested as the propagation method." << std::endl;
+			}
+			else if (propmethod == "normal")
+			{
+				this->Log() << "Normal exponential Hamiltonian propagation is chosen." << std::endl;
+			}
+			else if (propmethod.empty())
+			{
+				this->Log() << "No propagation method specified. Using normal exponential Hamiltonian propagation." << std::endl;
+				propmethod = "normal";
 			}
 			else
 			{
@@ -535,22 +290,47 @@ namespace RunSection
 			}
 
 			bool relax_use_split_expm = false;
+			bool relax_use_exact_phenomenological_split = false;
 			arma::cx_mat K_dense;
 			if (use_density_matrix)
 			{
-				relax_use_split_expm = (propmethod != "rk4" && propmethod != "explicit");
-				if (relax_use_split_expm)
+				if (use_only_phenomenological_relaxation)
 				{
+					relax_use_split_expm = true;
+					relax_use_exact_phenomenological_split = true;
 					K_dense = arma::cx_mat(K);
-					this->Log() << "Relaxation operators active; using split-exponential propagation (Hamiltonian expm + RK4 relaxation)." << std::endl;
-					if (propmethod != "normal")
+					this->Log() << "Propagation strategy: optimized phenomenological eigenbasis density propagation. The H0 eigenbasis is prepared once per powder orientation, and adjacent Hamiltonian half-steps are merged during free evolution." << std::endl;
+					if (propmethod == "rk4" || propmethod == "explicit")
 					{
-						this->Log() << "Note: propagationmethod is ignored for relaxation; use propagationmethod = rk4 to force explicit RK4." << std::endl;
+						this->Log() << "Note: explicit RK4 was requested but is not used for phenomenological-only relaxation because the analytical finite-step map is exact." << std::endl;
+					}
+					else if (propmethod != "normal")
+					{
+						this->Log() << "Note: propagationmethod = " << propmethod << " is replaced by dense Hamiltonian exponential half-steps for phenomenological-only relaxation." << std::endl;
 					}
 				}
 				else
 				{
-					this->Log() << "Relaxation operators active; using explicit RK4 density-matrix propagation." << std::endl;
+					relax_use_split_expm = (propmethod != "rk4" && propmethod != "explicit");
+					if (relax_use_split_expm)
+					{
+						K_dense = arma::cx_mat(K);
+						this->Log() << "Propagation strategy: explicit relaxation density propagation with Hamiltonian exponential half-steps and an RK4 relaxation fallback." << std::endl;
+						this->Log() << "Performance note: explicit spin-operator relaxation is substantially slower than Hilbert-factor or phenomenological-only propagation." << std::endl;
+						if (use_phenomenological_relaxation)
+						{
+							this->Log() << "Phenomenological terms are included in the RK4 fallback because explicit relaxation operators are also active." << std::endl;
+						}
+						if (propmethod != "normal")
+						{
+							this->Log() << "Note: propagationmethod is ignored for relaxation splitting; use propagationmethod = rk4 to force full explicit RK4." << std::endl;
+						}
+					}
+					else
+					{
+						this->Log() << "Propagation strategy: explicit relaxation density propagation with full RK4 as requested." << std::endl;
+						this->Log() << "Performance note: full RK4 density propagation is the slowest Hilbert spectra branch." << std::endl;
+					}
 				}
 			}
 
@@ -569,6 +349,25 @@ namespace RunSection
 				Method = "timeevo";
 				method_timeevo = true;
 				method_timeinf = false;
+			}
+			this->Log() << "Spectrum evaluation method = " << Method << "." << std::endl;
+			if (method_timeinf && use_density_matrix)
+			{
+				this->Log() << "Steady-state relaxation is assembled as an orientation-specific Liouvillian before solving the time-integrated density matrix." << std::endl;
+			}
+			// Free evolution is time-independent for this task once one powder
+			// orientation has fixed H0, H1, reactions, and relaxation. LongPulse
+			// sections with explicitly time-dependent amplitudes are propagated
+			// separately and do not reuse this free-evolution planner.
+			const DensityPropagationPlan densityPropagationPlan =
+				this->EvaluateDensityPropagationPlan(static_cast<arma::uword>(dim),
+													 num_steps,
+													 method_timeevo,
+													 relax_use_split_expm,
+													 true);
+			if (use_density_matrix && method_timeevo)
+			{
+				this->Log() << "Density propagation planner: " << densityPropagationPlan.reason << std::endl;
 			}
 
 			// Read if the result should be integrated or not.
@@ -601,37 +400,54 @@ namespace RunSection
 			bool integrate_pulses = integration && (Integrationwindow.compare("freeevo") != 0);
 			bool integrate_freeevo = integration && (Integrationwindow.compare("pulse") != 0);
 
+			SpinAPI::PowderGrid grid;
 			int numPoints = 0;
-			bool hasPowderPoints = this->Properties()->Get("powdersamplingpoints", numPoints);
-			if (!hasPowderPoints)
+			bool explicitPowderGrid = this->CreateExplicitPowderGrid(grid);
+			if (explicitPowderGrid)
 			{
-				this->Log() << "No powdersamplingpoints provided. Powder averaging is disabled by default." << std::endl;
-				numPoints = 0;
-			}
-			if (numPoints < 1)
-			{
-				numPoints = 0;
-				if (hasPowderPoints)
-				{
-					this->Log() << "Powder averaging disabled (powdersamplingpoints <= 0)." << std::endl;
-				}
-			}
-
-			std::vector<std::tuple<double, double, double>> grid;
-			if (numPoints > 0)
-			{
-				if (!this->CreateUniformGrid(numPoints, grid))
-				{
-					this->Log() << "Failed to obtain a powder grid." << std::endl;
-				}
-				else if (numPoints > 1)
-				{
-					this->Log() << "Using powder averaging with " << numPoints << " orientations." << std::endl;
-				}
+				numPoints = static_cast<int>(grid.size());
+				this->Log() << "Using explicit single-orientation powder input. This is the external-distribution route; the supplied orientation and weight are preserved." << std::endl;
 			}
 			else
 			{
+				bool hasPowderPoints = this->Properties()->Get("powdersamplingpoints", numPoints);
+				if (!hasPowderPoints)
+				{
+					this->Log() << "No powdersamplingpoints provided. Powder averaging is disabled by default." << std::endl;
+					numPoints = 0;
+				}
+				if (numPoints < 1)
+				{
+					numPoints = 0;
+					if (hasPowderPoints)
+					{
+						this->Log() << "Powder averaging disabled (powdersamplingpoints <= 0)." << std::endl;
+					}
+				}
+
+				if (numPoints > 0)
+				{
+					if (!this->CreateUniformGrid(numPoints, grid))
+					{
+						this->Log() << "Failed to obtain a powder grid." << std::endl;
+					}
+					else if (numPoints > 1)
+					{
+						this->Log() << "Using powder averaging with " << numPoints
+									<< " orientations over the "
+									<< (this->powderFullSphere ? "full sphere." : "upper hemisphere.") << std::endl;
+					}
+					else
+					{
+						this->Log() << "Using one internally generated identity orientation with unit weight (non-powdered limit)." << std::endl;
+					}
+				}
+			}
+			if (grid.empty())
+			{
 				grid.push_back({0.0, 0.0, 1.0});
+				numPoints = 0;
+				this->Log() << "Using one identity orientation with unit weight (non-powdered limit)." << std::endl;
 			}
 
 			std::vector<std::string> HamiltonianH0list;
@@ -639,9 +455,82 @@ namespace RunSection
 			bool hasH0list = this->Properties()->GetList("hamiltonianh0list", HamiltonianH0list, ',');
 			bool hasH1list = this->Properties()->GetList("hamiltonianh1list", HamiltonianH1list, ',');
 
+			const SpinAPI::StateFrame initialStateFrame = (*i)->InitialStateFrame();
+			SpinAPI::HilbertStateRotationCache initialStateRotationCache;
+			const SpinAPI::HilbertStateRotationCache *initialStateRotationCachePtr = nullptr;
+			if (initialStateFrame == SpinAPI::StateFrame::Molecular)
+			{
+				if (!space.CreateStateRotationCache(rho0, initialStateRotationCache))
+				{
+					this->Log() << "Failed to prepare molecular-frame initial-state rotations." << std::endl;
+					return false;
+				}
+				initialStateRotationCachePtr = &initialStateRotationCache;
+				if (initialStateRotationCache.rotationInvariant)
+				{
+					this->Log() << "Initial state frame = molecular, but the density matrix is rotationally invariant. Powder-state rotations are skipped." << std::endl;
+				}
+				else
+				{
+					this->Log() << "Initial state frame = molecular. Rotating the density matrix once per powder orientation." << std::endl;
+				}
+			}
+			else if (initialStateFrame == SpinAPI::StateFrame::Fixed)
+			{
+				this->Log() << "Initial state frame = fixed. Reusing the supplied lab-frame density matrix for every orientation." << std::endl;
+			}
+			else
+			{
+				this->Log() << "Initial state frame = eigen. The prepared density matrix is already defined in its Hamiltonian frame." << std::endl;
+			}
+
+			const SpinAPI::InitialStateCoherenceMode initialCoherences = (*i)->InitialStateCoherences();
+			const bool dephaseInitialState = (initialCoherences == SpinAPI::InitialStateCoherenceMode::DephaseEigenbasis);
+			std::vector<std::string> initialStateHamiltonianList;
+			if (dephaseInitialState)
+			{
+				// The dephasing basis has to be generated with the same
+				// orientation as the propagation Hamiltonian. By default we use
+				// H0, but an input file may name a separate Hamiltonian list.
+				if (!this->Properties()->GetList("initialstatehamiltonian", initialStateHamiltonianList, ',') &&
+					!this->Properties()->GetList("hamiltonianh0list", initialStateHamiltonianList, ','))
+				{
+					this->Log() << "Initial-state eigenbasis dephasing requires initialstatehamiltonian or hamiltonianh0list." << std::endl;
+					return false;
+				}
+				this->Log() << "Initial-state coherences = eigenbasis populations. Off-diagonal elements are discarded per orientation." << std::endl;
+			}
+			else
+			{
+				this->Log() << "Initial-state coherences = keep. Coherences are retained after any molecular-frame rotation." << std::endl;
+			}
+
+			// Without relaxation, propagation uses a low-rank Hilbert factor B
+			// with rho = B B^dagger. Reuse that factor whenever preparation does
+			// not change the density matrix between powder orientations.
+			const bool initialDensityOrientationInvariant =
+				initialStateFrame != SpinAPI::StateFrame::Molecular ||
+				initialStateRotationCache.rotationInvariant;
+			const bool reuseInitialFactor = !use_density_matrix &&
+											initialDensityOrientationInvariant &&
+											!dephaseInitialState;
+			arma::cx_mat orientationInvariantInitialFactor;
+			if (reuseInitialFactor)
+			{
+				orientationInvariantInitialFactor = this->FactorizeDensityMatrix(rho0, this->Log());
+				if (orientationInvariantInitialFactor.is_empty())
+				{
+					this->Log() << "Skipping SpinSystem \"" << (*i)->Name()
+								<< "\" because its initial density matrix could not be factorized." << std::endl;
+					continue;
+				}
+				this->Log() << "Propagation strategy: reusable Hilbert factor with rank "
+							<< orientationInvariantInitialFactor.n_cols << " for every powder orientation." << std::endl;
+			}
+
 			// Read a pulse sequence from the input
-			std::vector<std::tuple<std::string, double>> Pulsesequence;
-			bool hasPulseSequence = this->Properties()->GetPulseSequence("pulsesequence", Pulsesequence);
+			std::vector<std::tuple<std::string, double>> pulseSequence;
+			bool hasPulseSequence = this->Properties()->GetPulseSequence("pulsesequence", pulseSequence);
 			if (hasPulseSequence)
 			{
 				this->Log() << "Pulse sequence:" << std::endl;
@@ -657,7 +546,7 @@ namespace RunSection
 				double current_time = 0.0;
 				bool include_initial_step = true;
 
-				for (const auto &seq : Pulsesequence)
+				for (const auto &seq : pulseSequence)
 				{
 					std::string pulse_name = std::get<0>(seq);
 					double timerelaxation = std::get<1>(seq);
@@ -784,12 +673,6 @@ namespace RunSection
 				Iden_dense = arma::eye<arma::cx_mat>(dim, dim);
 			}
 
-			arma::cx_mat relaxation_super;
-			if (method_timeinf && use_density_matrix)
-			{
-				space.RelaxationSuperoperatorHilbert(relaxation_cache, relaxation_super);
-			}
-
 			SpinAPI::SpinSpace base_space(space);
 			base_space.SetReactionOperatorType(this->reactionOperators);
 			base_space.UseSuperoperatorSpace(false);
@@ -811,8 +694,18 @@ namespace RunSection
 				SpinAPI::SpinSpace &space_thread = spaces[tid];
 
 				const auto &grid_point = grid[grid_num];
-				double theta, phi, weight;
-				std::tie(theta, phi, weight) = grid_point;
+				double theta = grid_point.theta;
+				double phi = grid_point.phi;
+				double weight = grid_point.weight;
+				if (grid_size <= 1 && !explicitPowderGrid)
+				{
+					// A single point means "no powder average" for this task.
+					// Keep the identity orientation and unit weight so that HS
+					// and SS spectra have the same normalization.
+					theta = 0.0;
+					phi = 0.0;
+					weight = 1.0;
+				}
 
 				arma::mat Rot_mat = arma::eye<arma::mat>(3, 3);
 				double gamma = 0.0;
@@ -822,27 +715,32 @@ namespace RunSection
 				}
 
 				arma::sp_cx_mat H;
+				arma::sp_cx_mat relaxation_basis_hamiltonian;
 				if (hasH0list)
 				{
+					// Rotating-frame powder path:
+					// H0 is the high-field/static Hamiltonian and is built with
+					// the secular approximation in the current crystallite
+					// orientation. H1 is the microwave/drive part and is rotated
+					// with the same crystallite, but is not secularized here.
+					// The returned H0 is kept separately because relaxation
+					// operators are defined in that orientation-specific basis.
 					arma::sp_cx_mat H0;
-					if (!space_thread.BaseHamiltonianRotated_SA(HamiltonianH0list, Rot_mat, H0))
+					arma::sp_cx_mat H1;
+					arma::sp_cx_mat Htotal;
+					const std::vector<std::string> emptyH1list;
+					if (!space_thread.PowderHamiltonianRotatedSA(HamiltonianH0list,
+																 hasH1list ? HamiltonianH1list : emptyH1list,
+																 Rot_mat,
+																 H0,
+																 H1,
+																 Htotal))
 					{
-						this->Log() << "Failed to obtain rotated Hamiltonian for SpinSystem \"" << (*i)->Name() << "\"." << std::endl;
+						this->Log() << "Failed to obtain orientation-specific powder Hamiltonians for SpinSystem \"" << (*i)->Name() << "\"." << std::endl;
 						continue;
 					}
-					H = H0;
-
-					if (hasH1list)
-					{
-						arma::sp_cx_mat H1;
-						if (!space_thread.ThermalHamiltonian(HamiltonianH1list, H1))
-						{
-							this->Log() << "Failed to obtain Hamiltonian H1 in Hilbert Space." << std::endl;
-							continue;
-						}
-
-						H += H1;
-					}
+					H = Htotal;
+					relaxation_basis_hamiltonian = H0;
 				}
 				else
 				{
@@ -851,22 +749,77 @@ namespace RunSection
 						this->Log() << "Failed to obtain the Hamiltonian in Hilbert Space." << std::endl;
 						continue;
 					}
+					relaxation_basis_hamiltonian = H;
+				}
+
+				arma::cx_mat rho_initial;
+				if (!reuseInitialFactor &&
+					!space_thread.PrepareInitialDensityForPowder(rho0, Rot_mat, initialStateFrame, dephaseInitialState, initialStateHamiltonianList, initialStateRotationCachePtr, rho_initial))
+				{
+					this->Log() << "Failed to prepare initial density matrix for powder orientation." << std::endl;
+					continue;
+				}
+
+				arma::cx_mat phenomenological_basis_eigenvectors;
+				if (use_phenomenological_relaxation &&
+					!this->DiagonalizeRelaxationBasis(relaxation_basis_hamiltonian, phenomenological_basis_eigenvectors, this->Log()))
+				{
+					continue;
+				}
+
+				// Explicit spin-operator relaxation depends on the spatial
+				// orientation. Rebuild this cache beside the rotated H0
+				// instead of reusing the validation cache created above.
+				SpinAPI::HilbertRelaxationCache relaxation_cache;
+				bool relaxation_cache_valid = true;
+				for (const auto &relaxationOperator : explicit_relaxation_operators)
+				{
+					if (!space_thread.PowderRelaxationOperatorHilbert(relaxationOperator, Rot_mat, relaxation_cache))
+					{
+						this->Log() << "Failed to construct powder-aware Hilbert-space relaxation operator \"" << relaxationOperator->Name() << "\"." << std::endl;
+						relaxation_cache_valid = false;
+						break;
+					}
+				}
+				if (!relaxation_cache_valid)
+				{
+					continue;
+				}
+
+				arma::cx_mat relaxation_super;
+				if (method_timeinf && !explicit_relaxation_operators.empty() &&
+					!space_thread.RelaxationSuperoperatorHilbert(relaxation_cache, relaxation_super))
+				{
+					this->Log() << "Failed to construct powder-aware Hilbert-space relaxation superoperator." << std::endl;
+					continue;
 				}
 
 				if (use_density_matrix)
 				{
-					arma::cx_mat rho = rho0;
+					arma::cx_mat rho = rho_initial;
 					int dim = static_cast<int>(rho.n_rows);
 
 					arma::cx_mat work_left(dim, dim, arma::fill::zeros);
 					arma::cx_mat work_right(dim, dim, arma::fill::zeros);
 					arma::cx_mat relax(dim, dim, arma::fill::zeros);
+					arma::cx_mat phenomenological_relax(dim, dim, arma::fill::zeros);
 					arma::cx_mat k1(dim, dim, arma::fill::zeros);
 					arma::cx_mat k2(dim, dim, arma::fill::zeros);
 					arma::cx_mat k3(dim, dim, arma::fill::zeros);
 					arma::cx_mat k4(dim, dim, arma::fill::zeros);
 					arma::cx_mat tmp_state(dim, dim, arma::fill::zeros);
 					arma::cx_mat rk_accum(dim, dim, arma::fill::zeros);
+					SpinAPI::HilbertPhenomenologicalRelaxationMap timeevo_relaxation_map;
+					const SpinAPI::HilbertPhenomenologicalRelaxationMap *timeevo_relaxation_map_ptr = nullptr;
+					if (relax_use_exact_phenomenological_split && method_timeevo)
+					{
+						if (!space_thread.CreatePhenomenologicalRelaxationMapHilbert(phenomenological_relaxation_terms, phenomenological_basis_eigenvectors, dt, timeevo_relaxation_map))
+						{
+							this->Log() << "Failed to prepare the analytical phenomenological relaxation map for this powder orientation." << std::endl;
+							continue;
+						}
+						timeevo_relaxation_map_ptr = &timeevo_relaxation_map;
+					}
 
 					bool use_dense_H = false;
 					arma::cx_mat H_dense;
@@ -886,18 +839,69 @@ namespace RunSection
 						}
 					}
 
-					const arma::cx_double imag_unit(0.0, 1.0);
+					const bool propagateInPhenomenologicalBasis =
+						relax_use_exact_phenomenological_split && method_timeevo;
+					arma::cx_mat K_propagation_basis = K_dense;
+					std::vector<arma::cx_mat> operatorsPhenomenologicalBasis;
+					std::vector<arma::cx_vec> operatorsPhenomenologicalBasisVector;
+					if (propagateInPhenomenologicalBasis)
+					{
+						// Phenomenological relaxation is diagonal in this H0
+						// eigenbasis. Keep every recurring operation in that
+						// basis for the full orientation instead of performing
+						// two dense basis round trips during every time step.
+						rho = phenomenological_basis_eigenvectors.t() * rho * phenomenological_basis_eigenvectors;
+						H_dense = phenomenological_basis_eigenvectors.t() * H_dense * phenomenological_basis_eigenvectors;
+						K_propagation_basis = phenomenological_basis_eigenvectors.t() * K_dense * phenomenological_basis_eigenvectors;
 
-					auto record_expectation_rho = [&](arma::mat &target, size_t row_index, const arma::cx_mat &state) {
+						operatorsPhenomenologicalBasis.resize(projection_counter);
+						operatorsPhenomenologicalBasisVector.resize(projection_counter);
 						for (int idx = 0; idx < projection_counter; ++idx)
 						{
-							double val = use_sparse_ops ? TraceSparseDense(OperatorsSparse[idx], state)
-														: std::real(arma::trace(OperatorsDense[idx] * state));
+							const arma::cx_mat operatorLab = detectionOperators.useSparse
+																 ? arma::cx_mat(detectionOperators.sparse[idx])
+																 : detectionOperators.dense[idx];
+							operatorsPhenomenologicalBasis[idx] =
+								phenomenological_basis_eigenvectors.t() * operatorLab * phenomenological_basis_eigenvectors;
+							operatorsPhenomenologicalBasisVector[idx].zeros(dim * dim);
+							for (int row = 0; row < dim; ++row)
+							{
+								for (int col = 0; col < dim; ++col)
+								{
+									operatorsPhenomenologicalBasisVector[idx](col * dim + row) =
+										operatorsPhenomenologicalBasis[idx](row, col);
+								}
+							}
+						}
+					}
+
+					const arma::cx_double imag_unit(0.0, 1.0);
+
+					auto record_expectation_rho = [&](arma::mat &target, size_t row_index, const arma::cx_mat &state)
+					{
+						for (int idx = 0; idx < projection_counter; ++idx)
+						{
+							double val = propagateInPhenomenologicalBasis
+											 ? this->TraceDenseDense(operatorsPhenomenologicalBasis[idx], state)
+											 : (detectionOperators.useSparse ? this->TraceSparseDense(detectionOperators.sparse[idx], state)
+															   : this->TraceDenseDense(detectionOperators.dense[idx], state));
 							target(row_index, idx) = val;
 						}
 					};
 
-					auto drho = [&](const arma::cx_mat &state, const arma::sp_cx_mat &H_total, const arma::cx_mat *H_dense_ptr, arma::cx_mat &out) {
+					auto record_expectation_vector = [&](arma::mat &target, size_t row_index, const arma::cx_vec &state)
+					{
+						for (int idx = 0; idx < projection_counter; ++idx)
+						{
+							const arma::cx_vec &operatorVector = propagateInPhenomenologicalBasis
+																	 ? operatorsPhenomenologicalBasisVector[idx]
+																	 : detectionOperators.vectorized[idx];
+							target(row_index, idx) = std::real(arma::accu(operatorVector % state));
+						}
+					};
+
+					auto drho = [&](const arma::cx_mat &state, const arma::sp_cx_mat &H_total, const arma::cx_mat *H_dense_ptr, arma::cx_mat &out)
+					{
 						if (H_dense_ptr != nullptr)
 						{
 							work_left = (*H_dense_ptr) * state;
@@ -913,10 +917,16 @@ namespace RunSection
 						work_right = state * K;
 						out -= (work_left + work_right);
 						space_thread.ApplyRelaxationHilbert(relaxation_cache, state, relax);
+						if (use_phenomenological_relaxation)
+						{
+							space_thread.ApplyPhenomenologicalRelaxationHilbert(phenomenological_relaxation_terms, phenomenological_basis_eigenvectors, state, phenomenological_relax);
+							relax += phenomenological_relax;
+						}
 						out += relax;
 					};
 
-					auto rk4_step = [&](arma::cx_mat &state, const arma::sp_cx_mat &H_total, const arma::cx_mat *H_dense_ptr, double step_dt) {
+					auto rk4_step = [&](arma::cx_mat &state, const arma::sp_cx_mat &H_total, const arma::cx_mat *H_dense_ptr, double step_dt)
+					{
 						drho(state, H_total, H_dense_ptr, k1);
 						tmp_state = state;
 						tmp_state += (0.5 * step_dt) * k1;
@@ -934,11 +944,18 @@ namespace RunSection
 						state += (step_dt / 6.0) * rk_accum;
 					};
 
-					auto relax_rhs = [&](const arma::cx_mat &state, arma::cx_mat &out) {
+					auto relax_rhs = [&](const arma::cx_mat &state, arma::cx_mat &out)
+					{
 						space_thread.ApplyRelaxationHilbert(relaxation_cache, state, out);
+						if (use_phenomenological_relaxation)
+						{
+							space_thread.ApplyPhenomenologicalRelaxationHilbert(phenomenological_relaxation_terms, phenomenological_basis_eigenvectors, state, phenomenological_relax);
+							out += phenomenological_relax;
+						}
 					};
 
-					auto rk4_relax_step = [&](arma::cx_mat &state, double step_dt) {
+					auto rk4_relax_step = [&](arma::cx_mat &state, double step_dt)
+					{
 						relax_rhs(state, k1);
 						tmp_state = state;
 						tmp_state += (0.5 * step_dt) * k1;
@@ -956,21 +973,66 @@ namespace RunSection
 						state += (step_dt / 6.0) * rk_accum;
 					};
 
-					auto build_unitary_half = [&](const arma::cx_mat &H_total_dense, double step_dt, arma::cx_mat &U_half, arma::cx_mat &U_half_st) {
-						arma::cx_mat A_dense = -imag_unit * H_total_dense - K_dense;
+					auto build_unitary_half = [&](const arma::cx_mat &H_total_dense, double step_dt, arma::cx_mat &U_half, arma::cx_mat &U_half_st)
+					{
+						arma::cx_mat A_dense = -imag_unit * H_total_dense - K_propagation_basis;
 						U_half = arma::expmat(A_dense * (0.5 * step_dt));
-						U_half_st = U_half.st();
+						U_half_st = U_half.t();
 					};
 
-					auto apply_unitary_half = [&](arma::cx_mat &state, const arma::cx_mat &U_half, const arma::cx_mat &U_half_st) {
+					auto apply_unitary_half = [&](arma::cx_mat &state, const arma::cx_mat &U_half, const arma::cx_mat &U_half_st)
+					{
 						work_left = U_half * state;
 						state = work_left * U_half_st;
 					};
 
-					auto split_step = [&](arma::cx_mat &state, const arma::cx_mat &U_half, const arma::cx_mat &U_half_st, double step_dt) {
+					auto split_step = [&](arma::cx_mat &state, const arma::cx_mat &U_half, const arma::cx_mat &U_half_st, const SpinAPI::HilbertPhenomenologicalRelaxationMap *phenomenological_map, double step_dt)
+					{
 						apply_unitary_half(state, U_half, U_half_st);
-						rk4_relax_step(state, step_dt);
+						if (phenomenological_map != nullptr)
+						{
+							if (propagateInPhenomenologicalBasis)
+								space_thread.ApplyPhenomenologicalRelaxationMapInBasisHilbert(*phenomenological_map, state);
+							else
+								space_thread.ApplyPhenomenologicalRelaxationMapHilbert(*phenomenological_map, state, work_right);
+						}
+						else
+						{
+							rk4_relax_step(state, step_dt);
+						}
 						apply_unitary_half(state, U_half, U_half_st);
+					};
+
+					auto build_compact_split_propagator = [&](const arma::cx_mat &U_half, const arma::cx_mat &U_half_st, const SpinAPI::HilbertPhenomenologicalRelaxationMap *phenomenological_map, double step_dt, arma::cx_mat &propagator)
+					{
+						// For small Hilbert spaces, materializing the composed
+						// density map is faster than repeatedly dispatching
+						// several tiny matrix products in split_step(). This is
+						// a pure implementation cache: each column is generated
+						// by applying the same split_step() used by the direct
+						// path, so the relaxation/RWA physics is unchanged.
+						const arma::uword density_dim = static_cast<arma::uword>(dim * dim);
+						propagator.zeros(density_dim, density_dim);
+						arma::cx_mat basis_state(dim, dim, arma::fill::zeros);
+						arma::cx_vec propagated_state;
+						for (arma::uword col = 0; col < density_dim; ++col)
+						{
+							basis_state.zeros();
+							basis_state(col / dim, col % dim) = 1.0;
+							split_step(basis_state, U_half, U_half_st, phenomenological_map, step_dt);
+							space_thread.OperatorToSuperspace(basis_state, propagated_state);
+							propagator.col(col) = propagated_state;
+						}
+					};
+
+					auto operator_for_propagation_basis = [&](const arma::sp_cx_mat &operatorLab)
+					{
+						arma::cx_mat result(operatorLab);
+						if (propagateInPhenomenologicalBasis)
+						{
+							result = phenomenological_basis_eigenvectors.t() * result * phenomenological_basis_eigenvectors;
+						}
+						return result;
 					};
 
 					size_t pulse_step_index = 0;
@@ -987,7 +1049,7 @@ namespace RunSection
 
 					if (hasPulseSequence)
 					{
-						for (const auto &seq : Pulsesequence)
+						for (const auto &seq : pulseSequence)
 						{
 							if (grid_num == 0)
 							{
@@ -1007,6 +1069,17 @@ namespace RunSection
 										this->Log() << "Invalid timestep for pulse \"" << (*pulse)->Name() << "\". Skipping pulse propagation." << std::endl;
 										continue;
 									}
+									SpinAPI::HilbertPhenomenologicalRelaxationMap pulse_relaxation_map;
+									const SpinAPI::HilbertPhenomenologicalRelaxationMap *pulse_relaxation_map_ptr = nullptr;
+									if (relax_use_exact_phenomenological_split)
+									{
+										if (!space_thread.CreatePhenomenologicalRelaxationMapHilbert(phenomenological_relaxation_terms, phenomenological_basis_eigenvectors, pulse_dt, pulse_relaxation_map))
+										{
+											this->Log() << "Failed to prepare the analytical phenomenological relaxation map for pulse \"" << (*pulse)->Name() << "\"." << std::endl;
+											continue;
+										}
+										pulse_relaxation_map_ptr = &pulse_relaxation_map;
+									}
 
 									if ((*pulse)->Type() == SpinAPI::PulseType::InstantPulse)
 									{
@@ -1016,8 +1089,8 @@ namespace RunSection
 											this->Log() << "Failed to create a pulse operator in HS." << std::endl;
 											continue;
 										}
-										arma::cx_mat U = arma::cx_mat(pulse_operator);
-										rho = U * rho * U.st();
+										arma::cx_mat U = operator_for_propagation_basis(pulse_operator);
+										rho = U * rho * U.t();
 									}
 									else if ((*pulse)->Type() == SpinAPI::PulseType::LongPulseStaticField)
 									{
@@ -1031,13 +1104,13 @@ namespace RunSection
 										unsigned int steps = static_cast<unsigned int>(std::abs((*pulse)->Pulsetime() / pulse_dt));
 										if (relax_use_split_expm)
 										{
-											arma::cx_mat H_pulse_dense = H_dense + arma::cx_mat(pulse_operator);
+											arma::cx_mat H_pulse_dense = H_dense + operator_for_propagation_basis(pulse_operator);
 											arma::cx_mat U_half;
 											arma::cx_mat U_half_st;
 											build_unitary_half(H_pulse_dense, pulse_dt, U_half, U_half_st);
 											for (unsigned int n = 1; n <= steps; ++n)
 											{
-												split_step(rho, U_half, U_half_st, pulse_dt);
+												split_step(rho, U_half, U_half_st, pulse_relaxation_map_ptr, pulse_dt);
 
 												if (has_pulse_output && pulse_step_index < ExptValuesPulseOrientation.n_rows)
 												{
@@ -1087,15 +1160,16 @@ namespace RunSection
 										unsigned int steps = static_cast<unsigned int>(std::abs((*pulse)->Pulsetime() / pulse_dt));
 										if (relax_use_split_expm)
 										{
+											const arma::cx_mat pulse_operator_propagation = operator_for_propagation_basis(pulse_operator);
 											for (unsigned int n = 1; n <= steps; ++n)
 											{
 												double t = n * pulse_dt;
 												double pulse_factor = std::cos((*pulse)->Frequency() * t);
-												arma::cx_mat H_pulse_dense = H_dense + arma::cx_mat(pulse_operator) * pulse_factor;
+												arma::cx_mat H_pulse_dense = H_dense + pulse_operator_propagation * pulse_factor;
 												arma::cx_mat U_half;
 												arma::cx_mat U_half_st;
 												build_unitary_half(H_pulse_dense, pulse_dt, U_half, U_half_st);
-												split_step(rho, U_half, U_half_st, pulse_dt);
+												split_step(rho, U_half, U_half_st, pulse_relaxation_map_ptr, pulse_dt);
 
 												if (has_pulse_output && pulse_step_index < ExptValuesPulseOrientation.n_rows)
 												{
@@ -1153,7 +1227,7 @@ namespace RunSection
 											build_unitary_half(H_dense, pulse_dt, U_half, U_half_st);
 											for (unsigned int n = 1; n <= relax_steps; ++n)
 											{
-												split_step(rho, U_half, U_half_st, pulse_dt);
+												split_step(rho, U_half, U_half_st, pulse_relaxation_map_ptr, pulse_dt);
 
 												if (has_pulse_output && pulse_step_index < ExptValuesPulseOrientation.n_rows)
 												{
@@ -1199,10 +1273,57 @@ namespace RunSection
 							arma::cx_mat U_half;
 							arma::cx_mat U_half_st;
 							build_unitary_half(H_dense, dt, U_half, U_half_st);
-							for (int k = 0; k < num_steps; ++k)
+							const bool use_compact_split_propagator = densityPropagationPlan.useCompactFreeEvolutionMap;
+							if (use_compact_split_propagator)
 							{
-								record_expectation_rho(ExptValuesOrientation, k, rho);
-								split_step(rho, U_half, U_half_st, dt);
+								arma::cx_mat compact_split_propagator;
+								build_compact_split_propagator(U_half, U_half_st, timeevo_relaxation_map_ptr, dt, compact_split_propagator);
+								arma::cx_vec rho_vector;
+								space_thread.OperatorToSuperspace(rho, rho_vector);
+								for (int k = 0; k < num_steps; ++k)
+								{
+									record_expectation_vector(ExptValuesOrientation, k, rho_vector);
+									rho_vector = compact_split_propagator * rho_vector;
+								}
+							}
+							else if (propagateInPhenomenologicalBasis)
+							{
+								// Consecutive Strang steps share their
+								// neighboring Hamiltonian half-steps:
+								// U(1/2) R U(1/2) U(1/2) R U(1/2).
+								// Keep a half-step-shifted density matrix and
+								// transform each observable once. The exact
+								// same split evolution then needs two dense
+								// products per time point instead of four.
+								const arma::cx_mat U_full = U_half * U_half;
+								const arma::cx_mat U_full_st = U_full.t();
+								const arma::cx_mat U_half_inverse = arma::inv(U_half);
+								std::vector<arma::cx_mat> operatorsCentered(projection_counter);
+								for (int idx = 0; idx < projection_counter; ++idx)
+								{
+									operatorsCentered[idx] =
+										U_half_inverse.t() * operatorsPhenomenologicalBasis[idx] * U_half_inverse;
+								}
+
+								apply_unitary_half(rho, U_half, U_half_st);
+								for (int k = 0; k < num_steps; ++k)
+								{
+									for (int idx = 0; idx < projection_counter; ++idx)
+									{
+										ExptValuesOrientation(k, idx) = this->TraceDenseDense(operatorsCentered[idx], rho);
+									}
+									space_thread.ApplyPhenomenologicalRelaxationMapInBasisHilbert(*timeevo_relaxation_map_ptr, rho);
+									work_left = U_full * rho;
+									rho = work_left * U_full_st;
+								}
+							}
+							else
+							{
+								for (int k = 0; k < num_steps; ++k)
+								{
+									record_expectation_rho(ExptValuesOrientation, k, rho);
+									split_step(rho, U_half, U_half_st, timeevo_relaxation_map_ptr, dt);
+								}
 							}
 						}
 						else
@@ -1219,21 +1340,45 @@ namespace RunSection
 					{
 						arma::cx_mat rho0mat = rho;
 						arma::cx_mat A_dense = -arma::cx_double(0.0, 1.0) * arma::cx_mat(H) - arma::cx_mat(K);
-						arma::cx_mat A_star = arma::conj(A_dense);
 
-						arma::cx_mat L = arma::kron(A_star, Iden_dense) + arma::kron(Iden_dense, A_dense);
-						if (!relaxation_super.is_empty())
+						arma::cx_mat L = arma::kron(A_dense, Iden_dense) + arma::kron(Iden_dense, arma::conj(A_dense));
+						arma::cx_mat relaxation_super_orientation = relaxation_super;
+						if (use_phenomenological_relaxation)
 						{
-							L += relaxation_super;
+							arma::cx_mat phenomenological_super;
+							if (!space_thread.PhenomenologicalRelaxationSuperoperatorHilbert(phenomenological_relaxation_terms, phenomenological_basis_eigenvectors, phenomenological_super))
+							{
+								this->Log() << "Failed to construct phenomenological relaxation superoperator for this powder orientation." << std::endl;
+								continue;
+							}
+
+							if (relaxation_super_orientation.is_empty())
+								relaxation_super_orientation = phenomenological_super;
+							else
+								relaxation_super_orientation += phenomenological_super;
 						}
-						arma::cx_vec rhs = arma::vectorise(-rho0mat);
+						if (!relaxation_super_orientation.is_empty())
+						{
+							L += relaxation_super_orientation;
+						}
+						arma::cx_vec rhs;
+						if (!space_thread.OperatorToSuperspace(-rho0mat, rhs))
+						{
+							this->Log() << "Failed to convert Hilbert timeinf right-hand side to superspace convention." << std::endl;
+							continue;
+						}
 						arma::cx_vec sol = arma::solve(L, rhs);
 						if (sol.is_empty())
 						{
 							this->Log() << "Failed to solve timeinf Lyapunov equation in Hilbert space." << std::endl;
 							continue;
 						}
-						arma::cx_mat X = arma::reshape(sol, rho0mat.n_rows, rho0mat.n_cols);
+						arma::cx_mat X;
+						if (!space_thread.OperatorFromSuperspace(sol, X))
+						{
+							this->Log() << "Failed to convert Hilbert timeinf solution from superspace convention." << std::endl;
+							continue;
+						}
 
 						rho_integrated_partial[tid] += weight * X;
 					}
@@ -1247,20 +1392,28 @@ namespace RunSection
 					continue;
 				}
 
-				arma::cx_mat B = Binitial;
+				arma::cx_mat B = reuseInitialFactor
+									 ? orientationInvariantInitialFactor
+									 : this->FactorizeDensityMatrix(rho_initial, this->Log());
+				if (B.is_empty())
+				{
+					this->Log() << "Skipping powder orientation because the prepared initial density matrix could not be factorized." << std::endl;
+					continue;
+				}
 
-				auto record_expectation = [&](arma::mat &target, size_t row_index, const arma::cx_mat &state) {
+				auto record_expectation = [&](arma::mat &target, size_t row_index, const arma::cx_mat &state)
+				{
 					arma::cx_mat state_conj = arma::conj(state);
 					for (int idx = 0; idx < projection_counter; ++idx)
 					{
 						arma::cx_mat OB;
-						if (use_sparse_ops)
+						if (detectionOperators.useSparse)
 						{
-							OB = OperatorsSparse[idx] * state;
+							OB = detectionOperators.sparse[idx] * state;
 						}
 						else
 						{
-							OB = OperatorsDense[idx] * state;
+							OB = detectionOperators.dense[idx] * state;
 						}
 						double abs_trace = std::real(arma::accu(state_conj % OB));
 						target(row_index, idx) = abs_trace;
@@ -1285,7 +1438,7 @@ namespace RunSection
 				if (hasPulseSequence)
 				{
 					// Loop through all pulse sequences
-					for (const auto &seq : Pulsesequence)
+					for (const auto &seq : pulseSequence)
 					{
 						// Write which pulse in pulsesequence is calculating now
 						if (grid_num == 0)
@@ -1438,18 +1591,18 @@ namespace RunSection
 						for (int idx = 0; idx < projection_counter; idx++)
 						{
 							arma::cx_mat OB;
-							if (use_sparse_ops)
+							if (detectionOperators.useSparse)
 							{
-								OB = OperatorsSparse[idx] * B;
+								OB = detectionOperators.sparse[idx] * B;
 							}
 							else
 							{
-								OB = OperatorsDense[idx] * B;
+								OB = detectionOperators.dense[idx] * B;
 							}
-								double abs_trace = std::real(arma::accu(Bconj % OB));
-								double expected_value = abs_trace;
-								ExptValuesOrientation(k, idx) = expected_value;
-							}
+							double abs_trace = std::real(arma::accu(Bconj % OB));
+							double expected_value = abs_trace;
+							ExptValuesOrientation(k, idx) = expected_value;
+						}
 
 						// Update B using the Higham propagator
 						B = space_thread.HighamProp(H_prop, B, -arma::cx_double(0.0, 1.0) * dt, precision, M);
@@ -1466,7 +1619,7 @@ namespace RunSection
 						// Calculate the expected values for each transition operator
 						for (int idx = 0; idx < projection_counter; idx++)
 						{
-							double result = std::real(arma::cdot(prop_state, Operators[idx] * prop_state));
+							double result = std::real(arma::cdot(prop_state, detectionOperators.sparse[idx] * prop_state));
 							ExptValuesOrientation(0, idx) += result;
 						}
 						prop_state = space_thread.KrylovExpmGeneral(H_prop, prop_state, dt, krylovsize, dim);
@@ -1478,7 +1631,7 @@ namespace RunSection
 							// Calculate the expected values for each transition operator
 							for (int idx = 0; idx < projection_counter; idx++)
 							{
-								double result = std::real(arma::cdot(prop_state, Operators[idx] * prop_state));
+								double result = std::real(arma::cdot(prop_state, detectionOperators.sparse[idx] * prop_state));
 								ExptValuesOrientation(k, idx) += result;
 							}
 							// Update the state using the shared Krylov propagator.
@@ -1508,13 +1661,13 @@ namespace RunSection
 						for (int idx = 0; idx < projection_counter; ++idx)
 						{
 							arma::cx_mat OB;
-							if (use_sparse_ops)
+							if (detectionOperators.useSparse)
 							{
-								OB = OperatorsSparse[idx] * B;
+								OB = detectionOperators.sparse[idx] * B;
 							}
 							else
 							{
-								OB = OperatorsDense[idx] * B;
+								OB = detectionOperators.dense[idx] * B;
 							}
 							double abs_trace = std::real(arma::accu(Bconj % OB));
 							double expected_value = abs_trace;
@@ -1534,21 +1687,30 @@ namespace RunSection
 				{
 					// Compute integrated density matrix in Hilbert space via Sylvester/Lyapunov:
 					// A_state X + X A_state^† = -rho0, with A_state = -i H - K
-					arma::cx_mat rho0mat = B * B.st();
+					arma::cx_mat rho0mat = B * B.t();
 					arma::cx_mat A_dense = -arma::cx_double(0.0, 1.0) * arma::cx_mat(H) - arma::cx_mat(K);
-					arma::cx_mat A_star = arma::conj(A_dense);
 
-					// Solve (A_state^* ⊗ I + I ⊗ A_state) vec(X) = -vec(rho0)
+					// Solve using MolSpin's row-major superspace convention, vec(X^T).
 					// This corresponds to A_state X + X A_state^† = -rho0.
-					arma::cx_mat L = arma::kron(A_star, Iden_dense) + arma::kron(Iden_dense, A_dense);
-					arma::cx_vec rhs = arma::vectorise(-rho0mat);
+					arma::cx_mat L = arma::kron(A_dense, Iden_dense) + arma::kron(Iden_dense, arma::conj(A_dense));
+					arma::cx_vec rhs;
+					if (!space_thread.OperatorToSuperspace(-rho0mat, rhs))
+					{
+						this->Log() << "Failed to convert Hilbert timeinf right-hand side to superspace convention." << std::endl;
+						continue;
+					}
 					arma::cx_vec sol = arma::solve(L, rhs);
 					if (sol.is_empty())
 					{
 						this->Log() << "Failed to solve timeinf Lyapunov equation in Hilbert space." << std::endl;
 						continue;
 					}
-					arma::cx_mat X = arma::reshape(sol, rho0mat.n_rows, rho0mat.n_cols);
+					arma::cx_mat X;
+					if (!space_thread.OperatorFromSuperspace(sol, X))
+					{
+						this->Log() << "Failed to convert Hilbert timeinf solution from superspace convention." << std::endl;
+						continue;
+					}
 
 					rho_integrated_partial[tid] += weight * X;
 				}
@@ -1633,14 +1795,13 @@ namespace RunSection
 					this->Log() << "Writing time-integrated (time -> inf) polarisation." << std::endl;
 
 					this->Data() << this->RunSettings()->CurrentStep() << " ";
-					this->Data() << "inf"
-								 << " ";
+					this->Data() << "inf" << " ";
 					this->WriteStandardOutput(this->Data());
 
 					for (int idx = 0; idx < projection_counter; idx++)
 					{
-						double val = use_sparse_ops ? TraceSparseDense(OperatorsSparse[idx], rho_integrated)
-													: std::real(arma::trace(OperatorsDense[idx] * rho_integrated));
+						double val = detectionOperators.useSparse ? this->TraceSparseDense(detectionOperators.sparse[idx], rho_integrated)
+													: this->TraceDenseDense(detectionOperators.dense[idx], rho_integrated);
 						this->Data() << std::setprecision(12) << val << " ";
 					}
 					this->Data() << std::endl;
@@ -1701,7 +1862,7 @@ namespace RunSection
 
 			this->Log() << "\nDone with SpinSystem \"" << (*i)->Name() << "\"" << std::endl;
 		}
-		this->Data() << std::endl;
+		// this->Data() << std::endl;
 		return true;
 	}
 
@@ -1714,50 +1875,49 @@ namespace RunSection
 
 		std::vector<std::string> spinList;
 		bool CIDSP = false;
-		int m;
+		this->Properties()->Get("cidsp", CIDSP);
 
 		// Get header for each spin system
 		auto systems = this->SpinSystems();
 		for (auto i = systems.cbegin(); i != systems.cend(); i++)
 		{
+			bool transitionYields = false;
+			if (this->Properties()->Get("transitionyields", transitionYields) && transitionYields)
+			{
+				this->WriteTransitionYieldHeader((*i), _stream);
+				continue;
+			}
 
 			if (this->Properties()->GetList("spinlist", spinList, ','))
 			{
-				for (auto l = (*i)->spins_cbegin(); l != (*i)->spins_cend(); l++)
+				for (auto spin = (*i)->spins_cbegin(); spin != (*i)->spins_cend(); ++spin)
 				{
-					std::string spintype;
-
-					(*l)->Properties()->Get("type", spintype);
-
-					for (m = 0; m < (int)spinList.size(); m++)
+					for (const auto &spinName : spinList)
 					{
+						if ((*spin)->Name() != spinName)
+							continue;
 
-						if ((*l)->Name() == spinList[m])
+						if (CIDSP)
 						{
-							// Yields are written per transition
-							// bool CIDSP = false;
-							if (this->Properties()->Get("cidsp", CIDSP) && CIDSP == true)
+							auto transitions = (*i)->Transitions();
+							for (auto transition = transitions.cbegin(); transition != transitions.cend(); ++transition)
 							{
-								// Write each transition name
-								auto transitions = (*i)->Transitions();
-								for (auto j = transitions.cbegin(); j != transitions.cend(); j++)
-								{
-									_stream << (*i)->Name() << "." << (*l)->Name() << "." << (*j)->Name() << ".yield"
-											<< ".Ix ";
-									_stream << (*i)->Name() << "." << (*l)->Name() << "." << (*j)->Name() << ".yield"
-											<< ".Iy ";
-									_stream << (*i)->Name() << "." << (*l)->Name() << "." << (*j)->Name() << ".yield"
-											<< ".Iz ";
-								}
+								if ((*transition)->SourceState() == nullptr)
+									continue;
+
+								_stream << (*i)->Name() << "." << (*spin)->Name() << "." << (*transition)->Name() << ".yield"
+										<< ".Ix ";
+								_stream << (*i)->Name() << "." << (*spin)->Name() << "." << (*transition)->Name() << ".yield"
+										<< ".Iy ";
+								_stream << (*i)->Name() << "." << (*spin)->Name() << "." << (*transition)->Name() << ".yield"
+										<< ".Iz ";
 							}
-							else
-							{
-								// Write each state name
-								auto states = (*i)->States();
-								_stream << (*i)->Name() << "." << (*l)->Name() << ".Ix ";
-								_stream << (*i)->Name() << "." << (*l)->Name() << ".Iy ";
-								_stream << (*i)->Name() << "." << (*l)->Name() << ".Iz ";
-							}
+						}
+						else
+						{
+							_stream << (*i)->Name() << "." << (*spin)->Name() << ".Ix ";
+							_stream << (*i)->Name() << "." << (*spin)->Name() << ".Iy ";
+							_stream << (*i)->Name() << "." << (*spin)->Name() << ".Iz ";
 						}
 					}
 				}
@@ -1789,52 +1949,451 @@ namespace RunSection
 			}
 		}
 
+		// Historical HS direct spectra used the upper hemisphere by default.
+		// Keep that default, but make the already declared powderfullsphere
+		// keyword active so EasySpin-style Ci/full-sphere comparisons can be
+		// requested explicitly without changing the task API.
+		this->Properties()->Get("powderfullsphere", this->powderFullSphere);
+		this->Properties()->Get("powder_full_sphere", this->powderFullSphere);
+
 		return true;
 	}
 
+
+
+	// -----------------------------------------------------
+	// Task-specific helper methods
+	// -----------------------------------------------------
+	// -----------------------------------------------------
+	// TaskStaticHSDirectSpectra powder-grid and helper methods
+	// -----------------------------------------------------
 	bool TaskStaticHSDirectSpectra::CreateRotationMatrix(double &_alpha, double &_beta, double &_gamma, arma::mat &_R) const
 	{
-		arma::mat R1 = {
-			{std::cos(_alpha), -std::sin(_alpha), 0.0},
-			{std::sin(_alpha), std::cos(_alpha), 0.0},
-			{0.0, 0.0, 1.0}};
-
-		arma::mat R2 = {
-			{std::cos(_beta), 0.0, std::sin(_beta)},
-			{0.0, 1.0, 0.0},
-			{-std::sin(_beta), 0.0, std::cos(_beta)}};
-
-		arma::mat R3 = {
-			{std::cos(_gamma), -std::sin(_gamma), 0.0},
-			{std::sin(_gamma), std::cos(_gamma), 0.0},
-			{0.0, 0.0, 1.0}};
-
-		_R = R1 * R2 * R3;
-
-		return true;
+		return SpinAPI::CreateZYZRotationMatrix(_alpha, _beta, _gamma, _R);
 	}
 
-	bool TaskStaticHSDirectSpectra::CreateUniformGrid(int &_Npoints, std::vector<std::tuple<double, double, double>> &_uniformGrid) const
+	bool TaskStaticHSDirectSpectra::CreateUniformGrid(int &_Npoints, SpinAPI::PowderGrid &_uniformGrid) const
 	{
-		std::vector<double> theta(_Npoints);
-		std::vector<double> phi(_Npoints);
-		std::vector<double> weight(_Npoints);
+		const auto domain = this->powderFullSphere ? SpinAPI::PowderGridDomain::FullSphere
+												   : SpinAPI::PowderGridDomain::UpperHemisphere;
+		return SpinAPI::CreateUniformPowderGrid(_Npoints, domain, _uniformGrid);
+	}
 
-		_uniformGrid.resize(_Npoints);
+	bool TaskStaticHSDirectSpectra::CreateExplicitPowderGrid(SpinAPI::PowderGrid &_grid)
+	{
+		return this->ReadExplicitPowderGrid(_grid);
+	}
 
-		const double golden = arma::datum::pi * (1.0 + std::sqrt(5.0)); // not standard golden angle
-
-		for (int i = 0; i < _Npoints; ++i)
+	double TaskStaticHSDirectSpectra::TraceSparseDense(const arma::sp_cx_mat &_A, const arma::cx_mat &_B)
+	{
+		arma::cx_double sum = arma::cx_double(0.0, 0.0);
+		for (auto it = _A.begin(); it != _A.end(); ++it)
 		{
-			double index = static_cast<double>(i) + 0.5;
+			sum += (*it) * _B(it.col(), it.row());
+		}
+		return std::real(sum);
+	}
 
-			theta[i] = std::acos(1.0 - index / _Npoints);							// hemisphere
-			phi[i] = golden * index;												// hemisphere
-			weight[i] = std::sin(theta[i]) * 2 * arma::datum::pi / _Npoints; // 2 * pi for hemisphere
-			_uniformGrid[i] = {theta[i], phi[i], weight[i]};
+	double TaskStaticHSDirectSpectra::TraceDenseDense(const arma::cx_mat &_A, const arma::cx_mat &_B)
+	{
+		// Avoid constructing A * B just to read its trace. This contraction
+		// is called for every output operator, time point, and orientation.
+		arma::cx_double sum = arma::cx_double(0.0, 0.0);
+		for (arma::uword row = 0; row < _A.n_rows; ++row)
+		{
+			for (arma::uword col = 0; col < _A.n_cols; ++col)
+			{
+				sum += _A(row, col) * _B(col, row);
+			}
+		}
+		return std::real(sum);
+	}
+
+	void TaskStaticHSDirectSpectra::WriteTransitionYieldHeader(const SpinAPI::system_ptr &_system, std::ostream &_stream)
+	{
+		auto transitions = _system->Transitions();
+		for (auto transition = transitions.cbegin(); transition != transitions.cend(); ++transition)
+		{
+			if ((*transition)->SourceState() == nullptr)
+				continue;
+			_stream << _system->Name() << "." << (*transition)->Name() << ".yield ";
+		}
+	}
+
+	bool TaskStaticHSDirectSpectra::BuildDetectionOperators(const SpinAPI::system_ptr &_system,
+															SpinAPI::SpinSpace &_space,
+															bool _cidsp,
+															arma::uword _hilbertDimension,
+															DetectionOperatorSet &_operators,
+															std::ostream &_logstream) const
+	{
+		_operators = DetectionOperatorSet();
+		if (_system == nullptr || _hilbertDimension == 0)
+			return false;
+
+		const auto transitions = _system->Transitions();
+
+		bool transitionYields = false;
+		this->Properties()->Get("transitionyields", transitionYields);
+		if (transitionYields)
+		{
+			// Quantum-yield mode: each transition contributes rate * P_source.
+			// This matches the StaticSS powder helper and keeps the output
+			// column order identical to WriteTransitionYieldHeader().
+			arma::sp_cx_mat sourceProjector;
+			for (auto transition = transitions.cbegin(); transition != transitions.cend(); ++transition)
+			{
+				if ((*transition)->SourceState() == nullptr)
+					continue;
+
+				if (!_space.GetState((*transition)->SourceState(), sourceProjector))
+				{
+					_logstream << "Failed to obtain projection matrix onto state \""
+							   << (*transition)->Name() << "\" of SpinSystem \""
+							   << _system->Name() << "\"." << std::endl;
+					return false;
+				}
+
+				_operators.sparse.push_back((*transition)->Rate() * sourceProjector);
+			}
+		}
+		else
+		{
+			// Polarization mode: for each requested spin, project Ix/Iy/Iz.
+			// CIDSP keeps the historical ordering by nesting transition yields
+			// inside each selected spin.
+			std::vector<std::string> spinList;
+			if (this->Properties()->GetList("spinlist", spinList, ','))
+			{
+				for (auto spin = _system->spins_cbegin(); spin != _system->spins_cend(); ++spin)
+				{
+					for (const auto &spinName : spinList)
+					{
+						if ((*spin)->Name() != spinName)
+							continue;
+
+						arma::sp_cx_mat Iprojx;
+						arma::sp_cx_mat Iprojy;
+						arma::sp_cx_mat Iprojz;
+						if (!_space.CreateOperator(arma::conv_to<arma::sp_cx_mat>::from((*spin)->Sx()), (*spin), Iprojx) ||
+							!_space.CreateOperator(arma::conv_to<arma::sp_cx_mat>::from((*spin)->Sy()), (*spin), Iprojy) ||
+							!_space.CreateOperator(arma::conv_to<arma::sp_cx_mat>::from((*spin)->Sz()), (*spin), Iprojz))
+						{
+							return false;
+						}
+
+						if (_cidsp)
+						{
+							arma::sp_cx_mat sourceProjector;
+							for (auto transition = transitions.cbegin(); transition != transitions.cend(); ++transition)
+							{
+								if ((*transition)->SourceState() == nullptr)
+									continue;
+
+								if (!_space.GetState((*transition)->SourceState(), sourceProjector))
+								{
+									_logstream << "Failed to obtain projection matrix onto state \""
+											   << (*transition)->Name() << "\" of SpinSystem \""
+											   << _system->Name() << "\"." << std::endl;
+									return false;
+								}
+
+								_operators.sparse.push_back((*transition)->Rate() * Iprojx * sourceProjector);
+								_operators.sparse.push_back((*transition)->Rate() * Iprojy * sourceProjector);
+								_operators.sparse.push_back((*transition)->Rate() * Iprojz * sourceProjector);
+							}
+						}
+						else
+						{
+							_operators.sparse.push_back(Iprojx);
+							_operators.sparse.push_back(Iprojy);
+							_operators.sparse.push_back(Iprojz);
+						}
+					}
+				}
+			}
+		}
+
+		double total_nnz = 0.0;
+		double total_size = 0.0;
+		for (const auto &op : _operators.sparse)
+		{
+			total_nnz += static_cast<double>(op.n_nonzero);
+			total_size += static_cast<double>(op.n_rows) * op.n_cols;
+		}
+
+		_operators.useSparse = (total_size > 0.0) && ((total_nnz / total_size) < 0.1);
+		if (!_operators.useSparse)
+		{
+			_operators.dense.resize(_operators.sparse.size());
+			for (size_t idx = 0; idx < _operators.sparse.size(); ++idx)
+			{
+				_operators.dense[idx] = arma::cx_mat(_operators.sparse[idx]);
+			}
+		}
+
+		// Compact density-map propagation keeps rho vectorized. Precompute the
+		// matching trace contractions once so observables do not require a
+		// matrix conversion at every output point.
+		const arma::uword densityDimension = _hilbertDimension * _hilbertDimension;
+		_operators.vectorized.resize(_operators.sparse.size());
+		for (size_t idx = 0; idx < _operators.sparse.size(); ++idx)
+		{
+			_operators.vectorized[idx].zeros(densityDimension);
+			for (auto entry = _operators.sparse[idx].begin(); entry != _operators.sparse[idx].end(); ++entry)
+			{
+				// OperatorToSuperspace stores rho(row,col) at row * dim + col.
+				// trace(O rho) therefore uses O(row,col) at col * dim + row.
+				_operators.vectorized[idx](entry.col() * _hilbertDimension + entry.row()) = *entry;
+			}
 		}
 
 		return true;
+	}
+
+	bool TaskStaticHSDirectSpectra::BuildInitialDensityMatrix(const SpinAPI::system_ptr &_system,
+															  SpinAPI::SpinSpace &_space,
+															  arma::cx_mat &_rho0,
+															  std::ostream &_logstream)
+	{
+		auto initial_states = _system->InitialState();
+		if (initial_states.empty())
+			return false;
+
+		std::vector<double> weights = _system->Weights();
+		bool use_weights = (initial_states.size() > 1 && weights.size() == initial_states.size());
+		if (weights.size() > 1 && !use_weights)
+		{
+			_logstream << "Ignoring initial-state weights for SpinSystem \"" << _system->Name()
+					   << "\" because the number of weights does not match the number of initial states." << std::endl;
+		}
+
+		if (use_weights)
+		{
+			const double sum_weights = std::accumulate(weights.begin(), weights.end(), 0.0);
+			if (sum_weights > 0.0)
+			{
+				for (double &weight : weights)
+					weight /= sum_weights;
+			}
+			else
+			{
+				_logstream << "Ignoring non-positive initial-state weights for SpinSystem \"" << _system->Name()
+						   << "\"." << std::endl;
+				use_weights = false;
+			}
+		}
+
+		bool assigned = false;
+		for (size_t idx = 0; idx < initial_states.size(); ++idx)
+		{
+			arma::cx_mat tmp_rho0;
+			if (initial_states[idx] == nullptr)
+			{
+				auto thermal_hamiltonian_list = _system->ThermalHamiltonianList();
+				double temperature = _system->Temperature();
+				_logstream << "Initial state = thermal, T = " << temperature << " K." << std::endl;
+				if (!_space.GetThermalState(_space, temperature, thermal_hamiltonian_list, tmp_rho0))
+				{
+					_logstream << "Failed to obtain thermal initial state for SpinSystem \"" << _system->Name() << "\"." << std::endl;
+					continue;
+				}
+			}
+			else
+			{
+				if (!_space.GetState(initial_states[idx], tmp_rho0))
+				{
+					_logstream << "Failed to obtain projection matrix onto state \"" << initial_states[idx]->Name()
+							   << "\", initial state of SpinSystem \"" << _system->Name() << "\"." << std::endl;
+					continue;
+				}
+			}
+
+			const double weight = use_weights ? weights[idx] : 1.0;
+			if (!assigned)
+			{
+				_rho0 = weight * tmp_rho0;
+				assigned = true;
+			}
+			else
+			{
+				_rho0 += weight * tmp_rho0;
+			}
+		}
+
+		if (!assigned)
+			return false;
+
+		const arma::cx_double rho_trace = arma::trace(_rho0);
+		if (std::abs(rho_trace) == 0.0)
+			return false;
+
+		_rho0 /= rho_trace;
+		return true;
+	}
+
+	arma::cx_mat TaskStaticHSDirectSpectra::FactorizeDensityMatrix(const arma::cx_mat &_rho0, std::ostream &_logstream)
+	{
+		const arma::cx_mat hermitian_rho0 = 0.5 * (_rho0 + _rho0.t());
+		arma::vec eigenvalues;
+		arma::cx_mat eigenvectors;
+		if (!arma::eig_sym(eigenvalues, eigenvectors, hermitian_rho0))
+		{
+			_logstream << "Failed to diagonalize the initial density matrix in Hilbert space." << std::endl;
+			return arma::cx_mat();
+		}
+
+		const double max_eigenvalue = eigenvalues.is_empty() ? 0.0 : std::abs(eigenvalues.max());
+		const double tolerance = std::max(1.0e-12, 1.0e-10 * max_eigenvalue);
+		if (eigenvalues.min() < -tolerance)
+		{
+			_logstream << "Initial density matrix has significantly negative eigenvalues (" << eigenvalues.min()
+					   << "). Cannot construct Hilbert-space factorization." << std::endl;
+			return arma::cx_mat();
+		}
+
+		arma::uvec keep = arma::find(eigenvalues > tolerance);
+		if (keep.is_empty())
+		{
+			_logstream << "Initial density matrix is numerically rank-zero after factorization." << std::endl;
+			return arma::cx_mat();
+		}
+
+		arma::cx_mat B(_rho0.n_rows, keep.n_elem, arma::fill::zeros);
+		for (arma::uword col = 0; col < keep.n_elem; ++col)
+		{
+			const arma::uword idx = keep(col);
+			B.col(col) = std::sqrt(eigenvalues(idx)) * eigenvectors.col(idx);
+		}
+
+		return B;
+	}
+
+	bool TaskStaticHSDirectSpectra::AddPhenomenologicalTerm(const SpinAPI::operator_ptr &_relaxationOperator,
+															std::vector<SpinAPI::HilbertRelaxationPhenomenologicalTerm> &_terms)
+	{
+		if (_relaxationOperator == nullptr ||
+			_relaxationOperator->Type() != SpinAPI::OperatorType::RelaxationPhenomenological ||
+			_relaxationOperator->Rate1() < 0.0 ||
+			_relaxationOperator->Rate2() < 0.0)
+		{
+			return false;
+		}
+
+		if (_relaxationOperator->Rate1() == 0.0 && _relaxationOperator->Rate2() == 0.0)
+			return false;
+
+		SpinAPI::HilbertRelaxationPhenomenologicalTerm term;
+		term.populationRate = _relaxationOperator->Rate1();
+		term.coherenceRate = _relaxationOperator->Rate2();
+		_terms.push_back(term);
+		return true;
+	}
+
+	bool TaskStaticHSDirectSpectra::DiagonalizeRelaxationBasis(const arma::sp_cx_mat &_basisHamiltonian,
+															   arma::cx_mat &_basisEigenvectors,
+															   std::ostream &_logstream)
+	{
+		arma::vec eigenvalues;
+		if (!arma::eig_sym(eigenvalues, _basisEigenvectors, arma::cx_mat(_basisHamiltonian)))
+		{
+			_logstream << "Failed to diagonalize the Hamiltonian used for phenomenological relaxation." << std::endl;
+			return false;
+		}
+
+		return true;
+	}
+
+	TaskStaticHSDirectSpectra::DensityPropagationPlan TaskStaticHSDirectSpectra::EvaluateDensityPropagationPlan(arma::uword _hilbertDimension,
+																												int _numSteps,
+																												bool _methodTimeEvo,
+																												bool _splitExpmEnabled,
+																												bool _freeEvolutionIsTimeIndependent)
+	{
+		DensityPropagationPlan plan;
+		plan.hilbertDimension = _hilbertDimension;
+
+		constexpr arma::uword maxCompactDensityDimension = 64;
+		constexpr double maxCompactMapMiB = 64.0;
+
+		auto finish = [&](const std::string &_decision, const std::string &_reason)
+		{
+			std::ostringstream msg;
+			msg << _decision << ": " << _reason
+				<< " (Hilbert dim = " << plan.hilbertDimension
+				<< ", density dim = " << plan.densityDimension
+				<< ", dense map ~= " << std::fixed << std::setprecision(3) << plan.denseMapMiB
+				<< " MiB, steps = " << _numSteps << ").";
+			plan.reason = msg.str();
+		};
+
+		if (_hilbertDimension == 0)
+		{
+			finish("direct propagation selected", "empty Hilbert space");
+			return plan;
+		}
+
+		if (_hilbertDimension > std::numeric_limits<arma::uword>::max() / _hilbertDimension)
+		{
+			finish("direct propagation selected", "density dimension would overflow");
+			return plan;
+		}
+
+		plan.densityDimension = _hilbertDimension * _hilbertDimension;
+		const long double mapBytes = static_cast<long double>(plan.densityDimension) *
+									static_cast<long double>(plan.densityDimension) *
+									static_cast<long double>(sizeof(arma::cx_double));
+		plan.denseMapMiB = static_cast<double>(mapBytes / (1024.0L * 1024.0L));
+
+		if (!_methodTimeEvo)
+		{
+			finish("direct propagation selected", "compact finite-step maps are only useful for time-evolution output");
+			return plan;
+		}
+
+		if (!_splitExpmEnabled)
+		{
+			finish("direct propagation selected", "the selected propagation method does not use a reusable relaxation split step");
+			return plan;
+		}
+
+		if (!_freeEvolutionIsTimeIndependent)
+		{
+			finish("direct propagation selected", "the propagation segment is time-dependent, so one finite-step map cannot be reused");
+			return plan;
+		}
+
+		if (_numSteps <= 1)
+		{
+			finish("direct propagation selected", "the map construction cost is not amortized for a single output step");
+			return plan;
+		}
+
+		if (plan.densityDimension > maxCompactDensityDimension)
+		{
+			std::ostringstream reason;
+			reason << "density dimension exceeds compact-map threshold " << maxCompactDensityDimension;
+			finish("direct propagation selected", reason.str());
+			return plan;
+		}
+
+		if (plan.denseMapMiB > maxCompactMapMiB)
+		{
+			std::ostringstream reason;
+			reason << "estimated dense map storage exceeds " << maxCompactMapMiB << " MiB";
+			finish("direct propagation selected", reason.str());
+			return plan;
+		}
+
+		if (static_cast<arma::uword>(_numSteps) <= plan.densityDimension)
+		{
+			finish("direct propagation selected", "the number of time steps is too small to amortize building one propagated basis column per density component");
+			return plan;
+		}
+
+		plan.useCompactFreeEvolutionMap = true;
+		finish("compact finite-step map selected", "small, time-independent density propagation with enough time steps to amortize the map build");
+		return plan;
 	}
 
 }
