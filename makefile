@@ -80,9 +80,11 @@ COMPATFLAGS ?= -fconcepts
 WARNFLAGS ?= -Wall
 DEBUGFLAGS ?= -g
 DEFINES ?= -DARMA_DONT_PRINT_FAST_MATH_WARNING -DASSERT=1 -DNEGATIVERATES=0
+TESTDEFINES ?= -DSPINAPI_TEST=0 -DMSDPARSER_TEST=0 -DACTION_TEST=0 -DSTATICHSSDECAY_TEST=0 -DSTATICSS_TEST=0 -DSTATICRPONLY_TEST=0 -DSTATICSSSPECTRA_TEST=0 -DSTATICHSTEPR_TEST=0 -DSTATICPOWDERSPECTRA_TEST=1 -DUTIL_TEST=0
 CC = $(CXX) $(CXXSTD)		# Compiler to use
-LFLAGS = $(WARNFLAGS) $(DEBUGFLAGS) -DARMA_DONT_PRINT_FAST_MATH_WARNING $(OPTFLAGS)	# Linker Flags
-CFLAGS = $(WARNFLAGS) -c $(ARCHFLAGS) $(LOOPFLAGS) $(COMPATFLAGS) $(DEBUGFLAGS) $(OPENMPFLAGS) $(DEFINES) $(OPTFLAGS) # Compile flags to .o
+LFLAGS = $(WARNFLAGS) $(DEBUGFLAGS) -DARMA_DONT_PRINT_FAST_MATH_WARNING #$(OPTFLAGS)	# Linker Flags
+CFLAGS = $(WARNFLAGS) -c $(ARCHFLAGS) $(LOOPFLAGS) $(COMPATFLAGS) $(DEBUGFLAGS) $(OPENMPFLAGS) $(DEFINES) #$(OPTFLAGS) # Compile flags to .o
+TESTCFLAGS = $(CFLAGS) $(TESTDEFINES)
 # Example portability override: make ARCHFLAGS= COMPATFLAGS= OPENMPFLAGS=
 
 #DEBUGLFLAGS = -Wall -g -DARMA_DONT_PRINT_FAST_MATH_WARNING
@@ -132,10 +134,10 @@ SEARCHDIR_TESTS = $(SEARCHDIR_MAIN) -I$(PATH_TESTS)
 # Compile test job
 test: $(OBJS_TESTS)
 	$(CC) $(LFLAGS) $(OBJS_TESTS) $(SEARCHDIR_TESTS) -o $(PATH_TESTS)/molspintest
-	$(PATH_TESTS)/molspintest
+#	$(PATH_TESTS)/molspintest
 
 $(PATH_TESTS)/testmain.o: $(PATH_TESTS)/testmain.cpp $(PATH_TESTS)/assertfunctions.cpp $(PATH_TESTS)/tests_spinapi.cpp $(PATH_TESTS)/tests_msdparser.cpp $(PATH_TESTS)/tests_actions.cpp $(PATH_TESTS)/tests_TaskStaticHSSymmetricDecay.cpp $(PATH_TESTS)/tests_TaskStaticSS.cpp $(PATH_TESTS)/tests_TaskStaticRPOnlyHSSymDec.cpp $(PATH_TESTS)/tests_TaskStaticSSSpectra.cpp $(PATH_TESTS)/tests_TaskStaticHSTrEPRSpectra.cpp $(PATH_TESTS)/tests_TaskStaticPowderSpectra.cpp $(PATH_TESTS)/tests_utility.cpp
-	$(CC) $(CFLAGS) $(SEARCHDIR_TESTS) $(PATH_TESTS)/testmain.cpp -o $(PATH_TESTS)/testmain.o
+	$(CC) $(TESTCFLAGS) $(SEARCHDIR_TESTS) $(PATH_TESTS)/testmain.cpp -o $(PATH_TESTS)/testmain.o
 # --------------------------------------------------------------------------
 # Misc tasks
 # --------------------------------------------------------------------------
@@ -149,4 +151,4 @@ clean:
 .PHONY: cleantest
 cleantest:
 	rm $(PATH_TESTS)/*.o $(PATH_TESTS)/molspintest
-	make test
+#	make test

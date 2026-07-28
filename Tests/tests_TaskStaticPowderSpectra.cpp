@@ -153,6 +153,8 @@ namespace
 			return false;
 
 		_data = datastream.str();
+		std::string _log = logstream.str();
+		std::cout << _data << "\n" << _log << std::endl; 
 		return true;
 	}
 
@@ -1004,7 +1006,7 @@ bool test_task_staticpowder_timeevo_ss_hs_agree()
 		std::string hs_data;
 		std::string props = "method=timeevo;integration=false;cidsp=false;spinlist=E;powdersamplingpoints=5;"
 							"hamiltonianh0list=zeeman;printtimeframe=pulse;integrationtimeframe=pulse;"
-							"pulsesequence=[\"cw 0\"];totaltime=0;timestep=0.1;";
+							"pulsesequence=[\"cw 0\"];totaltime=1;timestep=0.1;";
 
 		ok &= RunPowderTask(system.spinsys, "staticss-powderspectra", props, ss_data);
 		ok &= RunPowderTask(system.spinsys, "statichs-direct-spectra", props + "propagationmethod=normal;", hs_data);
@@ -1066,7 +1068,7 @@ bool test_task_staticpowder_pulse_oneelectron_thermal_hs_ss_agree()
 	std::string ss_data;
 	std::string hs_data;
 	std::string props = "method=timeevo;integration=false;cidsp=false;spinlist=E;powdersamplingpoints=7;"
-						"hamiltonianh0list=zeeman;totaltime=0;timestep=0.1;printtimeframe=pulse;"
+						"hamiltonianh0list=zeeman;totaltime=1;timestep=0.1;printtimeframe=pulse;"
 						"integrationtimeframe=pulse;pulsesequence=[\"cw 0\"];";
 
 	ok &= RunPowderTask(system.spinsys, "staticss-powderspectra", props, ss_data);
@@ -1100,7 +1102,7 @@ bool test_task_staticpowder_instantpulse_oneelectron_thermal_hs_ss_agree()
 	std::string ss_data;
 	std::string hs_data;
 	std::string props = "method=timeevo;integration=false;cidsp=false;spinlist=E;powdersamplingpoints=7;"
-						"hamiltonianh0list=zeeman;totaltime=0;timestep=0.1;printtimeframe=full;"
+						"hamiltonianh0list=zeeman;totaltime=1;timestep=0.1;printtimeframe=full;"
 						"integrationtimeframe=full;pulsesequence=[\"inst 1.0\"];";
 
 	ok &= RunPowderTask(system.spinsys, "staticss-powderspectra", props, ss_data);
@@ -1137,7 +1139,7 @@ bool test_task_staticpowder_longpulse_oneelectron_thermal_hs_ss_agree()
 	std::string ss_data;
 	std::string hs_data;
 	std::string props = "method=timeevo;integration=false;cidsp=false;spinlist=E;powdersamplingpoints=7;"
-						"hamiltonianh0list=zeeman;totaltime=0;timestep=0.1;printtimeframe=pulse;"
+						"hamiltonianh0list=zeeman;totaltime=1;timestep=0.1;printtimeframe=pulse;"
 						"integrationtimeframe=pulse;pulsesequence=[\"lp 0\"];";
 
 	ok &= RunPowderTask(system.spinsys, "staticss-powderspectra", props, ss_data);

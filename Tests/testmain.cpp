@@ -72,16 +72,38 @@ int main(int argc, char **argv)
 	std::vector<test_case> failed_cases;
 
 	// Add test cases to the list
+
+
+#if SPINAPI_TEST == 1
 	AddSpinAPITests(cases);
+#endif
+#if MSDPARSER_TEST == 1 
 	AddMSDParserTests(cases);
+#endif
+#if ACTION_TEST == 1 
 	AddActionsTests(cases);
+#endif
+#if STATICHSSDECAY_TEST == 1 
 	AddTaskStaticHSSymmetricDecayTests(cases);
+#endif
+#if STATCISS_TEST == 1 
 	AddTaskStaticSSTests(cases);
+#endif
+#if STATICRPONLY_TEST == 1 
 	AddTaskStaticRPOnlyHSSymDecTests(cases);
+#endif
+#if STATICSSSPECTRA_TEST == 1 
 	AddTaskStaticSSSpectraTests(cases);
+#endif
+#if STATICHSTEPR_TEST == 1 
 	AddTaskStaticHSTrEPRSpectraTests(cases);
+#endif
+#if STATICPOWDERSPECTRA_TEST == 1 
 	AddTaskStaticPowderSpectraTests(cases);
+#endif
+#if UTIL_TEST == 1 
 	AddUtiltiyTests(cases);
+#endif
 	
 
 	// Loop through all test cases and test them

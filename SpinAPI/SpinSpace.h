@@ -396,7 +396,7 @@ namespace SpinAPI
 		struct TimeAdaptiveKrylovCache
 		{
 			int KrylovDim = 0;
-			double KrylovDimTol = 0.0;
+			double KrylovDimTol = 1e-8;
 		};
 
 		double Adjusth(double R, double safety, double f1, double f2, double h, int order = 4);
