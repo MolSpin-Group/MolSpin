@@ -158,7 +158,7 @@ namespace
 		return true;
 	}
 
-	bool ParseDataRows(const std::string &_data, std::vector<std::vector<double>> &_rows)
+	bool ParseDataRows(const std::string &_data, std::vector<std::vector<double>> &_rows, std::vector<double> *_times = nullptr)
 	{
 		std::istringstream stream(_data);
 		std::string line;
@@ -176,11 +176,23 @@ namespace
 			std::istringstream line_stream(line);
 			std::string token;
 			int token_index = 0;
+			double row_time = 0.0;
 			std::vector<double> row;
 			while (line_stream >> token)
 			{
 				if (token_index < 2)
 				{
+					if (token_index == 1 && _times != nullptr)
+					{
+						try
+						{
+							row_time = std::stod(token);
+						}
+						catch (const std::exception &)
+						{
+							return false;
+						}
+					}
 					token_index++;
 					continue;
 				}
@@ -215,6 +227,8 @@ namespace
 				{
 					_rows.push_back(row);
 				}
+				if (_times != nullptr)
+					_times->push_back(row_time);
 			}
 		}
 
@@ -299,18 +313,78 @@ namespace
 		return true;
 	}
 
-	void TrimDuplicateTailRow(std::vector<std::vector<double>> &_rows, double _tol)
+	bool RowsCloseOnSharedTimeline(const std::vector<double> &_a_times,
+								  const std::vector<std::vector<double>> &_a_rows,
+								  const std::vector<double> &_b_times,
+								  const std::vector<std::vector<double>> &_b_rows,
+								  double _time_tol,
+								  double _value_tol)
 	{
-		if (_rows.size() < 2)
-			return;
-		if (_rows[_rows.size() - 1].size() != _rows[_rows.size() - 2].size())
-			return;
-		for (size_t i = 0; i < _rows.back().size(); ++i)
+		if (_a_times.size() != _a_rows.size() || _b_times.size() != _b_rows.size())
+			return false;
+
+		auto row_close = [_value_tol](const std::vector<double> &_a, const std::vector<double> &_b) {
+			if (_a.size() != _b.size())
+				return false;
+			for (size_t i = 0; i < _a.size(); ++i)
+			{
+				if (!equal_double(_a[i], _b[i], _value_tol))
+					return false;
+			}
+			return true;
+		};
+
+		auto unique_indices = [&](const std::vector<double> &_times,
+								  const std::vector<std::vector<double>> &_rows,
+								  std::vector<size_t> &_indices) {
+			for (size_t i = 0; i < _times.size(); ++i)
+			{
+				if (!_indices.empty() && std::abs(_times[i] - _times[_indices.back()]) <= _time_tol)
+				{
+					if (!row_close(_rows[i], _rows[_indices.back()]))
+						return false;
+					continue;
+				}
+				if (!_indices.empty() && _times[i] < _times[_indices.back()])
+					return false;
+				_indices.push_back(i);
+			}
+			return true;
+		};
+
+		std::vector<size_t> a_indices;
+		std::vector<size_t> b_indices;
+		if (!unique_indices(_a_times, _a_rows, a_indices) ||
+			!unique_indices(_b_times, _b_rows, b_indices))
+			return false;
+
+		size_t a = 0;
+		size_t b = 0;
+		size_t matching_times = 0;
+		while (a < a_indices.size() && b < b_indices.size())
 		{
-			if (!equal_double(_rows[_rows.size() - 1][i], _rows[_rows.size() - 2][i], _tol))
-				return;
+			double delta = _a_times[a_indices[a]] - _b_times[b_indices[b]];
+			if (std::abs(delta) <= _time_tol)
+			{
+				if (!row_close(_a_rows[a_indices[a]], _b_rows[b_indices[b]]))
+					return false;
+				++matching_times;
+				++a;
+				++b;
+			}
+			else if (delta < 0.0)
+			{
+				++a;
+			}
+			else
+			{
+				++b;
+			}
 		}
-		_rows.pop_back();
+
+		// Every point on the shorter unique timeline must have a physical-time
+		// match. One task may additionally report a terminal endpoint.
+		return matching_times > 0 && matching_times == std::min(a_indices.size(), b_indices.size());
 	}
 
 	std::shared_ptr<SpinAPI::SpinSystem> BuildXBandRwaSystem(double _fieldT, double _rotatingFrameFieldT, double _h1FieldT, double _transverseH0FieldT)
@@ -1110,18 +1184,17 @@ bool test_task_staticpowder_instantpulse_oneelectron_thermal_hs_ss_agree()
 
 	std::vector<std::vector<double>> ss_rows;
 	std::vector<std::vector<double>> hs_rows;
-	ok &= ParseDataRows(ss_data, ss_rows);
-	ok &= ParseDataRows(hs_data, hs_rows);
-
-	TrimDuplicateTailRow(hs_rows, 1e-12);
+	std::vector<double> ss_times;
+	std::vector<double> hs_times;
+	ok &= ParseDataRows(ss_data, ss_rows, &ss_times);
+	ok &= ParseDataRows(hs_data, hs_rows, &hs_times);
 
 	if (ss_rows.empty() || hs_rows.empty())
 		return false;
 
-	ok &= (ss_rows.size() == hs_rows.size());
 	ok &= (ss_rows.front().size() == 3);
 	ok &= (hs_rows.front().size() == 3);
-	ok &= RowsClose(ss_rows, hs_rows, 1e-10);
+	ok &= RowsCloseOnSharedTimeline(ss_times, ss_rows, hs_times, hs_rows, 1e-12, 1e-10);
 
 	return ok;
 }

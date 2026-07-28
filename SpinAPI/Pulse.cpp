@@ -343,9 +343,9 @@ namespace SpinAPI
 		{
 			spin_was_found = false;
 			str = RunSection::trim(str);
-			str = RunSection::lowercase(str);
 
-			// Get the spin with the name held by str
+			// Spin names are case-sensitive identifiers throughout SpinAPI.
+			// Trim list whitespace, but preserve the name exactly as supplied.
 			for (auto i = _spinlist.cbegin(); i != _spinlist.cend(); i++)
 			{
 				if ((*i)->Name().compare(str) == 0)

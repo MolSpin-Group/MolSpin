@@ -63,6 +63,7 @@ set(SOURCES_SPINAPI
         ${PATH_SOURCE_SPINAPI}/Trajectory.cpp
         ${PATH_SOURCE_SPINAPI}/SubSystem.cpp
         ${PATH_SOURCE_SPINAPI}/Function.cpp
+        ${PATH_SOURCE_SPINAPI}/PulseSequence.cpp
         ${PATH_SOURCE_SPINAPI}/PowderGrid.cpp
 )
 
@@ -85,6 +86,7 @@ set(SOURCES_RUNSECTION
         ${PATH_SOURCE_RUNSECTION}/Settings.cpp
         ${PATH_SOURCE_RUNSECTION}/OutputHandler.cpp
         ${PATH_SOURCE_RUNSECTION}/Utility.cpp
+        ${PATH_SOURCE_RUNSECTION}/CubicSpline.cpp
 )
 
 # --------------------------------------------------------------------------
@@ -171,3 +173,6 @@ target_link_libraries(molspin molspin_core ${ARMADILLO_LIBRARIES} -lopenblas -ll
 # Unit tests
 add_executable(molspintest ${SOURCES_TESTS})
 target_link_libraries(molspintest molspin_core ${ARMADILLO_LIBRARIES} -lopenblas -llapack -fopenmp)
+
+enable_testing()
+add_test(NAME molspintest COMMAND molspintest)

@@ -2,6 +2,9 @@
 /molspin
 /molspin-superlu
 /Tests/molspintest
+/Tests/Makefile
+/Tests/CMakeFiles/
+/Tests/cmake_install.cmake
 
 # Ignore all binaries
 *.o

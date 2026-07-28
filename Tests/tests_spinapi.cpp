@@ -17,6 +17,7 @@
 #include "SpinSpace.h"
 #include "Function.h"
 #include "Pulse.h"
+#include "PulseSequence.h"
 #include "PowderGrid.h"
 #include <cmath>
 #include <sstream>
@@ -1737,6 +1738,100 @@ bool test_spinapi_longpulse()
 }
 //////////////////////////////////////////////////////////////////////////////
 
+// Named SpinAPI objects are case-sensitive. Pulse spin-group parsing must
+// therefore preserve the spelling used by the corresponding Spin object.
+bool test_spinapi_pulse_group_preserves_spin_name_case()
+{
+	auto spin = std::make_shared<SpinAPI::Spin>("E", "type=electron;spin=1/2;");
+	SpinAPI::Pulse pulse(
+		"pulse",
+		"type=longpulsestaticfield;group= E ;field=0 0 1;pulsetime=1;"
+		"prefactorlist=1;commonprefactorlist=true;ignoretensorslist=true;");
+
+	std::vector<SpinAPI::spin_ptr> spins{spin};
+	bool isCorrect = pulse.ParseSpinGroups(spins);
+	const auto group = pulse.Group();
+	isCorrect &= (group.size() == 1);
+	if (group.size() == 1)
+		isCorrect &= (group.front() == spin);
+
+	return isCorrect;
+}
+//////////////////////////////////////////////////////////////////////////////
+
+// PulseSequence resolves object names using the same case-sensitive naming
+// convention as SpinSystem::*_find().
+bool test_spinapi_pulse_sequence_preserves_object_name_case()
+{
+	auto spin = std::make_shared<SpinAPI::Spin>("E", "type=electron;spin=1/2;");
+	auto pulse = std::make_shared<SpinAPI::Pulse>(
+		"CW",
+		"type=longpulsestaticfield;group=E;field=0 0 1;pulsetime=1;"
+		"prefactorlist=1;commonprefactorlist=true;ignoretensorslist=true;");
+	std::vector<SpinAPI::spin_ptr> spins{spin};
+	if (!pulse->ParseSpinGroups(spins))
+		return false;
+
+	SpinAPI::PulseSequence sequence("sequence", "tau=1;offset=2;sequence=CW,tau;");
+	std::vector<SpinAPI::pulse_ptr> pulses{pulse};
+	std::vector<SpinAPI::interaction_ptr> interactions;
+	std::vector<SpinAPI::transition_ptr> transitions;
+
+	if (!sequence.ParsePulseSequence(pulses, interactions, transitions) ||
+		!sequence.IsValid() ||
+		sequence.size() != 1)
+	{
+		return false;
+	}
+
+	SpinAPI::PulseSequence copied(sequence);
+	SpinAPI::PulseSequence assigned("assigned", "offset=0;sequence=CW,tau;tau=1;");
+	assigned = sequence;
+	return equal_double(copied.Get_offset(), 2.0) &&
+		   equal_double(assigned.Get_offset(), 2.0);
+}
+//////////////////////////////////////////////////////////////////////////////
+
+// In a multi-system propagation, inactive sequences must not shift the output
+// slot used by a later active sequence.
+bool test_spinapi_pulse_sequence_operator_preserves_system_index()
+{
+	auto spin = std::make_shared<SpinAPI::Spin>("E", "type=electron;spin=1/2;");
+	auto pulse = std::make_shared<SpinAPI::Pulse>(
+		"CW",
+		"type=longpulsestaticfield;group=E;field=1 0 0;pulsetime=1;"
+		"prefactorlist=1,1,1;commonprefactorlist=false;ignoretensorslist=true;");
+	std::vector<SpinAPI::spin_ptr> spins{spin};
+	if (!pulse->ParseSpinGroups(spins))
+		return false;
+
+	std::vector<SpinAPI::pulse_ptr> pulses{pulse};
+	std::vector<SpinAPI::interaction_ptr> interactions;
+	std::vector<SpinAPI::transition_ptr> transitions;
+	auto inactive = std::make_shared<SpinAPI::PulseSequence>(
+		"inactive", "tau=0;offset=5;sequence=CW,tau;");
+	auto active = std::make_shared<SpinAPI::PulseSequence>(
+		"active", "tau=0;offset=0;sequence=CW,tau;");
+	if (!inactive->ParsePulseSequence(pulses, interactions, transitions) ||
+		!active->ParsePulseSequence(pulses, interactions, transitions))
+	{
+		return false;
+	}
+
+	auto inactiveSpace = std::make_shared<SpinAPI::SpinSpace>(spin);
+	auto activeSpace = std::make_shared<SpinAPI::SpinSpace>(spin);
+	inactiveSpace->UseSuperoperatorSpace(true);
+	activeSpace->UseSuperoperatorSpace(true);
+	arma::cx_vec rho(activeSpace->SpaceDimensions(), arma::fill::zeros);
+
+	auto operators = SpinAPI::GetPulseOperator(
+		{{inactive, inactiveSpace}, {active, activeSpace}}, rho, 0.0);
+	return operators.size() == 2 &&
+		   arma::norm(operators[0], "fro") < 1e-14 &&
+		   arma::norm(operators[1], "fro") > 1e-8;
+}
+//////////////////////////////////////////////////////////////////////////////
+
 // Tests an Interaction object with a broadband time-dependent field.
 // DEPENDENCY NOTE: ObjectParser
 bool test_spinapi_interaction_field_broadband()
@@ -1896,6 +1991,53 @@ bool test_spinapi_interaction_orientation_validation_and_exchange()
 	isCorrect &= (exchange.Type() == SpinAPI::InteractionType::Exchange);
 
 	return isCorrect;
+}
+//////////////////////////////////////////////////////////////////////////////
+
+// Six-component strain input follows
+// E={exx,exy,exz,eyy,eyz,ezz} and
+// D={d43,d41,d26,d25,d16,d15}. Keep derived quantities and action
+// targets tied to those documented components.
+bool test_spinapi_strain_component_mapping()
+{
+	auto spin = std::make_shared<SpinAPI::Spin>("T", "type=electron;spin=1;");
+	auto strain = std::make_shared<SpinAPI::Interaction>(
+		"strain",
+		"type=strain;group1=T;e=1 2 3 4 5 6;d=10 20 30 40 50 60;"
+		"ignoretensors=true;commonprefactor=false;prefactor=1;");
+	std::vector<SpinAPI::spin_ptr> spins{spin};
+	if (!strain->ParseSpinGroups(spins) || !strain->IsValid())
+		return false;
+
+	std::vector<RunSection::NamedActionScalar> scalars;
+	std::vector<RunSection::NamedActionVector> vectors;
+	strain->GetActionTargets(scalars, vectors, "sys");
+
+	std::map<std::string, double> values;
+	for (const auto &entry : scalars)
+		values[entry.first] = entry.second.Get();
+
+	const double expectedEx1 = 3.0 - 0.5 * (60.0 / 50.0) * (1.0 - 4.0);
+	const double expectedEx2 = 3.0 - 0.5 * (40.0 / 30.0) * (1.0 - 4.0);
+	const double expectedEx = std::sqrt(
+		(expectedEx1 * expectedEx1 + expectedEx2 * expectedEx2) / 2.0);
+	const double expectedEy1 = 5.0 + (60.0 / 50.0) * 2.0;
+	const double expectedEy2 = 5.0 + (40.0 / 30.0) * 2.0;
+	const double expectedEy = std::sqrt(
+		(expectedEy1 * expectedEy1 + expectedEy2 * expectedEy2) / 2.0);
+
+	return equal_double(values["sys.strain.ex"], expectedEx) &&
+		   equal_double(values["sys.strain.ey"], expectedEy) &&
+		   equal_double(values["sys.strain.ez"], 16.0) &&
+		   equal_double(values["sys.strain.exx"], 1.0) &&
+		   equal_double(values["sys.strain.eyy"], 4.0) &&
+		   equal_double(values["sys.strain.ezz"], 6.0) &&
+		   equal_double(values["sys.strain.d43"], 10.0) &&
+		   equal_double(values["sys.strain.d41"], 20.0) &&
+		   equal_double(values["sys.strain.d26"], 30.0) &&
+		   equal_double(values["sys.strain.d25"], 40.0) &&
+		   equal_double(values["sys.strain.d16"], 50.0) &&
+		   equal_double(values["sys.strain.d15"], 60.0);
 }
 //////////////////////////////////////////////////////////////////////////////
 
@@ -2955,6 +3097,102 @@ bool test_spinapi_secular_electron_electron_historical_diagonal_projection()
 }
 //////////////////////////////////////////////////////////////////////////////
 
+// Fixed-dimension Krylov calls are used inside the pulse and free-evolution
+// loops of several spectroscopy tasks. They must perform one Arnoldi build at
+// the requested dimension; only TimeAdaptiveKrylov* may change that policy.
+bool test_spinapi_krylov_general_respects_requested_dimension()
+{
+	SpinAPI::SpinSpace space;
+	const int dimension = 4;
+	const int krylovDimension = 2;
+	const arma::cx_double dt(0.2, 0.0);
+
+	arma::sp_cx_mat H(dimension, dimension);
+	H.diag() = arma::cx_vec({0.0, 1.0, 2.0, 4.0});
+	arma::cx_vec initial = arma::normalise(arma::cx_vec({1.0, 2.0, 3.0, 4.0}));
+
+	arma::cx_mat basis(dimension, krylovDimension, arma::fill::zeros);
+	arma::cx_mat hessenberg(krylovDimension, krylovDimension, arma::fill::zeros);
+	basis.col(0) = initial;
+	double residual = 0.0;
+	space.ArnoldiProcess(H, initial, basis, hessenberg, krylovDimension, residual);
+
+	arma::cx_vec e1(krylovDimension, arma::fill::zeros);
+	e1(0) = 1.0;
+	arma::cx_vec expected = basis * arma::expmat(hessenberg * dt) * e1;
+	arma::cx_vec actual = space.KrylovExpmGeneral(H, initial, dt, krylovDimension, dimension);
+	arma::cx_vec full = arma::expmat(arma::cx_mat(H) * dt) * initial;
+
+	bool isCorrect = true;
+	isCorrect &= (arma::norm(actual - expected, 2) < 1e-12);
+	// This problem requires more than two Krylov vectors. If the fixed API
+	// silently expands to the full space, actual would equal full.
+	isCorrect &= (arma::norm(actual - full, 2) > 1e-6);
+	return isCorrect;
+}
+//////////////////////////////////////////////////////////////////////////////
+
+// An invariant starting vector causes a happy Arnoldi/Lanczos breakdown after
+// one basis vector. This is successful convergence, not a reason to repeatedly
+// enlarge and rebuild the Krylov space.
+bool test_spinapi_krylov_happy_breakdown_returns_exact_result()
+{
+	SpinAPI::SpinSpace space;
+	const int dimension = 4;
+	const arma::cx_double dt(0.2, 0.0);
+
+	arma::sp_cx_mat H = 2.0 * arma::speye<arma::sp_cx_mat>(dimension, dimension);
+	arma::cx_vec initial = arma::normalise(arma::cx_vec({1.0, 2.0, 3.0, 4.0}));
+	arma::cx_vec expected = std::exp(2.0 * dt) * initial;
+
+	arma::cx_vec general = space.KrylovExpmGeneral(H, initial, dt, dimension, dimension);
+	arma::cx_vec symmetric = space.KrylovExpmSymm(H, initial, dt, dimension, dimension);
+
+	return arma::norm(general - expected, 2) < 1e-12 &&
+		   arma::norm(symmetric - expected, 2) < 1e-12;
+}
+//////////////////////////////////////////////////////////////////////////////
+
+// The block overload follows the same fixed-dimension contract and must use
+// the Hermitian inner product when orthogonalizing a complex Krylov basis.
+bool test_spinapi_block_krylov_is_bounded_and_orthonormal()
+{
+	SpinAPI::SpinSpace space;
+	const int dimension = 4;
+	const arma::cx_double dt(0.1, 0.0);
+
+	arma::sp_cx_mat H(dimension, dimension);
+	H.diag() = arma::cx_vec({
+		arma::cx_double(0.0, 0.2),
+		arma::cx_double(1.0, -0.1),
+		arma::cx_double(2.0, 0.3),
+		arma::cx_double(4.0, -0.2)});
+	arma::cx_mat initial(dimension, 1);
+	initial.col(0) = arma::normalise(arma::cx_vec({
+		arma::cx_double(1.0, 0.5),
+		arma::cx_double(2.0, -1.0),
+		arma::cx_double(-0.5, 2.0),
+		arma::cx_double(1.5, 0.25)}));
+
+	auto bounded = space.KrylovExpmGeneral(
+		H, initial, dt, 2, dimension, nullptr);
+	bool isCorrect = bounded.krybasis.n_cols == 2;
+	isCorrect &= std::isfinite(bounded.error_estimate);
+	isCorrect &= arma::norm(
+		bounded.krybasis.t() * bounded.krybasis -
+			arma::eye<arma::cx_mat>(2, 2),
+		"fro") < 1e-12;
+
+	auto full = space.KrylovExpmGeneral(
+		H, initial, dt, dimension, dimension, nullptr);
+	arma::cx_mat exactFactor = arma::expmat(arma::cx_mat(H) * dt) * initial;
+	arma::cx_mat exactDensity = exactFactor * exactFactor.t();
+	isCorrect &= arma::norm(full.result - exactDensity, "fro") < 1e-11;
+
+	return isCorrect;
+}
+//////////////////////////////////////////////////////////////////////////////
+
 // Add all the SpinAPI test cases
 void AddSpinAPITests(std::vector<test_case> &_cases)
 {
@@ -2998,12 +3236,16 @@ void AddSpinAPITests(std::vector<test_case> &_cases)
 	_cases.push_back(test_case("SpinAPI::Pulse InstantPulse", test_spinapi_instantpulse));
 	_cases.push_back(test_case("SpinAPI::Pulse LongPulseStaticField", test_spinapi_longpulsestaticfield));
 	_cases.push_back(test_case("SpinAPI::Pulse LongPulse", test_spinapi_longpulse));
+	_cases.push_back(test_case("SpinAPI::Pulse group preserves spin name case", test_spinapi_pulse_group_preserves_spin_name_case));
+	_cases.push_back(test_case("SpinAPI::PulseSequence preserves object name case", test_spinapi_pulse_sequence_preserves_object_name_case));
+	_cases.push_back(test_case("SpinAPI::PulseSequence preserves multi-system operator index", test_spinapi_pulse_sequence_operator_preserves_system_index));
 	_cases.push_back(test_case("SpinAPI::Interaction BroadbandField", test_spinapi_interaction_field_broadband));
 	_cases.push_back(test_case("SpinAPI::Interaction OUGeneralField", test_spinapi_interaction_field_ornsteinuhlenbeck));
 	_cases.push_back(test_case("SpinAPI::Interaction MonochromaticTensor", test_spinapi_interaction_tensor_monochromatic));
 	_cases.push_back(test_case("SpinAPI::Interaction BroadbandTensor", test_spinapi_interaction_tensor_broadband));
 	_cases.push_back(test_case("SpinAPI::Interaction OUGeneralTensor", test_spinapi_interaction_tensor_ornsteinuhlenbeck));
 	_cases.push_back(test_case("SpinAPI::Interaction orientation validation and exchange", test_spinapi_interaction_orientation_validation_and_exchange));
+	_cases.push_back(test_case("SpinAPI::Interaction strain component mapping", test_spinapi_strain_component_mapping));
 	_cases.push_back(test_case("SpinAPI::PowderGrid weights and ZYZ rotation", test_spinapi_powder_grid_weights_and_rotation));
 	_cases.push_back(test_case("SpinAPI::PowderGrid SOPHE and projection helpers", test_spinapi_powder_grid_sophe_projection_helpers));
 	_cases.push_back(test_case("SpinSpace::Powder Hamiltonian helper matches explicit builders", test_spinapi_powder_hamiltonian_helper_matches_explicit_builders));
@@ -3028,6 +3270,9 @@ void AddSpinAPITests(std::vector<test_case> &_cases)
 	_cases.push_back(test_case("SpinSpace::Secular isotropic hyperfine is SzIz", test_spinapi_secular_isotropic_hyperfine_is_sziz));
 	_cases.push_back(test_case("SpinSpace::Secular hyperfine reversed order matches", test_spinapi_secular_hyperfine_reversed_order_matches));
 	_cases.push_back(test_case("SpinSpace::Secular electron-electron historical diagonal projection", test_spinapi_secular_electron_electron_historical_diagonal_projection));
+	_cases.push_back(test_case("SpinSpace::Krylov fixed dimension is respected", test_spinapi_krylov_general_respects_requested_dimension));
+	_cases.push_back(test_case("SpinSpace::Krylov happy breakdown converges", test_spinapi_krylov_happy_breakdown_returns_exact_result));
+	_cases.push_back(test_case("SpinSpace::Block Krylov is bounded and orthonormal", test_spinapi_block_krylov_is_bounded_and_orthonormal));
 	_cases.push_back(test_case("SpinAPI::Operator copy preserves relaxation configuration", test_spinapi_operator_copy_preserves_relaxation_configuration));
 }
 //////////////////////////////////////////////////////////////////////////////

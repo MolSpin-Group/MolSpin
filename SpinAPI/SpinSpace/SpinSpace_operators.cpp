@@ -1180,40 +1180,43 @@ namespace SpinAPI
 		return ans;
 	}
 
-	static SpinSpace::TimeAdaptiveKrylovCache krylov_cache;
+	// Adaptive propagation may run concurrently for independent powder points.
+	// Keep its dimension/tolerance state local to the calling thread and reset
+	// the tolerance when an adaptive step finishes.
+	static thread_local SpinSpace::TimeAdaptiveKrylovCache krylov_cache;
 
 	// Returns the action of the matrix exponential of sparse general complex matrix H onto complex column vector b, with krylov subspave dimension of KryDim.
 	SpinSpace::return_struct SpinSpace::KrylovExpmGeneral(const arma::sp_cx_mat &H, const arma::cx_colvec &b, const arma::cx_double dt, int KryDim, int HilbSize, bool neval, GeneratorFunctionVec gen)
 	{
+		(void)neval;
+		KryDim = std::max(1, std::min(KryDim, HilbSize));
 		arma::cx_mat Hessen(KryDim, KryDim, arma::fill::zeros); // Upper Hessenberg matrix
 		arma::cx_mat KryBasis(HilbSize, KryDim, arma::fill::zeros); // Orthogonal krylov subspace
 
 		// Initialize basis from input vector
 		double beta = norm(b);
+		SpinSpace::return_struct step;
+		if (beta == 0.0)
+		{
+			step.result = arma::zeros<arma::cx_colvec>(b.n_rows);
+			step.error_estimate = 0.0;
+			return step;
+		}
 		KryBasis.col(0) = b / beta;
 
-		double h_mplusone_m;
+		double h_mplusone_m = 0.0;
 
-		// Compute upper Hessenberg matrix and krylov basis using Arnoldi process
-		bool pass = false;
-		while(!pass)
-		{
-			pass = ArnoldiProcess(H, b, KryBasis, Hessen, KryDim, h_mplusone_m, dt);
-			if(!pass)
-			{
-				KryDim = KryDim + 1;
-				Hessen.resize(KryDim, KryDim);
-				KryBasis.resize(HilbSize, KryDim);
-			}
-		}
+		// KrylovExpmGeneral is the fixed-dimension API used by the spectroscopy
+		// tasks. Time-step/dimension adaptation is handled by
+		// TimeAdaptiveKrylovGeneral; do not grow the basis implicitly here.
+		ArnoldiProcess(H, b, KryBasis, Hessen, KryDim, h_mplusone_m, dt, gen);
 
-		if(KryDim != krylov_cache.KrylovDim)
+		const int actualKryDim = std::max(1, std::min(KryDim, krylov_cache.KrylovDim));
+		if(KryDim != actualKryDim)
 		{
-			KryDim = krylov_cache.KrylovDim;
-			//Hessen.resize(KryDim, KryDim);
-			Hessen = Hessen.submat(0,0,KryDim-1, KryDim-1);
-			KryBasis= KryBasis.submat(0,0,HilbSize-1, KryDim-1);
-		//	//KryBasis.resize(HilbSize, KryDim);
+			KryDim = actualKryDim;
+			Hessen = Hessen.submat(0, 0, KryDim - 1, KryDim - 1);
+			KryBasis = KryBasis.cols(0, KryDim - 1);
 		}
 
 		arma::cx_colvec e1;
@@ -1223,45 +1226,43 @@ namespace SpinAPI
 		arma::cx_mat Exponent = arma::expmat(Hessen * dt);
 		arma::cx_vec w = Exponent * e1;
 
-		std::complex<double> error_val = Exponent(krylov_cache.KrylovDim - 1, 0);
-        double err = std::abs(beta * h_mplusone_m * error_val);
+		std::complex<double> error_val = Exponent(KryDim - 1, 0);
+		double err = std::abs(beta * h_mplusone_m * error_val);
 
-        SpinSpace::return_struct step;
-        //step.result = norm(b) * KryBasis * arma::expmat(Hessen * dt) * e1;
 		step.result = beta * KryBasis * w;
-        step.error_estimate = err;
+		step.error_estimate = err;
 
 		return step;
 	}
 	// Returns the action of the matrix exponential of sparse symmetric complex matrix H onto complex column vector b, with krylov subspave dimension of KryDim.
 	SpinSpace::return_struct SpinSpace::KrylovExpmSymm(const arma::sp_cx_mat &H, const arma::cx_colvec &b, const arma::cx_double dt, int KryDim, int HilbSize, bool neval)
 	{
+		(void)neval;
+		KryDim = std::max(1, std::min(KryDim, HilbSize));
 		arma::cx_mat Hessen(KryDim, KryDim, arma::fill::zeros); // Upper Hessenberg matrix
 		arma::cx_mat KryBasis(HilbSize, KryDim, arma::fill::zeros); // Orthogonal krylov subspace
 
 		// Initialize basis from input vector
 		double beta = norm(b);
+		SpinSpace::return_struct step;
+		if (beta == 0.0)
+		{
+			step.result = arma::zeros<arma::cx_colvec>(b.n_rows);
+			step.error_estimate = 0.0;
+			return step;
+		}
 		KryBasis.col(0) = b / beta;
 
-		double h_mplusone_m;
-		// Compute upper Hessenberg matrix and krylov basis using Lanczos process
-		bool pass = false;
-		while(!pass)
-		{
-			pass = LanczosProcess(H, b, KryBasis, Hessen, KryDim, h_mplusone_m, dt);
-			if(!pass)
-			{
-				KryDim = KryDim + 1;
-				Hessen.resize(KryDim, KryDim);
-				KryBasis.resize(HilbSize, KryDim);
-			}
-		}
+		double h_mplusone_m = 0.0;
+		// As above, this routine performs one fixed-dimension Lanczos build.
+		LanczosProcess(H, b, KryBasis, Hessen, KryDim, h_mplusone_m, dt);
 
-		if(KryDim != krylov_cache.KrylovDim)
+		const int actualKryDim = std::max(1, std::min(KryDim, krylov_cache.KrylovDim));
+		if(KryDim != actualKryDim)
 		{
-			KryDim = krylov_cache.KrylovDim;
-			Hessen.resize(KryDim, KryDim);
-			KryBasis.resize(HilbSize, KryDim);
+			KryDim = actualKryDim;
+			Hessen = Hessen.submat(0, 0, KryDim - 1, KryDim - 1);
+			KryBasis = KryBasis.cols(0, KryDim - 1);
 		}
 
 		arma::cx_colvec e1;
@@ -1271,13 +1272,11 @@ namespace SpinAPI
 		arma::cx_mat Exponent = arma::expmat(Hessen * dt);
 		arma::cx_vec w = Exponent * e1;
 
-		std::complex<double> error_val = Exponent(krylov_cache.KrylovDim - 1, 0);
-        double err = std::abs(beta * h_mplusone_m * error_val);
+		std::complex<double> error_val = Exponent(KryDim - 1, 0);
+		double err = std::abs(beta * h_mplusone_m * error_val);
 
-		SpinSpace::return_struct step;
-        //step.result = norm(b) * KryBasis * arma::expmat(Hessen * dt) * e1;
 		step.result = beta * KryBasis * w;
-        step.error_estimate = err;
+		step.error_estimate = err;
 		return step;
 	}
 
@@ -1292,7 +1291,7 @@ namespace SpinAPI
 		for (int it1 = 0; it1 < KryDim; it1++)
 		{
 			// Compute the matrix-vector product.
-			arma::cx_colvec z = H * KryBasis.col(it1);
+			arma::cx_colvec z = gen ? gen(H, KryBasis.col(it1)) : H * KryBasis.col(it1);
 			double znmorm;
 			// Compute the elements of the Hessenberg matrix
 			for (int it2 = 0; it2 < it1 + 1; it2++)
@@ -1308,7 +1307,6 @@ namespace SpinAPI
 			{
 				h_mplusone_m = znmorm; 
 				actual = it1 + 1;
-				pass = false;
 				break;
 			}
 			Hessen(it1 + 1, it1) = znmorm;
@@ -1325,7 +1323,7 @@ namespace SpinAPI
 
 			if(krylov_cache.KrylovDimTol > 0.0 && std::abs(dt) != 0.0)
 			{
-				arma::cx_mat Hessen_trunc = Hessen.submat(0,0,it1+1,it1+1);
+				arma::cx_mat Hessen_trunc = Hessen.submat(0, 0, it1, it1);
 				arma::cx_mat expH = arma::expmat(Hessen_trunc * dt);
 				std::complex<double> error_val = expH(it1, 0);
 				double err = std::abs(beta * znmorm * error_val);
@@ -1375,6 +1373,7 @@ namespace SpinAPI
 				break;
 			}
 			Hessen(it1 + 1, it1) = norm(z);
+			h_mplusone_m = std::abs(Hessen(it1 + 1, it1));
 			if (abs(Hessen(it1 + 1, it1)) < pow(10, -14))
 			{
 				h_mplusone_m = 0.0;
@@ -1416,6 +1415,8 @@ namespace SpinAPI
     SpinSpace::return_structMat SpinSpace::KrylovExpmGeneral(const arma::sp_cx_mat &H, const arma::cx_mat &b, const arma::cx_double dt, int KryDim, int HilbSize, GeneratorFunctionMat gen, bool neval)
     {
         const unsigned int p = b.n_cols;
+		const int maxBlockDimension = p > 0 ? HilbSize / static_cast<int>(p) : 0;
+		KryDim = std::max(1, std::min(KryDim, maxBlockDimension));
 		arma::cx_mat Hessen(KryDim * p, KryDim * p, arma::fill::zeros);
 		arma::cx_mat KryBasis(HilbSize, KryDim * p, arma::fill::zeros);
 
@@ -1427,21 +1428,13 @@ namespace SpinAPI
 
 		double beta = arma::norm(b,"fro");
 
-		//arnoldi process
+		// This is the fixed-dimension block API. As for the vector overload,
+		// adaptive callers decide whether to retry with another step or basis
+		// size; the exponential action itself performs one Arnoldi build.
 		arma::cx_mat h_mplusone_m;
-		bool pass = false;
-		while(!pass)
-		{
-			pass = ArnoldiProcess(H,b,KryBasis,Hessen,KryDim,h_mplusone_m,p,beta,gen,dt);
-			if(!pass)
-			{
-				KryDim = KryDim + 1;
-				Hessen.resize(KryDim *p, KryDim*p);
-				KryBasis.resize(HilbSize, KryDim*p);
-			}
-		}
+		ArnoldiProcess(H,b,KryBasis,Hessen,KryDim,h_mplusone_m,p,beta,gen,dt);
 
-		KryDim = krylov_cache.KrylovDim;
+		KryDim = std::max(1, std::min(KryDim, krylov_cache.KrylovDim));
 		int k = KryDim * p;
 		Hessen = Hessen.submat(0,0,k-1,k-1);
 		KryBasis = KryBasis.cols(0,k-1);
@@ -1463,11 +1456,14 @@ namespace SpinAPI
 
 		arma::cx_mat W = expH * e1 * expH.t();
 
-		arma::cx_mat error_mat = expH.submat((KryDim-1) * p, 0, (KryDim)*p - 1, p-1);
-		//double err = beta * h_mplusone_m * arma::norm(error_mat, "fro");
+		// Standard block-Arnoldi residual estimate for exp(H*dt)*b. R carries
+		// the scale and correlations of the initial QR factorization.
+		arma::cx_mat error_mat =
+			expH.submat((KryDim - 1) * p, 0, KryDim * p - 1, p - 1) * R;
+		double err = arma::norm(h_mplusone_m * error_mat, "fro");
 
 		SpinSpace::return_structMat step;
-		//step.error_estimate = err;
+		step.error_estimate = err;
 		
 		step.phi1 = phi1;
 		step.phi2 = phi2;
@@ -1513,7 +1509,8 @@ namespace SpinAPI
 				
 				arma::cx_mat Vk = KryBasis.cols(k_start, k_end);
 				
-				arma::cx_mat temp = arma::trans(arma::conj(Vk))* Z;
+				// Block Arnoldi uses the complex Hilbert-space inner product.
+				arma::cx_mat temp = Vk.t() * Z;
 				Hessen.submat(k_start, j_start, k_end, j_end) = temp;
 				Z = Z - (Vk * temp);
 			}
@@ -1618,6 +1615,7 @@ namespace SpinAPI
 				ReturnInfo.step_accepted = true;
 				ReturnInfo.timestep = propParam.GetNextTimePoint();
 				ReturnInfo.timestep_used = (dt / propParam.TimePrefactor).real();
+				krylov_cache.KrylovDimTol = 0.0;
 				return ReturnInfo;
 			}
 
@@ -1666,6 +1664,7 @@ namespace SpinAPI
 
 		ReturnInfo.step_accepted = firstattempt;
 		ReturnInfo.timestep = dumpstep;
+		krylov_cache.KrylovDimTol = 0.0;
 		return ReturnInfo;
     }
 
@@ -1721,15 +1720,6 @@ namespace SpinAPI
     		B.col(k) = std::sqrt(w(k)) * V.col(k);
 		}
 
-		//dt = std::complex<double>(0.0,-1.0) * dt;
-
-		arma::cx_mat test = (H * b - b * H);
-		double norm = arma::norm(test, "fro");
-
-		auto rho_new = [](arma::cx_mat& L, arma::cx_mat& R, arma::cx_mat rho) {
-			arma::cx_mat result = L * rho * R;
-		};
-
 		while (!keepstep)
 		{
 			int trialDim = krylov_cache.KrylovDim > 0 ? krylov_cache.KrylovDim : kryDim;
@@ -1755,6 +1745,7 @@ namespace SpinAPI
 				ReturnInfo.step_accepted = true;
 				ReturnInfo.timestep = propParam.GetNextTimePoint();
 				ReturnInfo.timestep_used = (dt / propParam.TimePrefactor).real();
+				krylov_cache.KrylovDimTol = 0.0;
 				return ReturnInfo;
 			}
 
@@ -1796,6 +1787,7 @@ namespace SpinAPI
 
 		ReturnInfo.step_accepted = firstattempt;
 		ReturnInfo.timestep = dumpstep;
+		krylov_cache.KrylovDimTol = 0.0;
 		return ReturnInfo;
     }
 
@@ -1972,7 +1964,7 @@ namespace SpinAPI
 			std::vector<double> err_rat;
 			double trace_err = 0.0;
 			double total_trace = 0.0;
-			for(int i = 0; i < sys; i++)
+			for(unsigned int i = 0; i < sys; i++)
 			{
 				arma::cx_mat err_mat = rho_next[i]-an[i];
 				//auto tr = arma::trace(rho_next[i]);
@@ -2032,7 +2024,7 @@ namespace SpinAPI
 			if(R <= 1)
 			{
 				pass = true;
-				for(int i = 0; i < sys; i++)
+				for(unsigned int i = 0; i < sys; i++)
 				{
 					TimePropReturnInfoMat r;
 					r.result = rho_next[i];

@@ -194,8 +194,6 @@ namespace RunSection
 		double currentTime = 0.0;
 		double TotalTime = this->totaltime;
 
-		double dw = 0.9;
-
 		propParam.f2 = 1.5;
 		propParam.f1 = 0.1;
 		propParam.safety = 0.7;

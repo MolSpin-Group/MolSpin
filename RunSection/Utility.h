@@ -96,7 +96,7 @@ namespace RunSection
         arma::sp_cx_mat SamplesMatrix; 
         
         std::vector<int> samples;
-        int BlockSize; 
+        int BlockSize = 0;
     };
     SCData GetHamiltonian(arma::sp_cx_mat&, int); //rename function so not to confuse
     ///Function to gernerate the sampled hamiltonian

@@ -21,8 +21,6 @@
 #include <omp.h>
 #endif
 
-static double timestep_floor = 1e-12;
-
 namespace RunSection
 {
 
@@ -181,8 +179,6 @@ namespace RunSection
 
         std::vector<std::vector<PulseEvent>> timelines(seq.size());
         std::vector<double> critical_time_points;
-        //double global_start = (offset > 0.0) ? offset : 0.0;
-        double global_start = 0.0;
         critical_time_points.push_back(0.0);
 
         for(size_t ch = 0; ch < seq.size(); ch++)
@@ -473,14 +469,29 @@ namespace RunSection
     SCData GetHamiltonian(arma::sp_cx_mat& CompositeMatrix, int Dimension)
     {
         SCData container;
-        arma::sp_cx_mat H = CompositeMatrix.submat(0,0,Dimension-1,Dimension-1);
-        arma::sp_cx_mat SampleMatrix = CompositeMatrix.submat(Dimension,0,CompositeMatrix.n_rows-1,CompositeMatrix.n_cols-1);
-        for (unsigned int i = 0; i < SampleMatrix.n_rows; i += Dimension)
+        if (Dimension <= 0 ||
+            CompositeMatrix.n_rows < static_cast<arma::uword>(Dimension) ||
+            CompositeMatrix.n_cols < static_cast<arma::uword>(Dimension))
+        {
+            return container;
+        }
+
+        arma::sp_cx_mat H = CompositeMatrix.submat(0, 0, Dimension - 1, Dimension - 1);
+        arma::sp_cx_mat SampleMatrix(0, CompositeMatrix.n_cols);
+        if (CompositeMatrix.n_rows > static_cast<arma::uword>(Dimension))
+        {
+            SampleMatrix = CompositeMatrix.submat(
+                Dimension, 0, CompositeMatrix.n_rows - 1, CompositeMatrix.n_cols - 1);
+        }
+
+        const arma::uword blockSize = static_cast<arma::uword>(Dimension);
+        for (arma::uword i = 0; i + blockSize <= SampleMatrix.n_rows; i += blockSize)
         {
             int samples = 0;
-            for (unsigned int e = 0; e < SampleMatrix.n_cols; e+= Dimension)
+            for (arma::uword e = 0; e + blockSize <= SampleMatrix.n_cols; e += blockSize)
             {
-                arma::sp_cx_mat SubMat = SampleMatrix.submat(i,e,i+Dimension-1,e+Dimension-1);
+                arma::sp_cx_mat SubMat = SampleMatrix.submat(
+                    i, e, i + blockSize - 1, e + blockSize - 1);
                 if(SubMat.n_nonzero == 0)
                     break;
                 
@@ -721,11 +732,9 @@ namespace RunSection
 
             double relative_error = 0.0;
             //auto[atol, rtol, min_step, max_step, safety, f1, f2,t1,t2,ct, i1, i2, i3, i4, i5,i6] = params;
-            double atol, rtol, min_step, max_step, safety, f1, f2;
+            double atol, rtol, safety, f1, f2;
             atol = params.atol;
             rtol = params.rtol;
-            min_step = params.min;
-            max_step = params.max;
             safety = params.safety;
             f1 = params.f1;
             f2 = params.f2;
@@ -1119,7 +1128,6 @@ namespace RunSection
         std::pair<int, int> A11_size = {block_sizes[0], block_sizes[0]};
         std::pair<int, int> A12_size = {block_sizes[0], sum(block_sizes,1,1)};
         std::pair<int, int> A21_size = {sum(block_sizes,1,1), block_sizes[0]};
-        std::pair<int, int> A22_size = {sum(block_sizes,1,1), sum(block_sizes,1,1)};
         A11 = A.submat(0, 0, A11_size.first -1, A11_size.second -1);
         A12 = A.submat(0, A11_size.second, A12_size.first -1, A.n_cols -1);
         A21 = A.submat(A11_size.first, 0, A.n_rows -1, A21_size.second -1);

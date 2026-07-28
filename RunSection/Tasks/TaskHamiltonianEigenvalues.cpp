@@ -155,7 +155,6 @@ namespace RunSection
 									mixing_values.push_back(0.0);
 									continue;
 								}
-    					        double dE = std::abs(lambda[k] - lambda[j]);
     					        double overlap_prob = std::norm(S(j, k));
 								mixing_values.push_back(overlap_prob);
 							}
@@ -192,13 +191,13 @@ namespace RunSection
         				}
 					}
 					//we have the top triangle, we need to map it to the lower triangle
-					int rows = lambda.n_elem;
+					const size_t rows = lambda.n_elem;
 					for(size_t j = 0; j < rows; j++)
 					{
 						for (size_t k = 0; k < j; k++)
 						{
-							int c_index = j * rows + k;
-							int t_index = k * rows + j;
+							const size_t c_index = j * rows + k;
+							const size_t t_index = k * rows + j;
 							mixing_values[c_index] = mixing_values[t_index];
 						}
 					}

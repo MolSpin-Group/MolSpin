@@ -62,7 +62,9 @@ DEP_RUNSECTION_ACTIONS =
 # --------------------------------------------------------------------------
 # Unit testing module
 PATH_TESTS = ./Tests
-OBJS_TESTS = $(PATH_TESTS)/testmain.o $(OBJS_SPINAPI) $(OBJS_MSDPARSER) $(OBJS_RUNSECTION) $(OBJS_RUNSECTION_TASKS) $(OBJS_RUNSECTION_ACTIONS)
+OBJS_TEST_COMMON = $(OBJS_SPINAPI) $(OBJS_MSDPARSER) $(OBJS_RUNSECTION) $(OBJS_RUNSECTION_TASKS) $(OBJS_RUNSECTION_ACTIONS)
+OBJS_TESTS = $(PATH_TESTS)/testmain.o $(OBJS_TEST_COMMON)
+OBJS_TESTS_DEBUG = $(PATH_TESTS)/testmain_debug.o $(OBJS_TEST_COMMON)
 DEP_TESTS =
 # --------------------------------------------------------------------------
 #LinearAlgebra Vendor code
@@ -82,8 +84,8 @@ DEBUGFLAGS ?= -g
 DEFINES ?= -DARMA_DONT_PRINT_FAST_MATH_WARNING -DASSERT=1 -DNEGATIVERATES=0
 TESTDEFINES ?= -DSPINAPI_TEST=0 -DMSDPARSER_TEST=0 -DACTION_TEST=0 -DSTATICHSSDECAY_TEST=0 -DSTATICSS_TEST=0 -DSTATICRPONLY_TEST=0 -DSTATICSSSPECTRA_TEST=0 -DSTATICHSTEPR_TEST=0 -DSTATICPOWDERSPECTRA_TEST=1 -DUTIL_TEST=0
 CC = $(CXX) $(CXXSTD)		# Compiler to use
-LFLAGS = $(WARNFLAGS) $(DEBUGFLAGS) -DARMA_DONT_PRINT_FAST_MATH_WARNING #$(OPTFLAGS)	# Linker Flags
-CFLAGS = $(WARNFLAGS) -c $(ARCHFLAGS) $(LOOPFLAGS) $(COMPATFLAGS) $(DEBUGFLAGS) $(OPENMPFLAGS) $(DEFINES) #$(OPTFLAGS) # Compile flags to .o
+LFLAGS = $(WARNFLAGS) $(DEBUGFLAGS) -DARMA_DONT_PRINT_FAST_MATH_WARNING $(OPTFLAGS)	# Linker Flags
+CFLAGS = $(WARNFLAGS) -c $(ARCHFLAGS) $(LOOPFLAGS) $(COMPATFLAGS) $(DEBUGFLAGS) $(OPENMPFLAGS) $(DEFINES) $(OPTFLAGS) # Compile flags to .o
 TESTCFLAGS = $(CFLAGS) $(TESTDEFINES)
 # Example portability override: make ARCHFLAGS= COMPATFLAGS= OPENMPFLAGS=
 
@@ -131,20 +133,25 @@ $(PATH_SPINAPI)/SpinSpace.o: $(PATH_SPINAPI)/SpinSpace.cpp $(PATH_SPINAPI)/SpinS
 # Unit testing module
 # --------------------------------------------------------------------------
 SEARCHDIR_TESTS = $(SEARCHDIR_MAIN) -I$(PATH_TESTS)
-# Compile test job
-test_debug: $(OBJS_TESTS)
-	$(CC) $(LFLAGS) $(OBJS_TESTS) $(SEARCHDIR_TESTS) -o $(PATH_TESTS)/molspintest
-#	$(PATH_TESTS)/molspintest
+TESTMAIN_DEPS = $(PATH_TESTS)/testmain.cpp $(PATH_TESTS)/assertfunctions.cpp $(PATH_TESTS)/tests_spinapi.cpp $(PATH_TESTS)/tests_msdparser.cpp $(PATH_TESTS)/tests_actions.cpp $(PATH_TESTS)/tests_TaskStaticHSSymmetricDecay.cpp $(PATH_TESTS)/tests_TaskStaticSS.cpp $(PATH_TESTS)/tests_TaskStaticRPOnlyHSSymDec.cpp $(PATH_TESTS)/tests_TaskStaticSSSpectra.cpp $(PATH_TESTS)/tests_TaskStaticHSTrEPRSpectra.cpp $(PATH_TESTS)/tests_TaskStaticPowderSpectra.cpp $(PATH_TESTS)/tests_utility.cpp
 
-$(PATH_TESTS)/testmain.o: $(PATH_TESTS)/testmain.cpp $(PATH_TESTS)/assertfunctions.cpp $(PATH_TESTS)/tests_spinapi.cpp $(PATH_TESTS)/tests_msdparser.cpp $(PATH_TESTS)/tests_actions.cpp $(PATH_TESTS)/tests_TaskStaticHSSymmetricDecay.cpp $(PATH_TESTS)/tests_TaskStaticSS.cpp $(PATH_TESTS)/tests_TaskStaticRPOnlyHSSymDec.cpp $(PATH_TESTS)/tests_TaskStaticSSSpectra.cpp $(PATH_TESTS)/tests_TaskStaticHSTrEPRSpectra.cpp $(PATH_TESTS)/tests_TaskStaticPowderSpectra.cpp $(PATH_TESTS)/tests_utility.cpp
-	$(CC) $(TESTCFLAGS) $(SEARCHDIR_TESTS) $(PATH_TESTS)/testmain.cpp -o $(PATH_TESTS)/testmain.o
-
+.PHONY: test test_debug
+# The normal target always runs the complete suite.
 test: $(OBJS_TESTS)
 	$(CC) $(LFLAGS) $(OBJS_TESTS) $(SEARCHDIR_TESTS) -o $(PATH_TESTS)/molspintest
 	$(PATH_TESTS)/molspintest
 
-$(PATH_TESTS)/testmain.o: $(PATH_TESTS)/testmain.cpp $(PATH_TESTS)/assertfunctions.cpp $(PATH_TESTS)/tests_spinapi.cpp $(PATH_TESTS)/tests_msdparser.cpp $(PATH_TESTS)/tests_actions.cpp $(PATH_TESTS)/tests_TaskStaticHSSymmetricDecay.cpp $(PATH_TESTS)/tests_TaskStaticSS.cpp $(PATH_TESTS)/tests_TaskStaticRPOnlyHSSymDec.cpp $(PATH_TESTS)/tests_TaskStaticSSSpectra.cpp $(PATH_TESTS)/tests_TaskStaticHSTrEPRSpectra.cpp $(PATH_TESTS)/tests_TaskStaticPowderSpectra.cpp $(PATH_TESTS)/tests_utility.cpp
+$(PATH_TESTS)/testmain.o: $(TESTMAIN_DEPS)
 	$(CC) $(CFLAGS) $(SEARCHDIR_TESTS) $(PATH_TESTS)/testmain.cpp -o $(PATH_TESTS)/testmain.o
+
+# The focused target uses TESTDEFINES and a separate object/executable so its
+# selection cannot leak into a subsequent full-suite build.
+test_debug: $(OBJS_TESTS_DEBUG)
+	$(CC) $(LFLAGS) $(OBJS_TESTS_DEBUG) $(SEARCHDIR_TESTS) -o $(PATH_TESTS)/molspintest-debug
+	$(PATH_TESTS)/molspintest-debug
+
+$(PATH_TESTS)/testmain_debug.o: $(TESTMAIN_DEPS)
+	$(CC) $(TESTCFLAGS) $(SEARCHDIR_TESTS) $(PATH_TESTS)/testmain.cpp -o $(PATH_TESTS)/testmain_debug.o
 
 # --------------------------------------------------------------------------
 # Misc tasks
@@ -152,11 +159,10 @@ $(PATH_TESTS)/testmain.o: $(PATH_TESTS)/testmain.cpp $(PATH_TESTS)/assertfunctio
 # Clean-up binaries for clean recompilation
 .PHONY: clean
 clean:
-	rm *.o $(PATH_MSDPARSER)/*.o $(PATH_SPINAPI)/*.o $(PATH_RUNSECTION)/*.o $(PATH_RUNSECTION_ACTIONS)/*.o $(PATH_RUNSECTION_TASKS)/*.o $(PATH_RUNSECTION_CUSTOMTASKS)/*.o molspin $(PATH_TESTS)/*.o $(PATH_TESTS)/molspintest
+	rm -f *.o $(PATH_MSDPARSER)/*.o $(PATH_SPINAPI)/*.o $(PATH_RUNSECTION)/*.o $(PATH_RUNSECTION_ACTIONS)/*.o $(PATH_RUNSECTION_TASKS)/*.o $(PATH_RUNSECTION_CUSTOMTASKS)/*.o molspin $(PATH_TESTS)/*.o $(PATH_TESTS)/molspintest $(PATH_TESTS)/molspintest-debug
 #	rm debug/*.o
 
 # Clean-up testing binaries and run the test again
 .PHONY: cleantest
 cleantest:
-	rm $(PATH_TESTS)/*.o $(PATH_TESTS)/molspintest
-#	make test
+	rm -f $(PATH_TESTS)/testmain.o $(PATH_TESTS)/testmain_debug.o $(PATH_TESTS)/molspintest $(PATH_TESTS)/molspintest-debug

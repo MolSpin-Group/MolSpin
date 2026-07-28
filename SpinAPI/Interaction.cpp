@@ -26,8 +26,9 @@ namespace SpinAPI
 																		 trjHasTime(false), trjHasField(false), trjHasTensor(false), trjHasPrefactor(false), trjTime(0), trjFieldX(0), trjFieldY(0), trjFieldZ(0), trjPrefactor(0),
 																		 tdFrequency(1.0), tdPhase(0.0), tdAxis("0 0 1"), tdPerpendicularOscillation(false), tdInitialField({0, 0, 0}), tensorType(InteractionTensorType::Static), tdTimestep(0),
 																		 tdInitialTensor(3, 3, arma::fill::zeros), tdMinFreq(0.0), tdMaxFreq(0.0), tdFreqs(), tdAmps(), tdPhases(), tdComponents(0), tdRandOrients(false), tdThetas(), tdPhis(), tdCorrTime(0.0),
-																		 tdPrintTensor(false), tdPrintField(false), hffield(), orientations(0), OriWeights(), BondLengths(), Spacing(), tau(0.0), dist(), tdSeed(0), tdAutoseed(false), tdGenerator(1), framelist({0, 0, 0}), f(), tdPhaseDrift(false), RWDiffusionCoefficient(0.0),
-																		 Pulsed(false),Active(true),active_time(0.0)
+																		 tdPrintTensor(false), tdPrintField(false), tdPhaseDrift(false), RWDiffusionCoefficient(0.0),
+																		 hffield(), orientations(0), OriWeights(), BondLengths(), Spacing(), tau(0.0), dist(), tdSeed(0), tdAutoseed(false), tdGenerator(1), framelist({0, 0, 0}),
+																		 Pulsed(false), Active(true), active_time(0.0), f()
 	{
 		// Is a trajectory specified?
 		std::string str;
@@ -861,6 +862,7 @@ namespace SpinAPI
 	}
 
 	Interaction::Interaction(const Interaction &_interaction) : properties(_interaction.properties), couplingTensor(_interaction.couplingTensor), field(_interaction.field), dvalue(_interaction.dvalue), evalue(_interaction.evalue), EnergyShift(_interaction.EnergyShift),
+																strain_components(_interaction.strain_components), strain_succeptability(_interaction.strain_succeptability),
 																group1(_interaction.group1), group2(_interaction.group2), type(_interaction.type), fieldType(_interaction.fieldType),
 																prefactor(_interaction.prefactor), addCommonPrefactor(_interaction.addCommonPrefactor), ignoreTensors(_interaction.ignoreTensors), isValid(_interaction.isValid),
 																trjHasTime(_interaction.trjHasTime), trjHasField(_interaction.trjHasField), trjHasTensor(_interaction.trjHasTensor), trjHasPrefactor(_interaction.trjHasPrefactor),
@@ -870,10 +872,11 @@ namespace SpinAPI
 																tdTimestep(_interaction.tdTimestep), tdInitialTensor(_interaction.tdInitialTensor),
 																tdMinFreq(_interaction.tdMinFreq), tdMaxFreq(_interaction.tdMaxFreq), tdFreqs(_interaction.tdFreqs), tdAmps(_interaction.tdAmps), tdPhases(_interaction.tdPhases),
 																tdComponents(_interaction.tdComponents), tdRandOrients(_interaction.tdRandOrients), tdThetas(_interaction.tdThetas), tdPhis(_interaction.tdPhis), tdCorrTime(_interaction.tdCorrTime),
-																tdPrintTensor(_interaction.tdPrintTensor), tdPrintField(_interaction.tdPrintField), hffield(_interaction.hffield), orientations(_interaction.orientations),
+																tdPrintTensor(_interaction.tdPrintTensor), tdPrintField(_interaction.tdPrintField), tdPhaseDrift(_interaction.tdPhaseDrift), RWDiffusionCoefficient(_interaction.RWDiffusionCoefficient),
+																hffield(_interaction.hffield), orientations(_interaction.orientations),
 																OriWeights(_interaction.OriWeights), BondLengths(_interaction.BondLengths), Spacing(_interaction.Spacing), tau(_interaction.tau), dist(_interaction.dist),
-																tdSeed(_interaction.tdSeed), tdAutoseed(_interaction.tdAutoseed), tdGenerator(_interaction.tdGenerator), framelist(_interaction.framelist), f(_interaction.f), strain_components(_interaction.strain_components), strain_succeptability(_interaction.strain_succeptability), tdPhaseDrift(_interaction.tdPhaseDrift), RWDiffusionCoefficient(_interaction.RWDiffusionCoefficient),
-																Pulsed(_interaction.Pulsed), Active(_interaction.Active), active_time(_interaction.active_time)
+																tdSeed(_interaction.tdSeed), tdAutoseed(_interaction.tdAutoseed), tdGenerator(_interaction.tdGenerator), framelist(_interaction.framelist),
+																Pulsed(_interaction.Pulsed), Active(_interaction.Active), active_time(_interaction.active_time), f(_interaction.f)
 
 	{
 	}
@@ -1038,31 +1041,24 @@ namespace SpinAPI
 
     double Interaction::Ex()
     {
-        double h43,h41,h26,h25,h16,h15 = 0.0;
+        double h26 = 0.0, h25 = 0.0, h16 = 0.0, h15 = 0.0;
 		auto d_list = this->strain_succeptability;
 		if (d_list.size() == 3)
 		{
-			h43 = d_list[0];
 			h26 = d_list[1];
 			h16 = d_list[2];
 		}
 		else if (d_list.size() == 6)
 		{
-			h43 = d_list[0];
-			h41 = d_list[1];
 			h26 = d_list[2];
 			h25 = d_list[3];
 			h16 = d_list[4];
-			h15 = d_list[6];
+			h15 = d_list[5];
 		}
 
-		double exx,eyy,ezz,exy,exz,eyz;
-		exx = this->strain_components[0];
-		exy = this->strain_components[1];
-		exz = this->strain_components[2];
-		eyy = this->strain_components[3];
-		eyz = this->strain_components[4];
-		ezz = this->strain_components[5];
+		double exx = this->strain_components[0];
+		double exz = this->strain_components[2];
+		double eyy = this->strain_components[3];
 		double Ex1 = exz - 0.5 * ((h16 != 0.0) ? (h15/h16) * (exx-eyy) : 0.0);
 		double Ex2 = exz - 0.5 * ((h26 != 0.0) ? (h25/h26) * (exx-eyy) : 0.0);
 		return pow(((Ex1*Ex1 + Ex2*Ex2)/2),0.5);
@@ -1070,22 +1066,19 @@ namespace SpinAPI
 
     double Interaction::Ey()
     {
-        double h43,h41,h26,h25,h16,h15 = 0.0;
+        double h26 = 0.0, h25 = 0.0, h16 = 0.0, h15 = 0.0;
 		auto d_list = this->strain_succeptability;
 		if (d_list.size() == 3)
 		{
-			h43 = d_list[0];
 			h26 = d_list[1];
 			h16 = d_list[2];
 		}
 		else if (d_list.size() == 6)
 		{
-			h43 = d_list[0];
-			h41 = d_list[1];
 			h26 = d_list[2];
 			h25 = d_list[3];
 			h16 = d_list[4];
-			h15 = d_list[6];
+			h15 = d_list[5];
 		}
 
 		auto A = this->CouplingTensor()->LabFrame();
@@ -1096,22 +1089,16 @@ namespace SpinAPI
 
     double Interaction::Ez()
     {
-        double h43,h41,h26,h25,h16,h15 = 0.0;
+        double h43 = 0.0, h41 = 0.0;
 		auto d_list = this->strain_succeptability;
 		if (d_list.size() == 3)
 		{
 			h43 = d_list[0];
-			h26 = d_list[1];
-			h16 = d_list[2];
 		}
 		else if (d_list.size() == 6)
 		{
 			h43 = d_list[0];
 			h41 = d_list[1];
-			h26 = d_list[2];
-			h25 = d_list[3];
-			h16 = d_list[4];
-			h15 = d_list[6];
 		}
 
 		auto A = this->CouplingTensor()->LabFrame();
@@ -1592,24 +1579,6 @@ namespace SpinAPI
 
 			if(this->type == InteractionType::Strain)
 			{
-				double h43,h41,h26,h25,h16,h15 = 0.0;
-				auto d_list = this->strain_succeptability;
-				if (d_list.size() == 3)
-				{
-					h43 = d_list[0];
-					h26 = d_list[1];
-					h16 = d_list[2];
-				}
-				else if (d_list.size() == 6)
-				{
-					h43 = d_list[0];
-					h41 = d_list[1];
-					h26 = d_list[2];
-					h25 = d_list[3];
-					h16 = d_list[4];
-					h15 = d_list[6];
-				}
-
 				if (this->strain_components.size() == 3)
 				{
 					RunSection::ActionScalar ex = RunSection::ActionScalar(this->strain_components[0], nullptr);
@@ -1631,9 +1600,9 @@ namespace SpinAPI
 
 					RunSection::ActionScalar exx = RunSection::ActionScalar(this->strain_components[0], nullptr);
 					scalars.push_back(RunSection::NamedActionScalar(_system + "." + this->Name() + ".exx", exx));
-					RunSection::ActionScalar eyy = RunSection::ActionScalar(this->strain_components[5], nullptr);
+					RunSection::ActionScalar eyy = RunSection::ActionScalar(this->strain_components[3], nullptr);
 					scalars.push_back(RunSection::NamedActionScalar(_system + "." + this->Name() + ".eyy", eyy));
-					RunSection::ActionScalar ezz = RunSection::ActionScalar(this->strain_components[2], nullptr);
+					RunSection::ActionScalar ezz = RunSection::ActionScalar(this->strain_components[5], nullptr);
 					scalars.push_back(RunSection::NamedActionScalar(_system + "." + this->Name() + ".ezz", ezz));
 					RunSection::ActionScalar exy = RunSection::ActionScalar(this->strain_components[1], nullptr);
 					scalars.push_back(RunSection::NamedActionScalar(_system + "." + this->Name() + ".exy", exy));
@@ -1661,11 +1630,11 @@ namespace SpinAPI
 					scalars.push_back(RunSection::NamedActionScalar(_system + "." + this->Name() + ".d41", d41));
 					RunSection::ActionScalar d26 = RunSection::ActionScalar(this->strain_succeptability[2], nullptr);
 					scalars.push_back(RunSection::NamedActionScalar(_system + "." + this->Name() + ".d26", d26));
-					RunSection::ActionScalar d25 = RunSection::ActionScalar(this->strain_succeptability[2], nullptr);
+					RunSection::ActionScalar d25 = RunSection::ActionScalar(this->strain_succeptability[3], nullptr);
 					scalars.push_back(RunSection::NamedActionScalar(_system + "." + this->Name() + ".d25", d25));
-					RunSection::ActionScalar d16 = RunSection::ActionScalar(this->strain_succeptability[2], nullptr);
+					RunSection::ActionScalar d16 = RunSection::ActionScalar(this->strain_succeptability[4], nullptr);
 					scalars.push_back(RunSection::NamedActionScalar(_system + "." + this->Name() + ".d16", d16));
-					RunSection::ActionScalar d15 = RunSection::ActionScalar(this->strain_succeptability[2], nullptr);
+					RunSection::ActionScalar d15 = RunSection::ActionScalar(this->strain_succeptability[5], nullptr);
 					scalars.push_back(RunSection::NamedActionScalar(_system + "." + this->Name() + ".d15", d15));
 				}
 

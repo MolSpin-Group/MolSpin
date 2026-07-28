@@ -37,6 +37,39 @@ using test_case = std::pair<std::string, test_ptr>; // Function pointer and name
 #include "tests_TaskStaticPowderSpectra.cpp"
 #include "tests_utility.cpp"
 //////////////////////////////////////////////////////////////////////////////
+// CMake and the normal Makefile target run the complete suite. Developers can
+// override these defaults when compiling a focused testmain executable.
+#ifndef SPINAPI_TEST
+#define SPINAPI_TEST 1
+#endif
+#ifndef MSDPARSER_TEST
+#define MSDPARSER_TEST 1
+#endif
+#ifndef ACTION_TEST
+#define ACTION_TEST 1
+#endif
+#ifndef STATICHSSDECAY_TEST
+#define STATICHSSDECAY_TEST 1
+#endif
+#ifndef STATICSS_TEST
+#define STATICSS_TEST 1
+#endif
+#ifndef STATICRPONLY_TEST
+#define STATICRPONLY_TEST 1
+#endif
+#ifndef STATICSSSPECTRA_TEST
+#define STATICSSSPECTRA_TEST 1
+#endif
+#ifndef STATICHSTEPR_TEST
+#define STATICHSTEPR_TEST 1
+#endif
+#ifndef STATICPOWDERSPECTRA_TEST
+#define STATICPOWDERSPECTRA_TEST 1
+#endif
+#ifndef UTIL_TEST
+#define UTIL_TEST 1
+#endif
+//////////////////////////////////////////////////////////////////////////////
 std::string read_captured_stream(std::FILE *file)
 {
 	if (file == nullptr)
@@ -86,7 +119,7 @@ int main(int argc, char **argv)
 #if STATICHSSDECAY_TEST == 1 
 	AddTaskStaticHSSymmetricDecayTests(cases);
 #endif
-#if STATCISS_TEST == 1 
+#if STATICSS_TEST == 1
 	AddTaskStaticSSTests(cases);
 #endif
 #if STATICRPONLY_TEST == 1 
@@ -187,5 +220,7 @@ int main(int argc, char **argv)
 		for (auto i = failed_cases.cbegin(); i != failed_cases.cend(); i++)
 			std::cout << " - " << i->first << std::endl;
 	}
+
+	return failed == 0 ? 0 : 1;
 }
 //////////////////////////////////////////////////////////////////////////////

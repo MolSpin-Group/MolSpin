@@ -18,13 +18,11 @@
 namespace SpinAPI
 {
     PulseSequence::PulseSequence(std::string name, std::string contents)
-        :properties(std::make_shared<MSDParser::ObjectParser>(name,contents))
-    {  
-        _validSequence = false;
-        _sequenceParsedFlag = false;
+        : properties(std::make_shared<MSDParser::ObjectParser>(name, contents)),
+          _sequenceParsedFlag(false), _validSequence(false), offset(0.0)
+    {
         if(!this->properties->Get("offset", offset))
         {
-            offset = 0.0;
             std::cerr << "No sequence offset defined, setting to 0.0" << std::endl;
         }
     }
@@ -35,7 +33,10 @@ namespace SpinAPI
     }
 
     PulseSequence::PulseSequence(const PulseSequence& pulseseq)
-        :properties(pulseseq.properties), sequence(pulseseq.sequence), tau_list(pulseseq.tau_list), _validSequence(pulseseq._validSequence), _sequenceParsedFlag(pulseseq._sequenceParsedFlag)
+        : properties(pulseseq.properties), sequence(pulseseq.sequence),
+          tau_list(pulseseq.tau_list),
+          _sequenceParsedFlag(pulseseq._sequenceParsedFlag),
+          _validSequence(pulseseq._validSequence), offset(pulseseq.offset)
     {
     }
 
@@ -89,7 +90,6 @@ namespace SpinAPI
         std::string tau_key;
         while (std::getline(ss, pulse_name, ',') && std::getline(ss, tau_key, ','))
         {
-            pulse_name = RunSection::lowercase(pulse_name);
             tau_key = RunSection::lowercase(tau_key);
 
             trim(pulse_name);
@@ -238,6 +238,7 @@ namespace SpinAPI
         this->tau_list = seq.tau_list;
         this->_validSequence = seq._validSequence;
         this->_sequenceParsedFlag = seq._sequenceParsedFlag;
+        this->offset = seq.offset;
         return (*this);
     }
 
@@ -293,13 +294,16 @@ namespace SpinAPI
         std::vector<arma::sp_cx_mat> pulses = {};
         std::vector<unsigned int> active_seq = {};
         unsigned int idx = 0;
-        for(auto seq : sequences)
+        for(const auto &seq : sequences)
         {
             pulses.push_back(arma::sp_cx_mat(seq.second->SpaceDimensions(),seq.second->SpaceDimensions()));
             auto p = seq.first->GetActivePulseAtTime(CurrentTime);
             if(p.first.IsNullptr())
+            {
+                idx += 1;
                 continue;
-            auto temp = std::make_tuple<SequenceObject,double,std::shared_ptr<SpinSpace>>(std::move(p.first), std::move(p.second), std::move(seq.second));
+            }
+            auto temp = std::make_tuple(std::move(p.first), p.second, seq.second);
             active.push_back(temp);
             active_seq.push_back(idx);
             idx += 1;
@@ -309,7 +313,6 @@ namespace SpinAPI
         {
             auto[seq_object, current_duration,space] = (*i);
             auto[pulse_event, interaction_event, transition_event] = seq_object.get();
-            int dim = space->SpaceDimensions();
             auto evaluate_pulse = [&](SpinAPI::pulse_ptr& pulse) {
                 //check if it's a instant pulse
                 auto pulse_type = pulse->Type();

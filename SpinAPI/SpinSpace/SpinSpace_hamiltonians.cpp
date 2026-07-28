@@ -341,7 +341,8 @@ namespace SpinAPI
 				}
 
 				auto d_list = _interaction->Strain_Succeptability();
-				double h43,h41,h26,h25,h16,h15 = 0.0;
+				double h43 = 0.0, h41 = 0.0, h26 = 0.0;
+				double h25 = 0.0, h16 = 0.0, h15 = 0.0;
 				if (d_list.size() == 3)
 				{
 					h43 = d_list[0];
@@ -355,11 +356,10 @@ namespace SpinAPI
 					h26 = d_list[2];
 					h25 = d_list[3];
 					h16 = d_list[4];
-					h15 = d_list[6];
+					h15 = d_list[5];
 				}
 				
 				auto A = ATensor->LabFrame();
-				std::cout << A << std::endl;
 				//Ex = exz - 1/2(h15/h16)(exx-eyy)
 				double Ex2 = A(0,2) - 0.5 * ((h26 != 0.0) ? (h25/h26) * (A(0,0)-A(1,1)) : 0.0);
 				double Ex1 = A(0,2) - 0.5 * ((h16 != 0.0) ? (h15/h16) * (A(0,0)-A(1,1)) : 0.0);
@@ -685,7 +685,8 @@ namespace SpinAPI
 				}
 
 				auto d_list = _interaction->Strain_Succeptability();
-				double h43,h41,h26,h25,h16,h15 = 0.0;
+				double h43 = 0.0, h41 = 0.0, h26 = 0.0;
+				double h25 = 0.0, h16 = 0.0, h15 = 0.0;
 				if (d_list.size() == 3)
 				{
 					h43 = d_list[0];

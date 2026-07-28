@@ -382,7 +382,7 @@ namespace RunSection
 		{
 			// Propagate
 			//evaluate pulse sequence 
-			int previous_current_block = current_block;
+			size_t previous_current_block = current_block;
 			ClampTimeEvolution(CurrentTime, this->totaltime, time_blocks, current_block, this->timestep, params);
 			if(current_block != previous_current_block)
 				this->timestep = timestep / 100;

@@ -110,7 +110,7 @@ RunSection::ActionLogSpace::ActionLogSpace(const MSDParser::ObjectParser &_parse
     m_Step = 0;
     m_Num = 0;
     m_Bounds = {0.0, 0.0};
-    m_Points = arma::rowvec(arma::zeros(m_Num));
+    m_Points.reset();
 }
 
 bool RunSection::ActionLogSpace::GetPoint(double &val)

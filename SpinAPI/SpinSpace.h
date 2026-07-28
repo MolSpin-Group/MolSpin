@@ -276,7 +276,7 @@ namespace SpinAPI
 		{
 			arma::cx_colvec result;
 			arma::cx_mat PropMat;
-			double error_estimate;
+			double error_estimate = 0.0;
 
 			operator arma::cx_colvec()
 			{
@@ -290,7 +290,7 @@ namespace SpinAPI
 			arma::cx_mat phi1;
 			arma::cx_mat phi2;
 			arma::cx_mat krybasis;
-			double error_estimate;
+			double error_estimate = 0.0;
 
 			operator arma::cx_mat()
 			{
@@ -396,7 +396,9 @@ namespace SpinAPI
 		struct TimeAdaptiveKrylovCache
 		{
 			int KrylovDim = 0;
-			double KrylovDimTol = 1e-8;
+			// Fixed-dimension Krylov calls do not truncate their requested
+			// basis. Adaptive propagators set and clear this tolerance.
+			double KrylovDimTol = 0.0;
 		};
 
 		double Adjusth(double R, double safety, double f1, double f2, double h, int order = 4);

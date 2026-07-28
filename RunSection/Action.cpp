@@ -15,7 +15,8 @@ namespace RunSection
 	// Action Constructors and Destructor
 	// -----------------------------------------------------
 	Action::Action(const MSDParser::ObjectParser &_properties, const std::map<std::string, ActionScalar> &_scalars, const std::map<std::string, ActionVector> &_vectors)
-		: properties(std::make_shared<MSDParser::ObjectParser>(_properties)), scalars(_scalars), vectors(_vectors), isValid(false), value(1.0), first(1), last(0), period(1)
+		: properties(std::make_shared<MSDParser::ObjectParser>(_properties)), scalars(_scalars), vectors(_vectors), isValid(false), period(1), m_loop(false),
+		  first(1), last(0), value(1.0)
 	{
 		this->properties->Get("value", this->value);
 		this->properties->Get("first", this->first);
