@@ -31,6 +31,7 @@ using test_case = std::pair<std::string, test_ptr>; // Function pointer and name
 #include "tests_actions.cpp"
 #include "tests_TaskStaticHSSymmetricDecay.cpp"
 #include "tests_TaskStaticSS.cpp"
+#include "tests_TaskMultiStaticSS.cpp"
 #include "tests_TaskStaticRPOnlyHSSymDec.cpp"
 #include "tests_TaskStaticSSSpectra.cpp"
 #include "tests_TaskStaticHSTrEPRSpectra.cpp"
@@ -53,6 +54,9 @@ using test_case = std::pair<std::string, test_ptr>; // Function pointer and name
 #endif
 #ifndef STATICSS_TEST
 #define STATICSS_TEST 1
+#endif
+#ifndef MULTISTATICSS_TEST
+#define MULTISTATICSS_TEST 1
 #endif
 #ifndef STATICRPONLY_TEST
 #define STATICRPONLY_TEST 1
@@ -121,6 +125,9 @@ int main(int argc, char **argv)
 #endif
 #if STATICSS_TEST == 1
 	AddTaskStaticSSTests(cases);
+#endif
+#if MULTISTATICSS_TEST == 1
+	AddTaskMultiStaticSSTests(cases);
 #endif
 #if STATICRPONLY_TEST == 1 
 	AddTaskStaticRPOnlyHSSymDecTests(cases);

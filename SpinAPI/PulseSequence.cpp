@@ -284,7 +284,7 @@ namespace SpinAPI
 
     bool CheckActionScalarTau(const double &_d)
 	{
-		return std::isfinite(_d);
+		return std::isfinite(_d) && _d >= 0.0;
 	}
 
     std::vector<arma::sp_cx_mat> GetPulseOperator(std::vector<std::pair<PulseSequence_ptr, std::shared_ptr<SpinSpace>>> sequences, arma::cx_vec& rho, double CurrentTime) //rho is included for the case where we have a instant pulse 

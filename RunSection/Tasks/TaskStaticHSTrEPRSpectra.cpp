@@ -2534,7 +2534,6 @@ namespace RunSection
 		stepsOut.clear();
 		error.clear();
 
-		const double tol = 1e-12;
 		for (const auto &action : actions)
 		{
 			auto add = std::dynamic_pointer_cast<ActionAddVector>(action);
@@ -2563,7 +2562,7 @@ namespace RunSection
 
 			if (add->Period() != 1 || add->First() != 1)
 			{
-				error = "AddVector action has non-unit period or nonzero start.";
+				error = "AddVector action has non-unit period or does not start at step 1.";
 				return false;
 			}
 			if (add->Last() != 0 && add->Last() < steps)
@@ -2576,11 +2575,9 @@ namespace RunSection
 			auto it = stepsOut.find(targetName);
 			if (it != stepsOut.end())
 			{
-				if (arma::norm(it->second - step) > tol)
-				{
-					error = "Conflicting AddVector actions for the same target.";
-					return false;
-				}
+				// RunSection applies every action. Multiple increments for one
+				// target therefore compose into one net sweep step.
+				it->second += step;
 			}
 			else
 			{

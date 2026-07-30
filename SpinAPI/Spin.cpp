@@ -418,11 +418,12 @@ namespace SpinAPI
 		// Get ActionTargets for the Spin object
 		std::vector<RunSection::NamedActionVector> vectors;
 
-		// Get ActionTargets for the quantization axes (readonly if there is a trajectory assigned)
-		bool qAxesReadOnly = this->trjHasQAxis1 | this->trjHasQAxis2 | this->trjHasQAxis3;
-		RunSection::ActionVector qaxis1av = RunSection::ActionVector(this->quantizationAxis1, nullptr, qAxesReadOnly);
-		RunSection::ActionVector qaxis2av = RunSection::ActionVector(this->quantizationAxis2, nullptr, qAxesReadOnly);
-		RunSection::ActionVector qaxis3av = RunSection::ActionVector(this->quantizationAxis3, nullptr, qAxesReadOnly);
+		// Quantization axes form one orthonormal frame. Expose them to output
+		// objects, but do not let independent vector actions corrupt that frame.
+		// A future mutable interface must rotate all three axes transactionally.
+		RunSection::ActionVector qaxis1av = RunSection::ActionVector(this->quantizationAxis1, nullptr, true);
+		RunSection::ActionVector qaxis2av = RunSection::ActionVector(this->quantizationAxis2, nullptr, true);
+		RunSection::ActionVector qaxis3av = RunSection::ActionVector(this->quantizationAxis3, nullptr, true);
 		vectors.push_back(RunSection::NamedActionVector(_system + "." + this->Name() + ".quantizationaxis1", qaxis1av));
 		vectors.push_back(RunSection::NamedActionVector(_system + "." + this->Name() + ".quantizationaxis2", qaxis2av));
 		vectors.push_back(RunSection::NamedActionVector(_system + "." + this->Name() + ".quantizationaxis3", qaxis3av));

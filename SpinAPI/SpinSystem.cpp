@@ -596,7 +596,10 @@ namespace SpinAPI
 			return StateFrame::Fixed;
 
 		std::string str;
-		if (!this->properties->Get("frame", str) && !this->properties->Get("stateframe", str))
+		if (!this->properties->Get("initialstateframe", str) &&
+			!this->properties->Get("initial_state_frame", str) &&
+			!this->properties->Get("frame", str) &&
+			!this->properties->Get("stateframe", str))
 			return StateFrame::Fixed;
 
 		// Accept a few short aliases because this keyword appears in user MSD
@@ -699,6 +702,10 @@ namespace SpinAPI
 
 		// Get ActionTargets from all state objects, adding the name of the SpinSystem
 		for (auto i = this->states.cbegin(); i != this->states.cend(); i++)
+			(*i)->GetActionTargets(tmpVecScalars, tmpVecVectors, this->Name());
+
+		// Pulse-sequence delay variables are mutable ActionScalars as well.
+		for (auto i = this->pulses_seq.cbegin(); i != this->pulses_seq.cend(); i++)
 			(*i)->GetActionTargets(tmpVecScalars, tmpVecVectors, this->Name());
 
 		// Insert all the ActionScalars in the associated container

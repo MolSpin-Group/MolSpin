@@ -13,6 +13,8 @@
 #include "SpinSystem.h"
 #include "RunSection.h"
 
+#include <algorithm>
+
 // Include source file with method to create task classes
 #include "RunSection_CreateTask.cpp"
 
@@ -85,63 +87,43 @@ namespace RunSection
 		for (auto j = this->actions.cbegin(); j != this->actions.cend(); j++)
 			(*j)->Step(_currentStep);
 
+		// State coefficients can depend on ActionScalar variables. Apply every
+		// action first, then refresh each affected state once so the next task
+		// observes one coherent parameter set.
+		std::vector<SpinAPI::state_ptr> statesToUpdate;
 		for (auto j = this->actions.cbegin(); j != this->actions.cend(); j++)
 		{
-			std::string object;
-			(*j)->GetProperties()->Get("scalar", object);
-			if (object == "")
-			{
+			std::string targetName;
+			if (!(*j)->GetProperties()->Get("scalar", targetName) &&
+				!(*j)->GetProperties()->Get("actionscalar", targetName))
 				continue;
-			}
 
-			// get the middle bit
-			std::string state;
-			std::string system;
-			bool start = false;
-			for (auto c = object.cbegin(); c != object.cend(); c++)
-			{
-				if ((*c) == '.')
-				{
-					start = !start;
-					if (!start)
-					{
-						break;
-					}
-				}
-				else if (start)
-				{
-					state = state + (*c);
-				}
-				else
-				{
-					system = system + (*c);
-				}
-			}
+			const std::string::size_type firstDot = targetName.find('.');
+			const std::string::size_type secondDot =
+				(firstDot == std::string::npos) ? std::string::npos : targetName.find('.', firstDot + 1);
+			if (firstDot == std::string::npos || secondDot == std::string::npos || secondDot == firstDot + 1)
+				continue;
 
-			SpinAPI::state_ptr ActionState;
-			std::string system2 = "";
-			int SpinSystem = -1;
-			bool IsState = true;
-			while (system2 != system && IsState)
-			{
-				SpinSystem++;
-				if ((unsigned int)SpinSystem == this->systems.size())
+			const std::string systemName = targetName.substr(0, firstDot);
+			const std::string stateName = targetName.substr(firstDot + 1, secondDot - firstDot - 1);
+			auto system = std::find_if(this->systems.cbegin(), this->systems.cend(),
+				[&systemName](const SpinAPI::system_ptr &_system)
 				{
-					IsState = false;
-				}
-				system2 = this->systems[SpinSystem]->Name();
-			}
-			if (!IsState)
-			{
+					return _system != nullptr && _system->Name() == systemName;
+				});
+			if (system == this->systems.cend())
 				continue;
-			}
-			ActionState = this->systems[SpinSystem]->states_find(state);
-			if (ActionState == nullptr)
-			{
+
+			auto state = (*system)->states_find(stateName);
+			if (state == nullptr ||
+				std::find(statesToUpdate.cbegin(), statesToUpdate.cend(), state) != statesToUpdate.cend())
 				continue;
-			}
-			ActionState->Update();
+
+			statesToUpdate.push_back(state);
 		}
+
+		for (const auto &state : statesToUpdate)
+			state->Update();
 
 		return true;
 	}
@@ -180,6 +162,7 @@ namespace RunSection
 
 			// Add the task to the collection
 			this->tasks.push_back(task);
+			return true;
 		}
 		else if (_type == MSDParser::ObjectType::Action)
 		{

@@ -1647,7 +1647,7 @@ bool test_spinapi_instantpulse()
 	std::string contents = "type=instantpulse;group=RPElectron1;rotationaxis=1 1 1;angle=42.24;";
 	SpinAPI::Pulse P(name, contents);
 
-	auto rotationaxis = arma::vec("1 1 1") / arma::norm(arma::vec("1 1 1"));
+	const arma::vec rotationaxis = arma::normalise(arma::vec("1 1 1"));
 	double angle = 42.24;
 
 	bool isCorrect = true;
@@ -3193,6 +3193,54 @@ bool test_spinapi_block_krylov_is_bounded_and_orthonormal()
 }
 //////////////////////////////////////////////////////////////////////////////
 
+// General powder tasks should be able to request every static interaction
+// without maintaining a task-local list of object names. The list-free API
+// must remain matrix-identical to the established explicit builders.
+bool test_spinapi_rotated_static_hamiltonian_includes_all_interactions()
+{
+	auto triplet = std::make_shared<SpinAPI::Spin>(
+		"T", "type=electron;spin=1;tensor=matrix(\"2.0 0 0; 0 2.1 0; 0 0 2.3\");");
+	auto zeeman = std::make_shared<SpinAPI::Interaction>(
+		"B", "type=zeeman;spins=T;field=0 0 0.02;ignoretensors=false;commonprefactor=false;prefactor=1;");
+	auto zfs = std::make_shared<SpinAPI::Interaction>(
+		"D", "type=quadraticspin;group1=T;tensor=matrix(\"1 0.2 0; 0.2 -0.4 0.1; 0 0.1 -0.6\");"
+			 "orientation=0.2 0.4 0.7;commonprefactor=false;prefactor=1;");
+
+	SpinAPI::SpinSystem system("System");
+	system.Add(triplet);
+	system.Add(zeeman);
+	system.Add(zfs);
+	bool isCorrect = system.ValidateInteractions().empty();
+
+	SpinAPI::SpinSpace space(system);
+	space.UseSuperoperatorSpace(false);
+
+	arma::mat rotation;
+	isCorrect &= SpinAPI::CreateZYZRotationMatrix(0.0, 0.9, 1.3, rotation);
+	const std::vector<std::string> names = {"B", "D"};
+
+	arma::sp_cx_mat allFull;
+	arma::sp_cx_mat namedFull;
+	arma::sp_cx_mat allSecular;
+	arma::sp_cx_mat namedSecular;
+	isCorrect &= space.StaticHamiltonianRotatedZYZ(rotation, allFull);
+	isCorrect &= space.BaseHamiltonianRotatedZYZ(names, rotation, namedFull);
+	isCorrect &= space.StaticHamiltonianRotatedSA(rotation, allSecular);
+	isCorrect &= space.BaseHamiltonianRotated_SA(names, rotation, namedSecular);
+	isCorrect &= equal_matrices(allFull, namedFull, 1e-12);
+	isCorrect &= equal_matrices(allSecular, namedSecular, 1e-12);
+
+	arma::mat identity = arma::eye<arma::mat>(3, 3);
+	arma::sp_cx_mat plain;
+	arma::sp_cx_mat identityRotated;
+	isCorrect &= space.StaticHamiltonian(plain);
+	isCorrect &= space.StaticHamiltonianRotatedZYZ(identity, identityRotated);
+	isCorrect &= equal_matrices(plain, identityRotated, 1e-12);
+
+	return isCorrect;
+}
+//////////////////////////////////////////////////////////////////////////////
+
 // Add all the SpinAPI test cases
 void AddSpinAPITests(std::vector<test_case> &_cases)
 {
@@ -3273,6 +3321,7 @@ void AddSpinAPITests(std::vector<test_case> &_cases)
 	_cases.push_back(test_case("SpinSpace::Krylov fixed dimension is respected", test_spinapi_krylov_general_respects_requested_dimension));
 	_cases.push_back(test_case("SpinSpace::Krylov happy breakdown converges", test_spinapi_krylov_happy_breakdown_returns_exact_result));
 	_cases.push_back(test_case("SpinSpace::Block Krylov is bounded and orthonormal", test_spinapi_block_krylov_is_bounded_and_orthonormal));
+	_cases.push_back(test_case("SpinSpace::Rotated static Hamiltonian includes every interaction", test_spinapi_rotated_static_hamiltonian_includes_all_interactions));
 	_cases.push_back(test_case("SpinAPI::Operator copy preserves relaxation configuration", test_spinapi_operator_copy_preserves_relaxation_configuration));
 }
 //////////////////////////////////////////////////////////////////////////////

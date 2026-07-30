@@ -8,6 +8,8 @@
 #include "ActionMultiplyScalar.h"
 #include "ObjectParser.h"
 
+#include <cmath>
+
 namespace RunSection
 {
 	// -----------------------------------------------------
@@ -34,9 +36,12 @@ namespace RunSection
 
 		// Retrieve the scalar we want to change
 		double d = actionScalar->Get();
+		const double result = d * this->Value();
+		if (!std::isfinite(result))
+			return false;
 
 		// Set the new scalar
-		return this->actionScalar->Set(d * this->Value());
+		return this->actionScalar->Set(result);
 	}
 
 	// Method to prepare the action and check whether it is valid
@@ -61,6 +66,12 @@ namespace RunSection
 		if (this->actionScalar->IsReadonly())
 		{
 			std::cout << "ERROR: Readonly ActionScalar \"" << str << "\" specified for the MultiplyScalar action \"" << this->Name() << "\"! Cannot act on this scalar!" << std::endl;
+			return false;
+		}
+
+		if (!std::isfinite(this->actionScalar->Get()))
+		{
+			std::cout << "ERROR: ActionScalar \"" << str << "\" has a non-finite value!" << std::endl;
 			return false;
 		}
 

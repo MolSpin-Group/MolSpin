@@ -439,6 +439,8 @@ namespace SpinAPI
 		bool DynamicHamiltonian(arma::sp_cx_mat &) const;							// Time-dependent part of the Hamiltonian operator (sparse matrix)
 		bool ThermalHamiltonian(std::vector<std::string> thermalhamiltonian_list, arma::cx_mat &_out) const;							// Time-independent part of the Hamiltonian for thermal state (dense matrix)
 		bool ThermalHamiltonian(std::vector<std::string> thermalhamiltonian_list, arma::sp_cx_mat &_out) const;							// Time-independent part of the Hamiltonian for thermal state (sparse matrix)
+		bool StaticHamiltonianRotatedZYZ(const arma::mat &rotmatrix, arma::sp_cx_mat &_out) const; // All static interactions after a common molecular-to-lab rotation
+		bool StaticHamiltonianRotatedSA(const arma::mat &rotmatrix, arma::sp_cx_mat &_out) const;  // All static interactions in the high-field secular approximation
 		bool BaseHamiltonianRotatedZYZ(std::vector<std::string> basehamiltonian_list, arma::mat rotmatrix, arma::sp_cx_mat &_out) const;
 		bool BaseHamiltonianRotated_SA(std::vector<std::string> basehamiltonian_list, arma::mat rotmatrix, arma::sp_cx_mat &_out) const;
 		bool PowderHamiltonianRotatedSA(const std::vector<std::string> &h0list, const std::vector<std::string> &h1list, const arma::mat &rotmatrix, arma::sp_cx_mat &H0, arma::sp_cx_mat &H1, arma::sp_cx_mat &H) const;

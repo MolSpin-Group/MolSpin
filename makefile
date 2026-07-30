@@ -7,22 +7,16 @@
 # installed. You should install OpenBLAS, Intel MKL, or other math libraries
 # before installing Armadillo, please see documentation for Armadillo.
 #
-# Note: If you use Intel MKL instead of OpenBLAS, you may need to remove two
-# lines from main.cpp, i.e. the lines using the function
-# "openblas_set_num_threads".
-#
 # MolSpin was developed using gcc 5.4.0.
 # --------------------------------------------------------------------------
-# Using MKL with dynamic linking can be done like this:
-#LMKL = -lmkl_intel_lp64 -lmkl_intel_thread -lmkl_core -liomp5 -lpthread -lm -ldl -fopenmp
-# Be sure to check the Intel MKL Link Line Advisor to get the correct link
-# line for your specific system.
-# Note that this line should be added to LFLAGS only.
-# --------------------------------------------------------------------------
-# Compile using Armadillo, here assuming OpenBLAS and Lapack is used
-ARMADILLO = -larmadillo -lopenblas -llapack -fopenmp -DARMA_NO_DEBUG
-# For an installation in a non-standard location, use:
-# ARMADILLO = -I/path/to/armadillo/installdir/include/ -DARMA_DONT_USE_WRAPPER -fopenmp
+# Armadillo's wrapper selects and links its configured BLAS/LAPACK backend.
+# pkg-config also supplies non-standard include/library paths, as used by
+# Conda. Both variables can be overridden for a custom installation.
+PKG_CONFIG ?= pkg-config
+ARMADILLO_CFLAGS ?= $(shell $(PKG_CONFIG) --cflags armadillo 2>/dev/null)
+ARMADILLO_LIBS ?= $(shell $(PKG_CONFIG) --libs armadillo 2>/dev/null || echo -larmadillo)
+# Example:
+# make ARMADILLO_CFLAGS="-I/path/include" ARMADILLO_LIBS="-L/path/lib -larmadillo"
 # --------------------------------------------------------------------------
 # If you have different versions of gcc or the C++ stdlib installed,
 # adding the following to LFLAGS may help:
@@ -78,28 +72,30 @@ OPTFLAGS ?= -O3
 ARCHFLAGS ?= -march=native
 LOOPFLAGS ?= -funroll-loops
 OPENMPFLAGS ?= -fopenmp
-COMPATFLAGS ?= -fconcepts
+DLFLAGS ?= -ldl
+COMPATFLAGS ?=
 WARNFLAGS ?= -Wall
 DEBUGFLAGS ?= -g
-DEFINES ?= -DARMA_DONT_PRINT_FAST_MATH_WARNING -DASSERT=1 -DNEGATIVERATES=0
+DEFINES ?= -DARMA_DONT_PRINT_FAST_MATH_WARNING -DARMA_NO_DEBUG -DASSERT=1 -DNEGATIVERATES=0
 TESTDEFINES ?= -DSPINAPI_TEST=0 -DMSDPARSER_TEST=0 -DACTION_TEST=0 -DSTATICHSSDECAY_TEST=0 -DSTATICSS_TEST=0 -DSTATICRPONLY_TEST=0 -DSTATICSSSPECTRA_TEST=0 -DSTATICHSTEPR_TEST=0 -DSTATICPOWDERSPECTRA_TEST=1 -DUTIL_TEST=0
 CC = $(CXX) $(CXXSTD)		# Compiler to use
 LFLAGS = $(WARNFLAGS) $(DEBUGFLAGS) -DARMA_DONT_PRINT_FAST_MATH_WARNING $(OPTFLAGS)	# Linker Flags
 CFLAGS = $(WARNFLAGS) -c $(ARCHFLAGS) $(LOOPFLAGS) $(COMPATFLAGS) $(DEBUGFLAGS) $(OPENMPFLAGS) $(DEFINES) $(OPTFLAGS) # Compile flags to .o
 TESTCFLAGS = $(CFLAGS) $(TESTDEFINES)
-# Example portability override: make ARCHFLAGS= COMPATFLAGS= OPENMPFLAGS=
+LDLIBS = $(ARMADILLO_LIBS) $(OPENMPFLAGS) $(DLFLAGS)
+# Example portability override: make ARCHFLAGS= LOOPFLAGS=
 
 #DEBUGLFLAGS = -Wall -g -DARMA_DONT_PRINT_FAST_MATH_WARNING
-#DEBUGCFLAGS = -Wall -c -march=native -funroll-loops -fconcepts -g -fopenmp -DARMA_DONT_PRINT_FAST_MATH_WARNING -Werror -Wextra
+#DEBUGCFLAGS = -Wall -c -march=native -funroll-loops -g -fopenmp -DARMA_DONT_PRINT_FAST_MATH_WARNING -Werror -Wextra
 
 # --------------------------------------------------------------------------
 # Compilation of the main program
 # --------------------------------------------------------------------------
-SEARCHDIR_MOLSPIN = -I$(PATH_SPINAPI) -I$(PATH_MSDPARSER) -I$(PATH_RUNSECTION) -I$(PATH_RUNSECTION_TASKS) -I$(PATH_RUNSECTION_CUSTOMTASKS) -I$(PATH_RUNSECTION_ACTIONS) -I$(PATH_LINALG_VENDOR) $(ARMADILLO)
+SEARCHDIR_MOLSPIN = -I$(PATH_SPINAPI) -I$(PATH_MSDPARSER) -I$(PATH_RUNSECTION) -I$(PATH_RUNSECTION_TASKS) -I$(PATH_RUNSECTION_CUSTOMTASKS) -I$(PATH_RUNSECTION_ACTIONS) -I$(PATH_LINALG_VENDOR) $(ARMADILLO_CFLAGS)
 molspin: $(OBJECTS)
-	$(CC) $(LFLAGS) $^ $(SEARCHDIR_MOLSPIN) -o $@
+	$(CC) $(LFLAGS) $^ $(LDLIBS) -o $@
 
-SEARCHDIR_MAIN = -I$(PATH_SPINAPI) -I$(PATH_MSDPARSER) -I$(PATH_RUNSECTION) -I$(PATH_RUNSECTION_TASKS) -I$(PATH_RUNSECTION_CUSTOMTASKS) -I$(PATH_RUNSECTION_ACTIONS) -I$(PATH_LINALG_VENDOR) $(ARMADILLO)
+SEARCHDIR_MAIN = -I$(PATH_SPINAPI) -I$(PATH_MSDPARSER) -I$(PATH_RUNSECTION) -I$(PATH_RUNSECTION_TASKS) -I$(PATH_RUNSECTION_CUSTOMTASKS) -I$(PATH_RUNSECTION_ACTIONS) -I$(PATH_LINALG_VENDOR) $(ARMADILLO_CFLAGS)
 main.o: main.cpp $(DEP_MSDPARSER) $(DEP_SPINAPI)
 	$(CC) $(CFLAGS) $(SEARCHDIR_MAIN) main.cpp -o main.o
 #---------------------------------------------------------------------------
@@ -133,12 +129,12 @@ $(PATH_SPINAPI)/SpinSpace.o: $(PATH_SPINAPI)/SpinSpace.cpp $(PATH_SPINAPI)/SpinS
 # Unit testing module
 # --------------------------------------------------------------------------
 SEARCHDIR_TESTS = $(SEARCHDIR_MAIN) -I$(PATH_TESTS)
-TESTMAIN_DEPS = $(PATH_TESTS)/testmain.cpp $(PATH_TESTS)/assertfunctions.cpp $(PATH_TESTS)/tests_spinapi.cpp $(PATH_TESTS)/tests_msdparser.cpp $(PATH_TESTS)/tests_actions.cpp $(PATH_TESTS)/tests_TaskStaticHSSymmetricDecay.cpp $(PATH_TESTS)/tests_TaskStaticSS.cpp $(PATH_TESTS)/tests_TaskStaticRPOnlyHSSymDec.cpp $(PATH_TESTS)/tests_TaskStaticSSSpectra.cpp $(PATH_TESTS)/tests_TaskStaticHSTrEPRSpectra.cpp $(PATH_TESTS)/tests_TaskStaticPowderSpectra.cpp $(PATH_TESTS)/tests_utility.cpp
+TESTMAIN_DEPS = $(PATH_TESTS)/testmain.cpp $(PATH_TESTS)/assertfunctions.cpp $(PATH_TESTS)/tests_spinapi.cpp $(PATH_TESTS)/tests_msdparser.cpp $(PATH_TESTS)/tests_actions.cpp $(PATH_TESTS)/tests_TaskStaticHSSymmetricDecay.cpp $(PATH_TESTS)/tests_TaskStaticSS.cpp $(PATH_TESTS)/tests_TaskMultiStaticSS.cpp $(PATH_TESTS)/tests_TaskStaticRPOnlyHSSymDec.cpp $(PATH_TESTS)/tests_TaskStaticSSSpectra.cpp $(PATH_TESTS)/tests_TaskStaticHSTrEPRSpectra.cpp $(PATH_TESTS)/tests_TaskStaticPowderSpectra.cpp $(PATH_TESTS)/tests_utility.cpp
 
 .PHONY: test test_debug
 # The normal target always runs the complete suite.
 test: $(OBJS_TESTS)
-	$(CC) $(LFLAGS) $(OBJS_TESTS) $(SEARCHDIR_TESTS) -o $(PATH_TESTS)/molspintest
+	$(CC) $(LFLAGS) $(OBJS_TESTS) $(LDLIBS) -o $(PATH_TESTS)/molspintest
 	$(PATH_TESTS)/molspintest
 
 $(PATH_TESTS)/testmain.o: $(TESTMAIN_DEPS)
@@ -147,7 +143,7 @@ $(PATH_TESTS)/testmain.o: $(TESTMAIN_DEPS)
 # The focused target uses TESTDEFINES and a separate object/executable so its
 # selection cannot leak into a subsequent full-suite build.
 test_debug: $(OBJS_TESTS_DEBUG)
-	$(CC) $(LFLAGS) $(OBJS_TESTS_DEBUG) $(SEARCHDIR_TESTS) -o $(PATH_TESTS)/molspintest-debug
+	$(CC) $(LFLAGS) $(OBJS_TESTS_DEBUG) $(LDLIBS) -o $(PATH_TESTS)/molspintest-debug
 	$(PATH_TESTS)/molspintest-debug
 
 $(PATH_TESTS)/testmain_debug.o: $(TESTMAIN_DEPS)

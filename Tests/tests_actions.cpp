@@ -15,8 +15,18 @@
 #include "ActionFibonacciSphere.h"
 #include "ActionRotateVector.h"
 #include "ActionLogSpace.h"
+#include "Interaction.h"
+#include "Pulse.h"
+#include "PulseSequence.h"
+#include "RunSection.h"
+#include "Spin.h"
+#include "SpinSpace.h"
+#include "SpinSystem.h"
+#include "State.h"
 
+#include <cmath>
 #include <iostream>
+#include <limits>
 //////////////////////////////////////////////////////////////////////////////
 // Tests the ActionTarget alias ActionScalar
 // First we define a check-function
@@ -328,6 +338,465 @@ bool test_action_LogSpace()
 	return isCorrect;
 }
 
+//////////////////////////////////////////////////////////////////////////////
+// Invalid scheduling and geometry must be rejected during validation rather
+// than failing later in the calculation loop.
+bool test_action_validation_guards()
+{
+	double scalarValue = 1.0;
+	arma::vec vectorValue = {1.0, 0.0, 0.0};
+	arma::vec shortVectorValue = {1.0, 0.0};
+	std::map<std::string, RunSection::ActionScalar> scalars{
+		{"scalar", RunSection::ActionScalar(scalarValue, nullptr)}};
+	std::map<std::string, RunSection::ActionVector> vectors{
+		{"vector", RunSection::ActionVector(vectorValue, nullptr)},
+		{"shortVector", RunSection::ActionVector(shortVectorValue, nullptr)}};
+
+	MSDParser::ObjectParser zeroPeriodParser(
+		"zeroPeriod", "scalar=scalar;value=1;period=0;");
+	RunSection::ActionAddScalar zeroPeriod(zeroPeriodParser, scalars, vectors);
+
+	MSDParser::ObjectParser zeroDirectionParser(
+		"zeroDirection", "vector=vector;value=1;direction=0 0 0;");
+	RunSection::ActionAddVector zeroDirection(zeroDirectionParser, scalars, vectors);
+
+	MSDParser::ObjectParser zeroAxisParser(
+		"zeroAxis", "vector=vector;value=10;axis=0 0 0;");
+	RunSection::ActionRotateVector zeroAxis(zeroAxisParser, scalars, vectors);
+
+	MSDParser::ObjectParser shortTargetParser(
+		"shortTarget", "vector=shortVector;value=1;direction=1 0 0;");
+	RunSection::ActionAddVector shortTarget(shortTargetParser, scalars, vectors);
+
+	MSDParser::ObjectParser shortSphereParser(
+		"shortSphere", "vector=vector;points=1;");
+	RunSection::ActionFibonacciSphere shortSphere(shortSphereParser, scalars, vectors);
+
+	MSDParser::ObjectParser emptyLogParser(
+		"emptyLog", "scalar=scalar;points=0;min=0;max=1;");
+	RunSection::ActionLogSpace emptyLog(emptyLogParser, scalars, vectors);
+
+	return !zeroPeriod.Validate() &&
+		   !zeroDirection.Validate() &&
+		   !zeroAxis.Validate() &&
+		   !shortTarget.Validate() &&
+		   !shortSphere.Validate() &&
+		   !emptyLog.Validate();
+}
+
+//////////////////////////////////////////////////////////////////////////////
+// Arithmetic actions must not write infinities even when a custom target was
+// registered without its own validation callback.
+bool test_action_arithmetic_overflow_guards()
+{
+	double scalarValue = std::numeric_limits<double>::max();
+	arma::vec vectorValue = {
+		std::numeric_limits<double>::max(), 0.0, 0.0};
+	std::map<std::string, RunSection::ActionScalar> scalars{
+		{"scalar", RunSection::ActionScalar(scalarValue, nullptr)}};
+	std::map<std::string, RunSection::ActionVector> vectors{
+		{"vector", RunSection::ActionVector(vectorValue, nullptr)}};
+
+	MSDParser::ObjectParser scalarParser(
+		"scalarOverflow", "scalar=scalar;value=2;");
+	RunSection::ActionMultiplyScalar scalarAction(scalarParser, scalars, vectors);
+	MSDParser::ObjectParser vectorParser(
+		"vectorOverflow", "vector=vector;value=2;");
+	RunSection::ActionScaleVector vectorAction(vectorParser, scalars, vectors);
+	if (!scalarAction.Validate() || !vectorAction.Validate())
+		return false;
+
+	scalarAction.Step(1);
+	vectorAction.Step(1);
+	return std::isfinite(scalarValue) &&
+		   equal_double(scalarValue, std::numeric_limits<double>::max()) &&
+		   vectorValue.is_finite() &&
+		   equal_double(vectorValue(0), std::numeric_limits<double>::max());
+}
+
+//////////////////////////////////////////////////////////////////////////////
+// Grid actions initialize the first calculation point during validation. Once
+// the configured grid is exhausted, later RunSection::Step calls must be a
+// no-op instead of indexing beyond the generated points.
+bool test_action_grid_bounds()
+{
+	double scalarValue = 0.0;
+	arma::vec vectorValue = {0.0, 2.0, 0.0};
+	double delayedScalarValue = 7.0;
+	arma::vec delayedVectorValue = {2.0, 0.0, 0.0};
+	std::map<std::string, RunSection::ActionScalar> scalars{
+		{"scalar", RunSection::ActionScalar(scalarValue, nullptr)},
+		{"delayedScalar", RunSection::ActionScalar(delayedScalarValue, nullptr)}};
+	std::map<std::string, RunSection::ActionVector> vectors{
+		{"vector", RunSection::ActionVector(vectorValue, nullptr)},
+		{"delayedVector", RunSection::ActionVector(delayedVectorValue, nullptr)}};
+
+	MSDParser::ObjectParser logParser(
+		"log", "scalar=scalar;points=3;min=0;max=2;");
+	RunSection::ActionLogSpace logAction(logParser, scalars, vectors);
+	if (!logAction.Validate() || !equal_double(scalarValue, 1.0))
+		return false;
+	logAction.Step(1);
+	logAction.Step(2);
+	if (!equal_double(scalarValue, 100.0))
+		return false;
+	logAction.Step(3);
+	logAction.Step(4);
+	if (!equal_double(scalarValue, 100.0))
+		return false;
+
+	MSDParser::ObjectParser sphereParser(
+		"sphere", "vector=vector;points=2;");
+	RunSection::ActionFibonacciSphere sphereAction(sphereParser, scalars, vectors);
+	if (!sphereAction.Validate())
+		return false;
+	sphereAction.Step(1);
+	const arma::vec finalPoint = vectorValue;
+	sphereAction.Step(2);
+	sphereAction.Step(3);
+
+	if (!equal_vec(vectorValue, finalPoint, 1.0e-12) ||
+		!equal_double(arma::norm(vectorValue), 2.0, 1.0e-12))
+		return false;
+
+	// A delayed grid must not consume or install point zero at validation.
+	MSDParser::ObjectParser delayedLogParser(
+		"delayedLog", "scalar=delayedScalar;points=2;min=0;max=1;first=3;");
+	RunSection::ActionLogSpace delayedLog(delayedLogParser, scalars, vectors);
+	if (!delayedLog.Validate() || !equal_double(delayedScalarValue, 7.0))
+		return false;
+	delayedLog.Step(2);
+	if (!equal_double(delayedScalarValue, 7.0))
+		return false;
+	delayedLog.Step(3);
+	if (!equal_double(delayedScalarValue, 1.0))
+		return false;
+
+	MSDParser::ObjectParser delayedSphereParser(
+		"delayedSphere", "vector=delayedVector;points=2;first=3;");
+	RunSection::ActionFibonacciSphere delayedSphere(delayedSphereParser, scalars, vectors);
+	if (!delayedSphere.Validate() ||
+		!equal_vec(delayedVectorValue, arma::vec({2.0, 0.0, 0.0}), 1.0e-12))
+		return false;
+	delayedSphere.Step(2);
+	if (!equal_vec(delayedVectorValue, arma::vec({2.0, 0.0, 0.0}), 1.0e-12))
+		return false;
+	delayedSphere.Step(3);
+	return equal_vec(delayedVectorValue, arma::vec({0.0, 2.0, 0.0}), 1.0e-12);
+}
+
+//////////////////////////////////////////////////////////////////////////////
+// The reference basis used internally by RotateVector must remain orthogonal
+// for axes with negative components. Compare against Rodrigues' formula.
+bool test_action_rotatevector_arbitrary_axis()
+{
+	arma::vec value = {0.2, -0.4, 0.7};
+	const arma::vec initial = value;
+	arma::vec axis = {-1.0, 2.0, -3.0};
+	axis /= arma::norm(axis);
+	const double angleDegrees = 37.0;
+	const double angle = angleDegrees * arma::datum::pi / 180.0;
+
+	std::map<std::string, RunSection::ActionScalar> scalars;
+	std::map<std::string, RunSection::ActionVector> vectors{
+		{"vector", RunSection::ActionVector(value, nullptr)}};
+	MSDParser::ObjectParser parser(
+		"rotate", "vector=vector;value=37;axis=-1 2 -3;");
+	RunSection::ActionRotateVector action(parser, scalars, vectors);
+	if (!action.Validate())
+		return false;
+
+	action.Step(1);
+	const arma::vec expected =
+		initial * std::cos(angle) +
+		arma::cross(axis, initial) * std::sin(angle) +
+		axis * arma::dot(axis, initial) * (1.0 - std::cos(angle));
+	return equal_vec(value, expected, 1.0e-12);
+}
+
+//////////////////////////////////////////////////////////////////////////////
+// Each interaction owns a uniquely named field target. Two actions are
+// applied between task runs, so both Zeeman fields and the next Hamiltonian
+// must reflect the same sweep increment.
+bool test_action_two_zeeman_fields_update_together()
+{
+	auto electron1 = std::make_shared<SpinAPI::Spin>(
+		"E1", "type=electron;spin=1/2;tensor=2 2 2;");
+	auto electron2 = std::make_shared<SpinAPI::Spin>(
+		"E2", "type=electron;spin=1/2;tensor=2 2 2;");
+	auto zeeman1 = std::make_shared<SpinAPI::Interaction>(
+		"zeeman1",
+		"type=zeeman;spins=E1;field=0 0 0.10;ignoretensors=true;"
+		"commonprefactor=false;prefactor=1;");
+	auto zeeman2 = std::make_shared<SpinAPI::Interaction>(
+		"zeeman2",
+		"type=zeeman;spins=E2;field=0 0 0.20;ignoretensors=true;"
+		"commonprefactor=false;prefactor=1;");
+
+	auto system = std::make_shared<SpinAPI::SpinSystem>("SweepSystem");
+	system->Add(electron1);
+	system->Add(electron2);
+	system->Add(zeeman1);
+	system->Add(zeeman2);
+	if (!system->ValidateInteractions().empty())
+		return false;
+
+	RunSection::RunSection runSection;
+	runSection.Add(system);
+	const auto targets = runSection.GetActionVectors();
+	if (targets.count("SweepSystem.zeeman1.field") != 1 ||
+		targets.count("SweepSystem.zeeman2.field") != 1)
+		return false;
+
+	MSDParser::ObjectParser action1(
+		"field1",
+		"type=addvector;vector=SweepSystem.zeeman1.field;"
+		"direction=0 0 1;value=0.05;");
+	MSDParser::ObjectParser action2(
+		"field2",
+		"type=addvector;vector=SweepSystem.zeeman2.field;"
+		"direction=0 0 1;value=0.05;");
+	if (!runSection.Add(MSDParser::ObjectType::Action, action1) ||
+		!runSection.Add(MSDParser::ObjectType::Action, action2))
+		return false;
+
+	SpinAPI::SpinSpace space(*system);
+	arma::sp_cx_mat before;
+	arma::sp_cx_mat after;
+	if (!space.Hamiltonian(before) || !runSection.Step(2) || !space.Hamiltonian(after))
+		return false;
+
+	const arma::vec field1 = zeeman1->Field();
+	const arma::vec field2 = zeeman2->Field();
+	return equal_double(field1(2), 0.15, 1.0e-14) &&
+		   equal_double(field2(2), 0.25, 1.0e-14) &&
+		   arma::norm(after - before, "fro") > 1.0e-12;
+}
+
+//////////////////////////////////////////////////////////////////////////////
+// A time-dependent interaction regenerates its instantaneous field in
+// SetTime(). Its .field target is therefore readonly; actions must modify the
+// persistent .basefield target that feeds the time-dependence function.
+bool test_action_time_dependent_basefield()
+{
+	auto electron = std::make_shared<SpinAPI::Spin>(
+		"E", "type=electron;spin=1/2;");
+	auto drive = std::make_shared<SpinAPI::Interaction>(
+		"drive",
+		"type=singlespin;spins=E;fieldtype=linearpolarization;"
+		"field=1 0 0;frequency=0;phase=0;");
+	auto system = std::make_shared<SpinAPI::SpinSystem>("DynamicSystem");
+	system->Add(electron);
+	system->Add(drive);
+	if (!system->ValidateInteractions().empty())
+		return false;
+
+	RunSection::RunSection runSection;
+	runSection.Add(system);
+	const auto targets = runSection.GetActionVectors();
+	auto field = targets.find("DynamicSystem.drive.field");
+	auto basefield = targets.find("DynamicSystem.drive.basefield");
+	if (field == targets.end() || basefield == targets.end() ||
+		!field->second.IsReadonly() || basefield->second.IsReadonly())
+		return false;
+
+	MSDParser::ObjectParser invalidAction(
+		"instantaneous",
+		"type=addvector;vector=DynamicSystem.drive.field;"
+		"direction=1 0 0;value=1;");
+	if (runSection.Add(MSDParser::ObjectType::Action, invalidAction))
+		return false;
+
+	MSDParser::ObjectParser baseAction(
+		"base",
+		"type=addvector;vector=DynamicSystem.drive.basefield;"
+		"direction=1 0 0;value=1;");
+	if (!runSection.Add(MSDParser::ObjectType::Action, baseAction) ||
+		!runSection.Step(2) ||
+		!drive->SetTime(0.0))
+		return false;
+
+	return equal_vec(drive->Field(), arma::vec({2.0, 0.0, 0.0}), 1.0e-14);
+}
+
+//////////////////////////////////////////////////////////////////////////////
+// ActionScalar aliases must refresh function-defined states, including a
+// state containing several variables used by different functions.
+bool test_action_state_variable_refresh()
+{
+	auto electron = std::make_shared<SpinAPI::Spin>(
+		"E", "type=electron;spin=1/2;");
+	auto state = std::make_shared<SpinAPI::State>(
+		"Mix",
+		"a=0;b=1.5707963267948966;"
+		"spin(E)=cos(a)|1/2>+sin(b)|-1/2>;");
+	auto system = std::make_shared<SpinAPI::SpinSystem>("StateSystem");
+	system->Add(electron);
+	system->Add(state);
+	if (!state->ParseFromSystem(*system))
+		return false;
+
+	RunSection::RunSection runSection;
+	runSection.Add(system);
+	MSDParser::ObjectParser action(
+		"stateAngle",
+		"type=addscalar;actionscalar=StateSystem.Mix.a;"
+		"value=1.5707963267948966;");
+	if (!runSection.Add(MSDParser::ObjectType::Action, action) ||
+		!runSection.Step(2))
+		return false;
+
+	SpinAPI::SpinSpace space(electron);
+	arma::cx_vec actual;
+	arma::cx_vec expected(2, arma::fill::zeros);
+	expected(1) = 1.0;
+	return space.GetState(state, actual) && equal_vec(actual, expected, 1.0e-12);
+}
+
+//////////////////////////////////////////////////////////////////////////////
+// PulseSequence exposes delay variables, but they are useful only if the
+// enclosing SpinSystem forwards those targets to RunSection.
+bool test_action_pulse_sequence_target_registration()
+{
+	auto electron = std::make_shared<SpinAPI::Spin>(
+		"E", "type=electron;spin=1/2;");
+	auto pulse = std::make_shared<SpinAPI::Pulse>(
+		"CW",
+		"type=longpulsestaticfield;group=E;field=0 0 1;pulsetime=1;"
+		"prefactorlist=1;commonprefactorlist=true;ignoretensorslist=true;");
+	std::vector<SpinAPI::spin_ptr> spins{electron};
+	if (!pulse->ParseSpinGroups(spins))
+		return false;
+
+	auto sequence = std::make_shared<SpinAPI::PulseSequence>(
+		"sequence", "tau=1;offset=0;sequence=CW,tau;");
+	std::vector<SpinAPI::pulse_ptr> pulses{pulse};
+	std::vector<SpinAPI::interaction_ptr> interactions;
+	std::vector<SpinAPI::transition_ptr> transitions;
+	if (!sequence->ParsePulseSequence(pulses, interactions, transitions))
+		return false;
+
+	auto system = std::make_shared<SpinAPI::SpinSystem>("PulseSystem");
+	system->Add(electron);
+	system->Add(pulse);
+	system->Add(sequence);
+
+	RunSection::RunSection runSection;
+	runSection.Add(system);
+	auto targets = runSection.GetActionScalars();
+	auto tauTarget = targets.find("PulseSystem.sequence.tau");
+	if (tauTarget == targets.end() || tauTarget->second.Set(-0.5))
+		return false;
+
+	MSDParser::ObjectParser action(
+		"delay",
+		"type=addscalar;scalar=PulseSystem.sequence.tau;value=0.5;");
+	if (!runSection.Add(MSDParser::ObjectType::Action, action) ||
+		!runSection.Step(2))
+		return false;
+
+	const auto &delays = sequence->Get_tau_list();
+	auto delay = delays.find("tau");
+	return delay != delays.end() && equal_double(delay->second, 1.5, 1.0e-14);
+}
+
+//////////////////////////////////////////////////////////////////////////////
+// Scalar target names are not necessarily State variables. A missing system
+// or object must not cause RunSection's state-refresh pass to index past its
+// system collection.
+bool test_action_nonstate_scalar_target_is_safe()
+{
+	double value = 0.0;
+	RunSection::RunSection runSection;
+	runSection.Add(
+		"MissingSystem.MissingState.value",
+		RunSection::ActionScalar(value, nullptr));
+	MSDParser::ObjectParser action(
+		"custom", "type=addscalar;scalar=MissingSystem.MissingState.value;value=2;");
+	return runSection.Add(MSDParser::ObjectType::Action, action) &&
+		   runSection.Step(2) &&
+		   equal_double(value, 2.0);
+}
+
+//////////////////////////////////////////////////////////////////////////////
+// Action targets must enforce the domains assumed by the downstream physics:
+// normalized axes need a nonzero direction, durations and diffusion
+// coefficients cannot be negative, and sampled broadband bounds are immutable.
+bool test_action_physical_target_guards()
+{
+	auto electron = std::make_shared<SpinAPI::Spin>(
+		"E", "type=electron;spin=1;");
+	std::vector<SpinAPI::spin_ptr> spins{electron};
+
+	auto instantPulse = std::make_shared<SpinAPI::Pulse>(
+		"instant", "type=instantpulse;group=E;rotationaxis=1 0 0;angle=90;");
+	auto longPulse = std::make_shared<SpinAPI::Pulse>(
+		"long",
+		"type=longpulsestaticfield;group=E;field=0 0 1;pulsetime=2;"
+		"prefactorlist=1;commonprefactorlist=true;ignoretensorslist=true;");
+	if (!instantPulse->ParseSpinGroups(spins) || !longPulse->ParseSpinGroups(spins))
+		return false;
+
+	std::vector<RunSection::NamedActionScalar> pulseScalars;
+	std::vector<RunSection::NamedActionVector> pulseVectors;
+	instantPulse->GetActionTargets(pulseScalars, pulseVectors, "GuardSystem");
+	longPulse->GetActionTargets(pulseScalars, pulseVectors, "GuardSystem");
+
+	bool axisRejected = false;
+	for (auto &target : pulseVectors)
+	{
+		if (target.first == "GuardSystem.instant.rotationaxis")
+			axisRejected = !target.second.Set(arma::zeros<arma::vec>(3));
+	}
+	bool durationRejected = false;
+	for (auto &target : pulseScalars)
+	{
+		if (target.first == "GuardSystem.long.pulsetime")
+			durationRejected = !target.second.Set(-1.0);
+	}
+
+	auto circular = std::make_shared<SpinAPI::Interaction>(
+		"circular",
+		"type=singlespin;spins=E;fieldtype=circularpolarization;"
+		"field=1 0 0;axis=0 0 1;frequency=1;phase=0;");
+	auto strain = std::make_shared<SpinAPI::Interaction>(
+		"strain",
+		"type=strain;group1=E;e=1 2 3 4 5 6;d=10 20 30 40 50 60;"
+		"tensortype=broadband;minfreq=1;maxfreq=2;components=1;"
+		"autoseed=false;seed=1;rwdcoeff=3;");
+	auto system = std::make_shared<SpinAPI::SpinSystem>("GuardSystem");
+	system->Add(electron);
+	system->Add(circular);
+	system->Add(strain);
+	if (!system->ValidateInteractions().empty())
+		return false;
+
+	RunSection::RunSection runSection;
+	runSection.Add(system);
+	auto vectors = runSection.GetActionVectors();
+	auto scalars = runSection.GetActionScalars();
+	auto quantizationAxis = vectors.find("GuardSystem.E.quantizationaxis1");
+	auto circularAxis = vectors.find("GuardSystem.circular.axis");
+	auto minFrequency = scalars.find("GuardSystem.strain.minfreq");
+	auto maxFrequency = scalars.find("GuardSystem.strain.maxfreq");
+	auto diffusion = scalars.find("GuardSystem.strain.rwdcoeff");
+	if (quantizationAxis == vectors.end() ||
+		circularAxis == vectors.end() ||
+		minFrequency == scalars.end() ||
+		maxFrequency == scalars.end() ||
+		diffusion == scalars.end())
+		return false;
+
+	return axisRejected &&
+		   durationRejected &&
+		   quantizationAxis->second.IsReadonly() &&
+		   !circularAxis->second.Set(arma::zeros<arma::vec>(3)) &&
+		   minFrequency->second.IsReadonly() &&
+		   maxFrequency->second.IsReadonly() &&
+		   equal_double(diffusion->second.Get(), 3.0, 1.0e-14) &&
+		   !diffusion->second.Set(-1.0);
+}
+
 // Add all the Action classes test cases
 void AddActionsTests(std::vector<test_case> &_cases)
 {
@@ -340,5 +809,15 @@ void AddActionsTests(std::vector<test_case> &_cases)
 	_cases.push_back(test_case("Action RotateVector", test_action_rotatevector));
 	_cases.push_back(test_case("Action FibonacciSphere", test_action_fibonaccisphere));
 	_cases.push_back(test_case("Action Logspace", test_action_LogSpace));
+	_cases.push_back(test_case("Action validation guards", test_action_validation_guards));
+	_cases.push_back(test_case("Action arithmetic overflow guards", test_action_arithmetic_overflow_guards));
+	_cases.push_back(test_case("Action grid bounds", test_action_grid_bounds));
+	_cases.push_back(test_case("Action arbitrary-axis rotation", test_action_rotatevector_arbitrary_axis));
+	_cases.push_back(test_case("Action two-Zeeman synchronized sweep", test_action_two_zeeman_fields_update_together));
+	_cases.push_back(test_case("Action time-dependent base field", test_action_time_dependent_basefield));
+	_cases.push_back(test_case("Action state-variable refresh", test_action_state_variable_refresh));
+	_cases.push_back(test_case("Action PulseSequence target registration", test_action_pulse_sequence_target_registration));
+	_cases.push_back(test_case("Action non-state scalar target safety", test_action_nonstate_scalar_target_is_safe));
+	_cases.push_back(test_case("Action physical target guards", test_action_physical_target_guards));
 }
 //////////////////////////////////////////////////////////////////////////////

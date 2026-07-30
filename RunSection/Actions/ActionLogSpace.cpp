@@ -10,8 +10,11 @@
 
 bool RunSection::ActionLogSpace::CalculatePoints(int n, double start, double stop)
 {
+    if (n < 1 || !std::isfinite(start) || !std::isfinite(stop))
+        return false;
+
     m_Points = arma::logspace<arma::rowvec>(start, stop, n);
-    return true;
+    return m_Points.n_elem == static_cast<arma::uword>(n) && m_Points.is_finite();
 }
 
 bool RunSection::ActionLogSpace::DoStep()
@@ -24,7 +27,8 @@ bool RunSection::ActionLogSpace::DoStep()
     }
 
     double val = 0;
-    GetPoint(val);
+    if (!GetPoint(val))
+        return true; // All requested grid points have already been emitted.
 
     if (!this->actionScaler->Set(val))
     {
@@ -47,6 +51,11 @@ bool RunSection::ActionLogSpace::DoValidate()
         std::cout << "ERROR: No Number of points specified for the LogSpace action \"" << this->Name() << "\"!" << std::endl;
         return false;
     }
+    if (NumPoints < 1)
+    {
+        std::cout << "ERROR: LogSpace action \"" << this->Name() << "\" requires at least one point." << std::endl;
+        return false;
+    }
     double lowbounds = 0;
     if (!this->Properties()->Get("minvalue", lowbounds) && !this->Properties()->Get("min", lowbounds))
     {
@@ -60,9 +69,9 @@ bool RunSection::ActionLogSpace::DoValidate()
         return false;
     }
 
-    if (lowbounds >= upbounds)
+    if (!std::isfinite(lowbounds) || !std::isfinite(upbounds) || lowbounds >= upbounds)
     {
-        std::cout << "ERROR: No incorrect bounds specified for the LogSpace action \"" << this->Name() << "\"!" << std::endl;
+        std::cout << "ERROR: Incorrect bounds specified for the LogSpace action \"" << this->Name() << "\"!" << std::endl;
         return false;
     }
 
@@ -82,15 +91,21 @@ bool RunSection::ActionLogSpace::DoValidate()
         return false;
     }
 
-    CalculatePoints(m_Num, m_Bounds.first, m_Bounds.second);
-
-    double val = 0;
-    GetPoint(val);
-    std::cout << val << std::endl;
-    if (!this->actionScaler->Set(val))
+    if (!CalculatePoints(m_Num, m_Bounds.first, m_Bounds.second))
     {
-
+        std::cout << "ERROR: Failed to construct finite points for the LogSpace action \"" << this->Name() << "\"!" << std::endl;
         return false;
+    }
+
+    m_Step = 0;
+    // Actions execute between task runs. Install point zero now only when
+    // calculation step 1 belongs to this grid; delayed grids retain the
+    // user's initial value until their configured first step.
+    if (this->first == 1)
+    {
+        double val = 0;
+        if (!GetPoint(val) || !this->actionScaler->Set(val))
+            return false;
     }
     return true;
 }
@@ -99,13 +114,11 @@ bool RunSection::ActionLogSpace::Reset()
 {
     m_Step = 0;
     double val = 0;
-    GetPoint(val);
-    this->actionScaler->Set(val);
-    return true;
+    return GetPoint(val) && this->actionScaler->Set(val);
 }
 
 RunSection::ActionLogSpace::ActionLogSpace(const MSDParser::ObjectParser &_parser, const std::map<std::string, ActionScalar> &_scaler, const std::map<std::string, ActionVector> &_vector)
-    : Action(_parser, _scaler, _vector)
+    : Action(_parser, _scaler, _vector), actionScaler(nullptr)
 {
     m_Step = 0;
     m_Num = 0;
@@ -115,6 +128,9 @@ RunSection::ActionLogSpace::ActionLogSpace(const MSDParser::ObjectParser &_parse
 
 bool RunSection::ActionLogSpace::GetPoint(double &val)
 {
+    if (m_Step < 0 || m_Step >= m_Num || static_cast<arma::uword>(m_Step) >= m_Points.n_elem)
+        return false;
+
     val = m_Points[m_Step];
     m_Step++;
     return true;

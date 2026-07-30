@@ -16,9 +16,6 @@
 #include "SpinSystem.h"
 #include "ObjectParser.h"
 
-// #ifdef USE_OPENBLAS
-extern "C" void openblas_set_num_threads(int);
-// #endif
 namespace RunSection
 {
 	// -----------------------------------------------------
@@ -51,10 +48,10 @@ namespace RunSection
 
 		// Obtain spin systems
 		auto systems = this->SpinSystems();
-		std::pair<arma::cx_mat, arma::cx_vec> P[systems.size()]; // Create array containing a propagator and the current state of each system //LINE MODIFIED FOR SW
-		SpinAPI::SpinSpace spaces[systems.size()];				 // Keep a SpinSpace object for each spin system
-		SCData SWdata[systems.size()];
-		bool SW[systems.size()];
+		std::vector<std::pair<arma::cx_mat, arma::cx_vec>> P(systems.size()); // Store a propagator and the current state of each system.
+		std::vector<SpinAPI::SpinSpace> spaces(systems.size());				  // Keep a SpinSpace object for each spin system.
+		std::vector<SCData> SWdata(systems.size());
+		std::vector<bool> SW(systems.size());
 
 		// Loop through all SpinSystems
 		int ic = 0; // System counter

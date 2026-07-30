@@ -34,6 +34,8 @@ namespace RunSection
 
 		// Retrieve the vector we want to rotate
 		arma::vec vec = actionVector->Get();
+		if (vec.n_elem != 3 || !vec.is_finite())
+			return false;
 
 		// Subtract the projection along the rotation axis
 		// Hence vec will then lie in the orthogonal plane
@@ -55,6 +57,8 @@ namespace RunSection
 
 		// Get the new vector
 		vec = planeLength * (this->refAxis1 * cos(angle) + this->refAxis2 * sin(angle)) + this->axis * axisProj;
+		if (!vec.is_finite())
+			return false;
 
 		// Set the new vector
 		return this->actionVector->Set(vec);
@@ -100,6 +104,13 @@ namespace RunSection
 			return false;
 		}
 
+		const arma::vec target = this->actionVector->Get();
+		if (target.n_elem != 3 || !target.is_finite())
+		{
+			std::cout << "ERROR: ActionVector \"" << str << "\" must contain three finite components!" << std::endl;
+			return false;
+		}
+
 		return true;
 	}
 	// -----------------------------------------------------
@@ -109,20 +120,20 @@ namespace RunSection
 	bool ActionRotateVector::SetAxis(const arma::vec &_vec)
 	{
 		// Check whether we have a valid axis
-		if (_vec.n_elem == 3 && _vec.is_finite())
+		const double axisLength = arma::norm(_vec);
+		if (_vec.n_elem == 3 && _vec.is_finite() && std::isfinite(axisLength) && axisLength > 0.0)
 		{
 			// Set the axis
-			this->axis = normalise(_vec);
+			this->axis = _vec / axisLength;
 
 			// We also need to set a reference axis, and we will choose the coordinate axis
 			// with the lowest projection and subtract the axis projection
 			arma::mat A(3, 3, arma::fill::eye);
-			arma::uword minIndex;
-			arma::vec projections = abs(A * this->axis);		  // Get projections (absolute value!)
-			projections.min(minIndex);							  // Get index of minimal projection (i.e. closest to zero!)
+			arma::vec projections = A * this->axis;
+			arma::uword minIndex = arma::abs(projections).index_min(); // Choose the coordinate axis closest to perpendicular.
 			this->refAxis1.zeros(3);							  // Obtain a zero-vector for the reference axis
 			this->refAxis1(minIndex) = 1;						  // Set it to 1 along the direction of minimal projection
-			this->refAxis1 -= projections(minIndex) * this->axis; // Make it orthogonal to the axis
+			this->refAxis1 -= projections(minIndex) * this->axis; // Subtract the signed projection to make it orthogonal.
 			this->refAxis1 = normalise(this->refAxis1);			  // Normalize the reference vector
 
 			// Obtain the second reference axis (note: this should already be a unit vector)

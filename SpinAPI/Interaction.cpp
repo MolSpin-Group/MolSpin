@@ -451,7 +451,6 @@ namespace SpinAPI
 						this->tdFreqs.set_size(this->tdComponents, 6);
 						this->tdPhases.set_size(this->tdComponents, 6);
 						this->tdPhaseDrift = true;
-						this->RWDiffusionCoefficient = 10;
 						
 						// generate all the required random numbers for the 6 unique tensor components
 						for (int j_tens = 0; j_tens < 6; j_tens++)
@@ -1531,7 +1530,7 @@ namespace SpinAPI
 				// The axis of circular polarized oscillating fields
 				if (this->fieldType == InteractionFieldType::CircularPolarization)
 				{
-					RunSection::ActionVector oscaxisVector = RunSection::ActionVector(this->tdAxis, &CheckActionVectorInteractionField);
+					RunSection::ActionVector oscaxisVector = RunSection::ActionVector(this->tdAxis, &CheckActionVectorInteractionAxis);
 					vectors.push_back(RunSection::NamedActionVector(_system + "." + this->Name() + ".axis", oscaxisVector));
 				}
 			}
@@ -1557,10 +1556,10 @@ namespace SpinAPI
 				// Frequency and phase
 				if (this->fieldType == InteractionFieldType::LinearPolarization || this->fieldType == InteractionFieldType::CircularPolarization)
 				{
-					RunSection::ActionScalar frequencyScalar = RunSection::ActionScalar(this->tdFrequency, nullptr);
+					RunSection::ActionScalar frequencyScalar = RunSection::ActionScalar(this->tdFrequency, &CheckActionScalarInteractionPrefactor);
 					scalars.push_back(RunSection::NamedActionScalar(_system + "." + this->Name() + ".frequency", frequencyScalar));
 
-					RunSection::ActionScalar phaseScalar = RunSection::ActionScalar(this->tdPhase, nullptr);
+					RunSection::ActionScalar phaseScalar = RunSection::ActionScalar(this->tdPhase, &CheckActionScalarInteractionPrefactor);
 					scalars.push_back(RunSection::NamedActionScalar(_system + "." + this->Name() + ".phase", phaseScalar));
 				}
 			}
@@ -1569,10 +1568,10 @@ namespace SpinAPI
 			{
 				if(this->tensorType == InteractionTensorType::Monochromatic)
 				{
-					RunSection::ActionScalar frequencyScalar = RunSection::ActionScalar(this->tdFrequency, nullptr);
+					RunSection::ActionScalar frequencyScalar = RunSection::ActionScalar(this->tdFrequency, &CheckActionScalarInteractionPrefactor);
 					scalars.push_back(RunSection::NamedActionScalar(_system + "." + this->Name() + ".frequency", frequencyScalar));
 
-					RunSection::ActionScalar phaseScalar = RunSection::ActionScalar(this->tdPhase, nullptr);
+					RunSection::ActionScalar phaseScalar = RunSection::ActionScalar(this->tdPhase, &CheckActionScalarInteractionPrefactor);
 					scalars.push_back(RunSection::NamedActionScalar(_system + "." + this->Name() + ".phase", phaseScalar));
 				}
 			}
@@ -1581,11 +1580,11 @@ namespace SpinAPI
 			{
 				if (this->strain_components.size() == 3)
 				{
-					RunSection::ActionScalar ex = RunSection::ActionScalar(this->strain_components[0], nullptr);
+					RunSection::ActionScalar ex = RunSection::ActionScalar(this->strain_components[0], &CheckActionScalarInteractionPrefactor);
 					scalars.push_back(RunSection::NamedActionScalar(_system + "." + this->Name() + ".ex", ex));
-					RunSection::ActionScalar ey = RunSection::ActionScalar(this->strain_components[1], nullptr);
+					RunSection::ActionScalar ey = RunSection::ActionScalar(this->strain_components[1], &CheckActionScalarInteractionPrefactor);
 					scalars.push_back(RunSection::NamedActionScalar(_system + "." + this->Name() + ".ey", ey));
-					RunSection::ActionScalar ez = RunSection::ActionScalar(this->strain_components[2], nullptr);
+					RunSection::ActionScalar ez = RunSection::ActionScalar(this->strain_components[2], &CheckActionScalarInteractionPrefactor);
 					scalars.push_back(RunSection::NamedActionScalar(_system + "." + this->Name() + ".ez", ez));
 				}
 				else if (this->strain_components.size() == 6)
@@ -1598,64 +1597,66 @@ namespace SpinAPI
 					RunSection::ActionScalar ez = RunSection::ActionScalar(std::bind(&Interaction::Ez, this));
 					scalars.push_back(RunSection::NamedActionScalar(_system + "." + this->Name() + ".ez", ez));
 
-					RunSection::ActionScalar exx = RunSection::ActionScalar(this->strain_components[0], nullptr);
+					RunSection::ActionScalar exx = RunSection::ActionScalar(this->strain_components[0], &CheckActionScalarInteractionPrefactor);
 					scalars.push_back(RunSection::NamedActionScalar(_system + "." + this->Name() + ".exx", exx));
-					RunSection::ActionScalar eyy = RunSection::ActionScalar(this->strain_components[3], nullptr);
+					RunSection::ActionScalar eyy = RunSection::ActionScalar(this->strain_components[3], &CheckActionScalarInteractionPrefactor);
 					scalars.push_back(RunSection::NamedActionScalar(_system + "." + this->Name() + ".eyy", eyy));
-					RunSection::ActionScalar ezz = RunSection::ActionScalar(this->strain_components[5], nullptr);
+					RunSection::ActionScalar ezz = RunSection::ActionScalar(this->strain_components[5], &CheckActionScalarInteractionPrefactor);
 					scalars.push_back(RunSection::NamedActionScalar(_system + "." + this->Name() + ".ezz", ezz));
-					RunSection::ActionScalar exy = RunSection::ActionScalar(this->strain_components[1], nullptr);
+					RunSection::ActionScalar exy = RunSection::ActionScalar(this->strain_components[1], &CheckActionScalarInteractionPrefactor);
 					scalars.push_back(RunSection::NamedActionScalar(_system + "." + this->Name() + ".exy", exy));
-					RunSection::ActionScalar exz = RunSection::ActionScalar(this->strain_components[2], nullptr);
+					RunSection::ActionScalar exz = RunSection::ActionScalar(this->strain_components[2], &CheckActionScalarInteractionPrefactor);
 					scalars.push_back(RunSection::NamedActionScalar(_system + "." + this->Name() + ".exz", exz));
-					RunSection::ActionScalar eyz = RunSection::ActionScalar(this->strain_components[4], nullptr);
+					RunSection::ActionScalar eyz = RunSection::ActionScalar(this->strain_components[4], &CheckActionScalarInteractionPrefactor);
 					scalars.push_back(RunSection::NamedActionScalar(_system + "." + this->Name() + ".eyz", eyz));
 
 				}
 				
 				if(this->strain_succeptability.size() == 3)
 				{
-					RunSection::ActionScalar d1 = RunSection::ActionScalar(this->strain_succeptability[0], nullptr);
+					RunSection::ActionScalar d1 = RunSection::ActionScalar(this->strain_succeptability[0], &CheckActionScalarInteractionPrefactor);
 					scalars.push_back(RunSection::NamedActionScalar(_system + "." + this->Name() + ".d1", d1));
-					RunSection::ActionScalar d2 = RunSection::ActionScalar(this->strain_succeptability[1], nullptr);
+					RunSection::ActionScalar d2 = RunSection::ActionScalar(this->strain_succeptability[1], &CheckActionScalarInteractionPrefactor);
 					scalars.push_back(RunSection::NamedActionScalar(_system + "." + this->Name() + ".d2", d2));
-					RunSection::ActionScalar d3 = RunSection::ActionScalar(this->strain_succeptability[2], nullptr);
+					RunSection::ActionScalar d3 = RunSection::ActionScalar(this->strain_succeptability[2], &CheckActionScalarInteractionPrefactor);
 					scalars.push_back(RunSection::NamedActionScalar(_system + "." + this->Name() + ".d3", d3));
 				}
 				else if(this->strain_succeptability.size() == 6)
 				{
-					RunSection::ActionScalar d43 = RunSection::ActionScalar(this->strain_succeptability[0], nullptr);
+					RunSection::ActionScalar d43 = RunSection::ActionScalar(this->strain_succeptability[0], &CheckActionScalarInteractionPrefactor);
 					scalars.push_back(RunSection::NamedActionScalar(_system + "." + this->Name() + ".d43", d43));
-					RunSection::ActionScalar d41 = RunSection::ActionScalar(this->strain_succeptability[1], nullptr);
+					RunSection::ActionScalar d41 = RunSection::ActionScalar(this->strain_succeptability[1], &CheckActionScalarInteractionPrefactor);
 					scalars.push_back(RunSection::NamedActionScalar(_system + "." + this->Name() + ".d41", d41));
-					RunSection::ActionScalar d26 = RunSection::ActionScalar(this->strain_succeptability[2], nullptr);
+					RunSection::ActionScalar d26 = RunSection::ActionScalar(this->strain_succeptability[2], &CheckActionScalarInteractionPrefactor);
 					scalars.push_back(RunSection::NamedActionScalar(_system + "." + this->Name() + ".d26", d26));
-					RunSection::ActionScalar d25 = RunSection::ActionScalar(this->strain_succeptability[3], nullptr);
+					RunSection::ActionScalar d25 = RunSection::ActionScalar(this->strain_succeptability[3], &CheckActionScalarInteractionPrefactor);
 					scalars.push_back(RunSection::NamedActionScalar(_system + "." + this->Name() + ".d25", d25));
-					RunSection::ActionScalar d16 = RunSection::ActionScalar(this->strain_succeptability[4], nullptr);
+					RunSection::ActionScalar d16 = RunSection::ActionScalar(this->strain_succeptability[4], &CheckActionScalarInteractionPrefactor);
 					scalars.push_back(RunSection::NamedActionScalar(_system + "." + this->Name() + ".d16", d16));
-					RunSection::ActionScalar d15 = RunSection::ActionScalar(this->strain_succeptability[5], nullptr);
+					RunSection::ActionScalar d15 = RunSection::ActionScalar(this->strain_succeptability[5], &CheckActionScalarInteractionPrefactor);
 					scalars.push_back(RunSection::NamedActionScalar(_system + "." + this->Name() + ".d15", d15));
 				}
 
 
 				if(this->tensorType == InteractionTensorType::Monochromatic)
 				{
-					RunSection::ActionScalar frequencyScalar = RunSection::ActionScalar(this->tdFrequency, nullptr);
+					RunSection::ActionScalar frequencyScalar = RunSection::ActionScalar(this->tdFrequency, &CheckActionScalarInteractionPrefactor);
 					scalars.push_back(RunSection::NamedActionScalar(_system + "." + this->Name() + ".frequency", frequencyScalar));
 
-					RunSection::ActionScalar phaseScalar = RunSection::ActionScalar(this->tdPhase, nullptr);
+					RunSection::ActionScalar phaseScalar = RunSection::ActionScalar(this->tdPhase, &CheckActionScalarInteractionPrefactor);
 					scalars.push_back(RunSection::NamedActionScalar(_system + "." + this->Name() + ".phase", phaseScalar));
 				}
 				if(this->tensorType == InteractionTensorType::Broadband)
 				{
-					RunSection::ActionScalar minfrequencyScalar = RunSection::ActionScalar(this->tdMinFreq, nullptr);
+					// Frequencies are sampled when the Interaction is constructed.
+					// Bounds remain available to outputs but are not mutable.
+					RunSection::ActionScalar minfrequencyScalar = RunSection::ActionScalar(this->tdMinFreq, &CheckActionScalarInteractionPrefactor, true);
 					scalars.push_back(RunSection::NamedActionScalar(_system + "." + this->Name() + ".minfreq", minfrequencyScalar));
 
-					RunSection::ActionScalar maxfrequencyScalar = RunSection::ActionScalar(this->tdMaxFreq, nullptr);
+					RunSection::ActionScalar maxfrequencyScalar = RunSection::ActionScalar(this->tdMaxFreq, &CheckActionScalarInteractionPrefactor, true);
 					scalars.push_back(RunSection::NamedActionScalar(_system + "." + this->Name() + ".maxfreq", maxfrequencyScalar));
 
-					RunSection::ActionScalar RWDiffusionCoefficientScalar = RunSection::ActionScalar(this->RWDiffusionCoefficient, nullptr);
+					RunSection::ActionScalar RWDiffusionCoefficientScalar = RunSection::ActionScalar(this->RWDiffusionCoefficient, &CheckActionScalarInteractionNonnegative);
 					scalars.push_back(RunSection::NamedActionScalar(_system + "." + this->Name() + ".rwdcoeff", RWDiffusionCoefficientScalar));
 				}
 			}
@@ -2023,10 +2024,22 @@ namespace SpinAPI
 		return true;
 	}
 
-	// Make sure that the prefactor has a valid value (not NaN or infinite)
+	// Circular polarization normalizes this vector, so a zero axis is undefined.
+	bool CheckActionVectorInteractionAxis(const arma::vec &_v)
+	{
+		return CheckActionVectorInteractionField(_v) && arma::norm(_v) > 0.0;
+	}
+
+	// Make sure that an unrestricted scalar has a finite value.
 	bool CheckActionScalarInteractionPrefactor(const double &_d)
 	{
 		return std::isfinite(_d);
+	}
+
+	// Diffusion coefficients and similar rates cannot be negative.
+	bool CheckActionScalarInteractionNonnegative(const double &_d)
+	{
+		return std::isfinite(_d) && _d >= 0.0;
 	}
 
 	void FreelyJointedPolymerBL(std::vector<double> &BondLengths, std::vector<SCHyperfineField> &Fields, double &tau, int ori)

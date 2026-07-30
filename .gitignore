@@ -48,3 +48,10 @@ makefile
 .nfs0000000006ac01b8000031d0
 .nfs0000000006ac070b0000112c
 .nfs*
+
+# Versioned, executable TADF fitting example. The general patterns above keep
+# personal Python/CSV files out of the repository; this curated package is an
+# exception with its own tests and documentation.
+!/Example/TADF-spintronics/
+!/Example/TADF-spintronics/**
+/Example/TADF-spintronics/scripts/__pycache__/

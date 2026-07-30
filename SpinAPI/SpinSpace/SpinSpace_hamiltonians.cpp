@@ -1822,7 +1822,63 @@ namespace SpinAPI
 		return true;
 	}
 
-	// Sets the rotated sparce matrix to the part of the Hamiltonian in the secular approximation
+	// Build the complete static Hamiltonian for one crystallite orientation.
+	// Unlike BaseHamiltonianRotatedZYZ, this method deliberately has no name
+	// list: general-purpose powder tasks must not silently drop an interaction
+	// because a task-local list was not updated when the SpinSystem changed.
+	bool SpinSpace::StaticHamiltonianRotatedZYZ(const arma::mat &rotmatrix, arma::sp_cx_mat &_out) const
+	{
+		arma::sp_cx_mat result(this->SpaceDimensions(), this->SpaceDimensions());
+		arma::sp_cx_mat tmp;
+		arma::mat rotation = rotmatrix;
+
+		for (const auto &interaction : this->interactions)
+		{
+			if (!IsStatic(*interaction))
+				continue;
+
+			// A semiclassical-field interaction represents an ensemble of
+			// Hamiltonians rather than one square operator. It cannot be mixed
+			// into the orientation-specific steady-state Hamiltonian here.
+			if (interaction->Type() == InteractionType::SemiClassicalField)
+				return false;
+
+			if (!this->InteractionOperatorRotatedZYZ(interaction, rotation, tmp))
+				return false;
+			result += tmp;
+		}
+
+		_out = std::move(result);
+		return true;
+	}
+
+	// High-field counterpart of StaticHamiltonianRotatedZYZ. Secularization is
+	// applied only after every interaction tensor and its molecular frame have
+	// been rotated into the current crystallite orientation.
+	bool SpinSpace::StaticHamiltonianRotatedSA(const arma::mat &rotmatrix, arma::sp_cx_mat &_out) const
+	{
+		arma::sp_cx_mat result(this->SpaceDimensions(), this->SpaceDimensions());
+		arma::sp_cx_mat tmp;
+		arma::mat rotation = rotmatrix;
+
+		for (const auto &interaction : this->interactions)
+		{
+			if (!IsStatic(*interaction))
+				continue;
+
+			if (interaction->Type() == InteractionType::SemiClassicalField)
+				return false;
+
+			if (!this->InteractionOperatorRotated_SA(interaction, rotation, tmp))
+				return false;
+			result += tmp;
+		}
+
+		_out = std::move(result);
+		return true;
+	}
+
+	// Sets the rotated sparse matrix to the named part of the Hamiltonian in the secular approximation
 	bool SpinSpace::BaseHamiltonianRotated_SA(std::vector<std::string> basehamiltonian_list, arma::mat rotmatrix, arma::sp_cx_mat &_out) const
 	{
 		// If we don't have any interactions, the Hamiltonian is zero

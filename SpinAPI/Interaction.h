@@ -254,7 +254,9 @@ namespace SpinAPI
 
 	// Non-member non-friend functions for ActionTarget validation
 	bool CheckActionVectorInteractionField(const arma::vec &);
+	bool CheckActionVectorInteractionAxis(const arma::vec &);
 	bool CheckActionScalarInteractionPrefactor(const double &);
+	bool CheckActionScalarInteractionNonnegative(const double &);
 
 	//semi classical distributions
     void FreelyJointedPolymerBL(std::vector<double>&, std::vector<SCHyperfineField>&, double&, int); //length of the nuclear spin vector

@@ -92,7 +92,9 @@ namespace SpinAPI
 
 	// Non-member non-friend functions for ActionTarget validation
 	bool CheckActionVectorPulseField(const arma::vec &);
+	bool CheckActionVectorPulseAxis(const arma::vec &);
 	bool CheckActionScalarPulseScalar(const double &);
+	bool CheckActionScalarPulseDuration(const double &);
 }
 
 #endif

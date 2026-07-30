@@ -957,21 +957,27 @@ namespace SpinAPI
 						std::vector<void *> v;
 						factor = this->InitialFactors[FuncNum] * f->operator()(v);
 					}
-					else if (Variables.size() == 1)
+					else if (variables.size() == 1)
 					{
-						factor = this->InitialFactors[FuncNum] * f->operator()((void *)(double *)&Variables[variables[0]]);
+						auto variable = Variables.find(variables[0]);
+						if (variable == Variables.end())
+							return false;
+						factor = this->InitialFactors[FuncNum] * f->operator()((void *)(double *)&variable->second);
 					}
 					else
 					{
 						std::vector<void *> v;
-						for (unsigned int i = 0; i < Variables.size(); i++)
+						for (const auto &name : variables)
 						{
-							v.push_back((void *)(double *)&Variables[variables[i]]);
+							auto variable = Variables.find(name);
+							if (variable == Variables.end())
+								return false;
+							v.push_back((void *)(double *)&variable->second);
 						}
 						factor = this->InitialFactors[FuncNum] * f->operator()(v);
 					}
-				a->second = factor; // can't use a->second as this would have a culmative effect over time
-				FuncNum = FuncNum + jump;
+					a->second = factor; // Use the stored initial factor to avoid cumulative updates.
+					FuncNum = FuncNum + jump;
 			}
 			}
 		}

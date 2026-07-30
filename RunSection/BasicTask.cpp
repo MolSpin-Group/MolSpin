@@ -19,10 +19,6 @@
 #include "Transition.h"
 #include "SpinSystem.h"
 
-// #ifdef USE_OPENBLAS
-extern "C" void openblas_set_num_threads(int);
-// #endif
-
 namespace RunSection
 {
 

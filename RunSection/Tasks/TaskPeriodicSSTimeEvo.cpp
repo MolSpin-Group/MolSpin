@@ -47,9 +47,9 @@ namespace RunSection
 
 		// Obtain spin systems
 		auto systems = this->SpinSystems();
-		std::pair<std::vector<arma::cx_mat>, arma::cx_vec> P[systems.size()]; // Create array containing a propagator and the current state of each system
-		SpinAPI::SpinSpace spaces[systems.size()];							  // Keep a SpinSpace object for each spin system
-		float propagator_stepsize[systems.size()];							  // Keep track of the timestep per propagator (this is not the same as the integration timestep)
+		std::vector<std::pair<std::vector<arma::cx_mat>, arma::cx_vec>> P(systems.size()); // Store a propagator and the current state of each system.
+		std::vector<SpinAPI::SpinSpace> spaces(systems.size());							 // Keep a SpinSpace object for each spin system.
+		std::vector<float> propagator_stepsize(systems.size());							 // Track each propagator timestep separately from the integration timestep.
 
 		// Loop through all SpinSystems
 		int ic = 0; // System counter

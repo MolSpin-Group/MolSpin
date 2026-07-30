@@ -34,9 +34,13 @@ namespace RunSection
 
 		// Retrieve the vector we want to change
 		arma::vec vec = actionVector->Get();
+		if (vec.n_elem != 3 || !vec.is_finite())
+			return false;
 
 		// Add a vector to the ActionVector
 		vec += this->Value() * this->direction;
+		if (!vec.is_finite())
+			return false;
 
 		// Set the new vector
 		return this->actionVector->Set(vec);
@@ -75,6 +79,13 @@ namespace RunSection
 			return false;
 		}
 
+		const arma::vec target = this->actionVector->Get();
+		if (target.n_elem != 3 || !target.is_finite())
+		{
+			std::cout << "ERROR: ActionVector \"" << str << "\" must contain three finite components!" << std::endl;
+			return false;
+		}
+
 		if(this->m_ActionMode == MODE::linespace)
 		{
 			this->m_startVec = this->actionVector->Get();
@@ -107,10 +118,11 @@ namespace RunSection
 	bool ActionAddVector::SetDirection(const arma::vec &_vec)
 	{
 		// Check whether we have a valid direction vector
-		if (_vec.n_elem == 3 && _vec.is_finite())
+		const double length = arma::norm(_vec);
+		if (_vec.n_elem == 3 && _vec.is_finite() && std::isfinite(length) && length > 0.0)
 		{
 			// Set the direction, and normalize it (the length is set by "value" on the action)
-			this->direction = normalise(_vec);
+			this->direction = _vec / length;
 
 			return true;
 		}
