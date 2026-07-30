@@ -8,12 +8,30 @@
 /////////////////////////////////////////////////////////////////////////
 #include <iostream>
 #include <regex>
+#include <algorithm>
+#include <cctype>
 #include "Tensor.h"
 #include "ObjectParser.h"
 #include "SpinAPIfwd.h"
+#include "Utility.h"
 
 namespace MSDParser
 {
+	namespace
+	{
+		std::string TrimCopy(const std::string &value)
+		{
+			auto begin = std::find_if_not(value.begin(), value.end(), [](unsigned char c)
+										  { return std::isspace(c); });
+			auto end = std::find_if_not(value.rbegin(), value.rend(), [](unsigned char c)
+										{ return std::isspace(c); })
+						   .base();
+			if (begin >= end)
+				return "";
+			return std::string(begin, end);
+		}
+	}
+
 	// -----------------------------------------------------
 	// ObjectParser Constructors and Destructor
 	// -----------------------------------------------------
@@ -231,7 +249,7 @@ namespace MSDParser
 			// Get all the values separated by the delimiter
 			std::istringstream stream(i->second);
 			for (std::string s; std::getline(stream, s, _delimiter);)
-				_out.push_back(s);
+				_out.push_back(TrimCopy(s));
 
 			return true;
 		}
@@ -361,9 +379,12 @@ namespace MSDParser
 			// Attemp to parse the values
 			for (auto i = strs.cbegin(); i != strs.cend(); i++)
 			{
-				if ((*i).compare("true") == 0 || (*i).compare("yes") == 0 || (*i).compare("1") == 0)
+				std::string str = (*i);
+				str = RunSection::trim(str);
+				str = RunSection::lowercase(str);
+				if (str.compare("true") == 0 || str.compare("yes") == 0 || str.compare("1") == 0)
 					tmpBool = true;
-				else if ((*i).compare("false") == 0 || (*i).compare("no") == 0 || (*i).compare("0") == 0)
+				else if (str.compare("false") == 0 || str.compare("no") == 0 || str.compare("0") == 0)
 					tmpBool = false;
 				else
 					return false;
@@ -437,6 +458,8 @@ namespace MSDParser
 			// Remove square brackets
 			modified_str.erase(std::remove(modified_str.begin(), modified_str.end(), '['), modified_str.end());
 			modified_str.erase(std::remove(modified_str.begin(), modified_str.end(), ']'), modified_str.end());
+			modified_str.erase(std::remove(modified_str.begin(), modified_str.end(), '"'), modified_str.end());
+			modified_str.erase(std::remove(modified_str.begin(), modified_str.end(), '\''), modified_str.end());
 
 			// Trim leading and trailing whitespaces
 			trim(modified_str);
@@ -665,6 +688,8 @@ namespace MSDParser
 
 			modified_str.erase(std::remove(modified_str.begin(), modified_str.end(), '['), modified_str.end());
 			modified_str.erase(std::remove(modified_str.begin(), modified_str.end(), ']'), modified_str.end());
+			modified_str.erase(std::remove(modified_str.begin(), modified_str.end(), '"'), modified_str.end());
+			modified_str.erase(std::remove(modified_str.begin(), modified_str.end(), '\''), modified_str.end());
 			trim(modified_str);
 
 			std::istringstream stream(modified_str);
@@ -721,7 +746,10 @@ namespace MSDParser
 			else
 			{
 				// Use a factor of two if the spin quantum number is not specified with "/2"
-				tmp2 = 2 * std::stoi(str.c_str());
+				double tmp3 = 2 * std::stod(str.c_str());
+				if(double(int(tmp3)) - tmp3 != 0.0)
+					return false;
+				tmp2 = int(tmp3);
 			}
 
 			if (std::stoi(str) < 0)

@@ -12,6 +12,7 @@
 #include <Spin.h>
 #include "ObjectParser.h"
 #include "Pulse.h"
+#include "Utility.h"
 
 namespace SpinAPI
 {
@@ -341,8 +342,10 @@ namespace SpinAPI
 		while (std::getline(ss, str, ','))
 		{
 			spin_was_found = false;
+			str = RunSection::trim(str);
 
-			// Get the spin with the name held by str
+			// Spin names are case-sensitive identifiers throughout SpinAPI.
+			// Trim list whitespace, but preserve the name exactly as supplied.
 			for (auto i = _spinlist.cbegin(); i != _spinlist.cend(); i++)
 			{
 				if ((*i)->Name().compare(str) == 0)
@@ -386,7 +389,7 @@ namespace SpinAPI
 			if (this->type == PulseType::InstantPulse)
 			{
 				// The rotationaxis vector
-				RunSection::ActionVector rotationaxisVector = RunSection::ActionVector(this->rotationaxis, &CheckActionVectorPulseField);
+				RunSection::ActionVector rotationaxisVector = RunSection::ActionVector(this->rotationaxis, &CheckActionVectorPulseAxis);
 				vectors.push_back(RunSection::NamedActionVector(_system + "." + this->Name() + ".rotationaxis", rotationaxisVector));
 			}
 
@@ -419,7 +422,7 @@ namespace SpinAPI
 			if (this->type == PulseType::LongPulse)
 			{
 				// We should always have a scalar for the prefactor
-				RunSection::ActionScalar pulsetimeScalar = RunSection::ActionScalar(this->pulsetime, &CheckActionScalarPulseScalar);
+				RunSection::ActionScalar pulsetimeScalar = RunSection::ActionScalar(this->pulsetime, &CheckActionScalarPulseDuration);
 				scalars.push_back(RunSection::NamedActionScalar(_system + "." + this->Name() + ".pulsetime", pulsetimeScalar));
 
 				RunSection::ActionScalar frequencyScalar = RunSection::ActionScalar(this->frequency, &CheckActionScalarPulseScalar);
@@ -429,7 +432,7 @@ namespace SpinAPI
 			if (this->type == PulseType::MWPulse)
 			{
 				// We should always have a scalar for the prefactor
-				RunSection::ActionScalar pulsetimeScalar = RunSection::ActionScalar(this->pulsetime, &CheckActionScalarPulseScalar);
+				RunSection::ActionScalar pulsetimeScalar = RunSection::ActionScalar(this->pulsetime, &CheckActionScalarPulseDuration);
 				scalars.push_back(RunSection::NamedActionScalar(_system + "." + this->Name() + ".pulsetime", pulsetimeScalar));
 
 				RunSection::ActionScalar frequencyScalar = RunSection::ActionScalar(this->frequency, &CheckActionScalarPulseScalar);
@@ -439,7 +442,7 @@ namespace SpinAPI
 			if (this->type == PulseType::LongPulseStaticField)
 			{
 				// We should always have a scalar for the prefactor
-				RunSection::ActionScalar pulsetimeScalar = RunSection::ActionScalar(this->pulsetime, &CheckActionScalarPulseScalar);
+				RunSection::ActionScalar pulsetimeScalar = RunSection::ActionScalar(this->pulsetime, &CheckActionScalarPulseDuration);
 				scalars.push_back(RunSection::NamedActionScalar(_system + "." + this->Name() + ".pulsetime", pulsetimeScalar));
 			}
 		}
@@ -477,9 +480,21 @@ namespace SpinAPI
 		return true;
 	}
 
-	// Make sure that the prefactor has a valid value (not NaN or infinite)
+	// Rotation operators normalize this vector, so a zero axis is undefined.
+	bool CheckActionVectorPulseAxis(const arma::vec &_v)
+	{
+		return CheckActionVectorPulseField(_v) && arma::norm(_v) > 0.0;
+	}
+
+	// Make sure that a pulse scalar has a finite value.
 	bool CheckActionScalarPulseScalar(const double &_d)
 	{
 		return std::isfinite(_d);
+	}
+
+	// Pulse durations may be zero, but propagation with negative time is invalid.
+	bool CheckActionScalarPulseDuration(const double &_d)
+	{
+		return std::isfinite(_d) && _d >= 0.0;
 	}
 }

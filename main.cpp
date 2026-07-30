@@ -19,17 +19,11 @@
 #include <cstdlib>
 #include <thread>
 #include <unistd.h>
+#include <omp.h>
+#include <dlfcn.h>
 
 #define EMERGENCY_MEMORY_ALLOCATION_SIZE 16384
 
-//////////////////////////////////////////////////////////////////////////////
-// #ifdef USE_OPENBLAS
-extern "C" void openblas_set_num_threads(int);
-// #endif
-// #ifdef USE_OPENMP
-extern "C" void omp_set_num_threads(int);
-// #endif
-//////////////////////////////////////////////////////////////////////////////
 namespace
 {
 	bool ParseThreadCount(const char *text, int &value)
@@ -66,6 +60,29 @@ namespace
 			return MAX_THREADS;
 		}
 		return static_cast<int>(count);
+	}
+
+	bool SetBlasThreadCount(int threads)
+	{
+		// Resolve a backend API only when it is present in Armadillo's loaded
+		// dependency chain. This preserves runtime control without requiring
+		// MolSpin to link against a specific BLAS implementation.
+		const char *setters[] = {
+			"openblas_set_num_threads",
+			"mkl_set_num_threads"
+		};
+
+		for (const char *symbol : setters)
+		{
+			auto setter = reinterpret_cast<void (*)(int)>(dlsym(RTLD_DEFAULT, symbol));
+			if (setter != nullptr)
+			{
+				setter(threads);
+				return true;
+			}
+		}
+
+		return false;
 	}
 }
 
@@ -156,8 +173,8 @@ int main(int argc, char **argv)
 	std::cout << hline << std::endl;
 	std::cout << "# Molecular Spin Dynamics " << MolSpin_version << std::endl;
 	std::cout << "# " << std::endl;
-	std::cout << "# Developed 2017-2019 by Claus Nielsen* and 2021-2025 by Luca Gerhards**." << std::endl;
-	std::cout << "# Code contributor: Benji Tigg, Philip Benjamin, Gediminas Pazera, and Irina S. Anisimova" << std::endl;
+	std::cout << "# Developed 2017-2019 by Claus Nielsen* and 2021-2026 by Luca Gerhards**." << std::endl;
+	std::cout << "# Code contributor: Benji Tigg (Multispinsystems, chiral states), Philip Benjamin (Time-dependent Hamiltonians), Gediminas Pazera (Stochastic trace sampling), and Irina S. Anisimova (EPR, CIDNP, magnetic resonance)" << std::endl;
 	std::cout << "# (c) Quantum Biology and Computational Physics Group," << std::endl;
 	std::cout << "# *:  University of Southern Denmark." << std::endl;
 	std::cout << "# **: Carl von Ossietzky University of Oldenburg." << std::endl;
@@ -468,7 +485,9 @@ int main(int argc, char **argv)
 
 		if (!readEnvThreads("MOLSPIN_BLAS_THREADS", blasThreads))
 		{
-			if (!readEnvThreads("OPENBLAS_NUM_THREADS", blasThreads) && !readEnvThreads("MKL_NUM_THREADS", blasThreads))
+			if (!readEnvThreads("OPENBLAS_NUM_THREADS", blasThreads) &&
+				!readEnvThreads("MKL_NUM_THREADS", blasThreads) &&
+				!readEnvThreads("BLIS_NUM_THREADS", blasThreads))
 			{
 				blasThreads = (ompThreads > 1) ? 1 : ompThreads;
 			}
@@ -478,14 +497,19 @@ int main(int argc, char **argv)
 		std::string blasThreadsStr = std::to_string(blasThreads);
 		setenv("OMP_NUM_THREADS", ompThreadsStr.c_str(), 1);
 		setenv("OPENBLAS_NUM_THREADS", blasThreadsStr.c_str(), 1);
+		setenv("MKL_NUM_THREADS", blasThreadsStr.c_str(), 1);
+		setenv("BLIS_NUM_THREADS", blasThreadsStr.c_str(), 1);
+		setenv("VECLIB_MAXIMUM_THREADS", blasThreadsStr.c_str(), 1);
 
-		openblas_set_num_threads(blasThreads);
+		// This runs before MolSpin performs linear algebra, allowing the
+		// selected BLAS backend to read its standard thread variable.
+		SetBlasThreadCount(blasThreads);
 		omp_set_num_threads(ompThreads);
 
-		std::cout << "# - Thread configuration: OMP=" << ompThreads << ", OpenBLAS=" << blasThreads << "." << std::endl;
+		std::cout << "# - Thread configuration: OMP=" << ompThreads << ", BLAS=" << blasThreads << "." << std::endl;
 		if (ompThreads > 1 && blasThreads > 1)
 		{
-			std::cout << "# - Warning: OMP and OpenBLAS threads > 1 may oversubscribe CPU cores." << std::endl;
+			std::cout << "# - Warning: OMP and BLAS threads > 1 may oversubscribe CPU cores." << std::endl;
 		}
 	}
 

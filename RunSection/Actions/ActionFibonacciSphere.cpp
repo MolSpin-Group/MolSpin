@@ -13,13 +13,10 @@
 
 namespace RunSection
 {
-    ActionFibonacciSphere::ActionFibonacciSphere(const MSDParser::ObjectParser &_parser, const std::map<std::string, ActionScalar> &_scalars, const std::map<std::string, ActionVector> &_vectors)
-        : Action(_parser, _scalars, _vectors), actionVector(nullptr)
-    {
-        m_Points = nullptr;
-        m_Step = 0;
-        m_Magnitude = 1.0;
-    }
+	ActionFibonacciSphere::ActionFibonacciSphere(const MSDParser::ObjectParser &_parser, const std::map<std::string, ActionScalar> &_scalars, const std::map<std::string, ActionVector> &_vectors)
+	    : Action(_parser, _scalars, _vectors), actionVector(nullptr), m_Points(nullptr), m_Num(0), m_Step(0), m_Magnitude(1.0)
+	{
+	}
 
     ActionFibonacciSphere::~ActionFibonacciSphere()
     {
@@ -29,9 +26,17 @@ namespace RunSection
         }
     }
 
-    bool ActionFibonacciSphere::CalculatePoints(int n)
-    {
-        m_Points = CalculateFibPoints(n);
+	bool ActionFibonacciSphere::CalculatePoints(int n)
+	{
+	    if (n < 2)
+	        return false;
+
+	    if (m_Points != nullptr)
+	    {
+	        free(m_Points);
+	        m_Points = nullptr;
+	    }
+	    m_Points = CalculateFibPoints(n);
 
         if (m_Points == NULL)
         {
@@ -71,8 +76,9 @@ namespace RunSection
 
         // Retrieve the vector we want to change
         std::array<double, 3> points = {0, 0, 0};
-        GetPoint(points);
-        arma::vec vec = {points[0], points[1], points[2]};
+	    if (!GetPoint(points))
+	        return true; // All requested grid points have already been emitted.
+	    arma::vec vec = {points[0], points[1], points[2]};
 
         return this->actionVector->Set(vec);
     }
@@ -87,16 +93,21 @@ namespace RunSection
         }
 
         int NumPoints = 0;
-        if (!this->Properties()->Get("points", NumPoints))
+	    if (!this->Properties()->Get("points", NumPoints))
         {
             std::cout << "ERROR: No Number of points specified for the FibonacciSphere action \"" << this->Name() << "\"!" << std::endl;
-            return false;
-        }
+	        return false;
+	    }
 
-        m_Num = NumPoints;
-        CalculatePoints(m_Num);
+	    if (NumPoints < 2)
+	    {
+	        std::cout << "ERROR: FibonacciSphere action \"" << this->Name() << "\" requires at least two points." << std::endl;
+	        return false;
+	    }
 
-        // Attemp to set the ActionVector
+	    m_Num = NumPoints;
+
+	    // Attemp to set the ActionVector
         if (!this->Vector(str, &(this->actionVector)))
         {
             std::cout << "ERROR: Could not find ActionVector \"" << str << "\" specified for the FibonacciSphere action \"" << this->Name() << "\"!" << std::endl;
@@ -107,38 +118,43 @@ namespace RunSection
         if (this->actionVector->IsReadonly())
         {
             std::cout << "ERROR: Read only ActionVector \"" << str << "\" specified for the FibonacciSphere action \"" << this->Name() << "\"! Cannot act on this vector!" << std::endl;
-            return false;
-        }
+	        return false;
+	    }
 
-        auto vec1 = this->actionVector->Get();
-        m_Magnitude = 0;
+	    auto vec1 = this->actionVector->Get();
+	    if (vec1.n_elem != 3 || !vec1.is_finite())
+	    {
+	        std::cout << "ERROR: FibonacciSphere action \"" << this->Name() << "\" requires a finite three-component target vector." << std::endl;
+	        return false;
+	    }
 
-        for (int i = 0; i < 3; i++)
-        {
-            m_Magnitude += std::pow(vec1[i], 2);
-        }
+	    m_Magnitude = arma::norm(vec1);
+	    if (!std::isfinite(m_Magnitude) || !CalculatePoints(m_Num))
+	        return false;
 
-        m_Magnitude = std::sqrt(m_Magnitude);
+	    m_Step = 0;
+	    // Install point zero before calculation step 1 only for the default
+	    // schedule. A delayed grid starts when Action::Step reaches first.
+	    if (this->first == 1)
+	    {
+	        std::array<double, 3> points = {0, 0, 0};
+	        if (!GetPoint(points))
+	            return false;
 
-        std::array<double, 3> points = {0, 0, 0};
-        GetPoint(points);
-
-        arma::vec vec = {points[0], points[1], points[2]};
-        if (!this->actionVector->Set(vec))
-        {
-            return false;
-        }
-
+	        arma::vec vec = {points[0], points[1], points[2]};
+	        if (!this->actionVector->Set(vec))
+	            return false;
+	    }
         return true;
     }
 
     bool ActionFibonacciSphere::Reset()
     {
-        m_Step = 0;
-        std::array<double, 3> points = {0, 0, 0};
-        GetPoint(points);
-        arma::vec vec = {points[0], points[1], points[2]};
-        this->actionVector->Set(vec);
-        return true;
-    }
+	    m_Step = 0;
+	    std::array<double, 3> points = {0, 0, 0};
+	    if (!GetPoint(points))
+	        return false;
+	    arma::vec vec = {points[0], points[1], points[2]};
+	    return this->actionVector->Set(vec);
+	}
 }

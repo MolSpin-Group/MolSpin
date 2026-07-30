@@ -20,18 +20,39 @@ namespace RunSection
 {
 	class Action
 	{
+	public:
+		enum class MODE
+		{
+			linespace = 0,
+			defualt = 1
+		};
 	private:
 		// Data members
 		std::shared_ptr<MSDParser::ObjectParser> properties; // Use a pointer to the object to minimize compilation dependencies
 		const std::map<std::string, ActionScalar> &scalars;
 		const std::map<std::string, ActionVector> &vectors;
 		bool isValid;
-		double value;
-		unsigned int first;
-		unsigned int last;
 		unsigned int period;
 		bool m_loop;
+		
 		//bool m_Parallelize; 
+
+		//addition actions only
+	protected:
+
+		unsigned int first;
+		unsigned int last;
+
+		double value;
+		MODE m_ActionMode;
+		double m_targetScalar;
+		arma::vec m_targetVec;
+
+		double m_startScaler;
+		arma::vec m_startVec;
+		bool m_ValidLineSpace;
+
+		int m_num_steps;
 
 	protected:
 		// Protected methods
@@ -64,6 +85,7 @@ namespace RunSection
 		//bool GetParallel() const { return this->m_Parallelize; };
 
 		const std::shared_ptr<MSDParser::ObjectParser> GetProperties() const { return this->properties; };
+		const MODE GetActionMode() const {return this->m_ActionMode;};
 
 		// Public method to be overwritten
 		bool Validate();

@@ -435,6 +435,7 @@ namespace RunSection
 			double timestep;
 			this->Properties()->Get("timestep", timestep);
 			dt = timestep;
+			this->timestep = dt;
 			if (dt > std::pow(2, -53))
 			{
 				this->Log() << "Time step is chosen as " << dt << " ns." << std::endl;
@@ -534,6 +535,8 @@ namespace RunSection
 			arma::vec Identity(num_steps);
 			arma::vec time(num_steps);
 
+			arma::mat ans;
+
 			if (time_dependent_transitions && !time_dependent_hamiltonian)
 			{
 				// Case 1: time_dependent_transitions is true but time_dependent_hamiltonian is false
@@ -579,51 +582,6 @@ namespace RunSection
 						B = space.HighamProp(H, B, -arma::cx_double(0.0, 1.0) * dt, precision, M);
 						H = H - dK;
 					}
-				}
-				else if (propmethod == "krylov")
-				{
-					// Propagation using krylov subspace methods
-					// Include the recombination operator K
-					H = H - arma::cx_double(0.0, 1.0) * K;
-					// #pragma omp parallel for
-					for (int itr = 0; itr < mc_samples; itr++)
-					{
-						arma::cx_vec prop_state = B.col(itr);
-						for (int k = 0; k < num_steps; k++)
-						{
-							// Set the current time
-							double current_time = k * dt;
-							time(k) = current_time;
-
-							// Set the currentime for the Dynamic Hamiltonian
-							space.SetTime(current_time);
-
-							auto transitions = (*i)->Transitions();
-
-							int idx = 0;
-							for (auto o = transitions.begin(); o != transitions.end(); o++)
-							{
-								double rate = (*o)->Rate();
-								double expected_value = std::abs(arma::cdot(prop_state, Operators[idx] * prop_state));
-								ExptValues(k, idx) += rate * expected_value;
-								idx++;
-							}
-
-							if (!space.DynamicTotalReactionOperator(dK))
-							{
-								this->Log() << "Warning: Failed to update the Hamiltonian matrix representation!" << std::endl;
-							}
-
-							dK = (-arma::cx_double(0.0, 1.0)) * dK;
-
-							// Update B using Krylov Subspace propagator
-							H = H + dK;
-							prop_state = space.KrylovExpmGeneral(H, prop_state, -arma::cx_double(0.0, 1.0) * dt, krylovsize, InitialStateVector.n_rows * Z);
-							H = H - dK;
-						}
-						B.col(itr) = prop_state;
-					}
-					ExptValues /= mc_samples;
 				}
 			}
 			else if (time_dependent_hamiltonian && !time_dependent_transitions)
@@ -699,86 +657,6 @@ namespace RunSection
 						}
 					}
 				}
-				else if (propmethod == "krylov")
-				{
-					// Propagation using krylov subspace method for matrix exponential
-					if (symmetric)
-					{
-						// recombination rates are equal
-
-						// #pragma omp parallel for
-						for (int itr = 0; itr < mc_samples; itr++)
-						{
-							arma::cx_vec prop_state = B.col(itr);
-							for (int k = 0; k < num_steps; k++)
-							{
-								// Set the current time
-								double current_time = k * dt;
-								time(k) = current_time;
-
-								// Set the currentime for the Dynamic Hamiltonian
-								space.SetTime(current_time);
-
-								// Calculate the expected values for each transition operator
-								for (int idx = 0; idx < num_transitions; idx++)
-								{
-									double result = std::exp(-kmin * current_time) * std::abs(arma::cdot(prop_state, Operators[idx] * prop_state));
-									ExptValues(k, idx) += result;
-								}
-
-								if (!space.DynamicHamiltonian(dH))
-								{
-									this->Log() << "Warning: Failed to update the Hamiltonian matrix representation!" << std::endl;
-								}
-
-								// Update B using Krylov Subspace propagator
-								H = H + dH;
-								prop_state = space.KrylovExpmSymm(H, prop_state, -arma::cx_double(0.0, 1.0) * dt, krylovsize, InitialStateVector.n_rows * Z);
-								H = H - dH;
-							}
-							B.col(itr) = prop_state;
-						}
-						ExptValues /= mc_samples;
-					}
-					else
-					{
-						// Include the recombination operator K
-						H = H - arma::cx_double(0.0, 1.0) * K;
-						// #pragma omp parallel for
-						for (int itr = 0; itr < mc_samples; itr++)
-						{
-							arma::cx_vec prop_state = B.col(itr);
-							for (int k = 0; k < num_steps; k++)
-							{
-								// Set the current time
-								double current_time = k * dt;
-								time(k) = current_time;
-
-								// Set the currentime for the Dynamic Hamiltonian
-								space.SetTime(current_time);
-
-								// Calculate the expected values for each transition operator
-								for (int idx = 0; idx < num_transitions; idx++)
-								{
-									double result = std::abs(arma::cdot(prop_state, Operators[idx] * prop_state));
-									ExptValues(k, idx) += result;
-								}
-
-								if (!space.DynamicHamiltonian(dH))
-								{
-									this->Log() << "Warning: Failed to update the Hamiltonian matrix representation!" << std::endl;
-								}
-
-								// Update B using Krylov Subspace propagator
-								H = H + dH;
-								prop_state = space.KrylovExpmGeneral(H, prop_state, -arma::cx_double(0.0, 1.0) * dt, krylovsize, InitialStateVector.n_rows * Z);
-								H = H - dH;
-							}
-							B.col(itr) = prop_state;
-						}
-						ExptValues /= mc_samples;
-					}
-				}
 			}
 			else if (time_dependent_hamiltonian && time_dependent_transitions)
 			{
@@ -832,59 +710,166 @@ namespace RunSection
 						H = H - dK - dH;
 					}
 				}
-				else if (propmethod == "krylov")
+			}
+			else if(propmethod == "krylov")
+			{
+				arma::sp_cx_mat dK(InitialStateVector.n_rows * Z, InitialStateVector.n_rows * Z);
+				arma::sp_cx_mat dH(InitialStateVector.n_rows * Z, InitialStateVector.n_rows * Z);
+				double InitialTimeStep = this->timestep;
+				double CurrentTime = 0;
+				SpinAPI::SpinSpace::PropParam prop_param = this->GetTimeAdaptiveProperties(InitialTimeStep);
+				std::vector<double> TimePoints;
+				std::vector<double> TimeSteps;
+				std::vector<std::vector<double>> ExptValuesVec;
+				prop_param.TimePrefactor = -arma::cx_double(0.0, 1.0);
+				prop_param.UsePrefactor = true;
+				
+				//should stop it going too wild 
+				prop_param.f2 = 1.5;
+				prop_param.safety = 0.5;
+
+				// Include the recombination operator K
+				H = H - arma::cx_double(0.0, 1.0) * K;
+				for(int itr = 0; itr < mc_samples; itr++)
 				{
-					// Propagation using krylov subspace methods
-					// Include the recombination operator K
-					H = H - arma::cx_double(0.0, 1.0) * K;
-					// #pragma omp parallel for
-					for (int itr = 0; itr < mc_samples; itr++)
+					arma::cx_vec prop_state = B.col(itr);
+					if(itr == 0)
 					{
-						arma::cx_vec prop_state = B.col(itr);
-						for (int k = 0; k < num_steps; k++)
+						this->timestep = InitialTimeStep;
+					}
+					else
+					{
+						this->timestep = prop_param.GetNextTimePoint();
+					}
+					CurrentTime = 0;
+					int step = 0;
+					this->Log() << "Starting time evolution with timestep: " << this->timestep << ", total time: " << this->totaltime << ", minimum timestep: " << prop_param.min << ", maximum timestep: " << prop_param.max << std::endl;
+					while (CurrentTime <= this->totaltime)
+					{
+						//set the current time
+						if(ExptValues.size() < TimePoints.size() + 1)
 						{
-							// Set the current time
-							double current_time = k * dt;
-							time(k) = current_time;
+							ExptValuesVec.push_back(std::vector<double>(num_transitions, 0.0));
+						}
+						if(itr == 0)
+						{
+							TimePoints.push_back(CurrentTime);
+							//TimeSteps.push_back(this->timestep);
+						}
+						space.SetTime(CurrentTime);
+						SpinAPI::SpinSpace::TimePropReturnInfo r;
 
-							// Set the currentime for the Dynamic Hamiltonian
-							space.SetTime(current_time);
-
-							auto transitions = (*i)->Transitions();
-
-							int idx = 0;
-							for (auto o = transitions.begin(); o != transitions.end(); o++)
+						int idx = 0;
+						for(auto o = transitions.cbegin(); o != transitions.cend(); o++)
+						{
+							double expected_value = std::abs(arma::cdot(prop_state, Operators[idx] * prop_state));
+							if(time_dependent_transitions)
 							{
 								double rate = (*o)->Rate();
-								double expected_value = std::abs(arma::cdot(prop_state, Operators[idx] * prop_state));
-								ExptValues(k, idx) += rate * expected_value;
-								idx++;
+								ExptValuesVec[step][idx] += (rate * expected_value) / mc_samples;
 							}
+							else
+							{
+								ExptValuesVec[step][idx] += (std::exp(-kmin * CurrentTime) * expected_value) / mc_samples;
+							}
+							idx++;
+						}
 
+						//get dh and dk
+						if(time_dependent_transitions)
+						{
 							if (!space.DynamicTotalReactionOperator(dK))
 							{
 								this->Log() << "Warning: Failed to update the Hamiltonian matrix representation!" << std::endl;
 							}
-
 							dK = (-arma::cx_double(0.0, 1.0)) * dK;
-
+							H = H + dK;
+						}
+						if(time_dependent_hamiltonian)
+						{
 							if (!space.DynamicHamiltonian(dH))
 							{
 								this->Log() << "Warning: Failed to update the Hamiltonian matrix representation!" << std::endl;
 							}
-
-							// Update B using Krylov Subspace propagator
-							H = H + dK + dH;
-							prop_state = space.KrylovExpmGeneral(H, prop_state, -arma::cx_double(0.0, 1.0) * dt, krylovsize, InitialStateVector.n_rows * Z);
-							H = H - dK - dH;
+							H = H + dH;
 						}
-						B.col(itr) = prop_state;
+
+						if(symmetric)
+						{
+							r = space.TimeAdaptiveKrylovSymm(H, prop_state, this->timestep, krylovsize, InitialStateVector.n_rows * Z, prop_param);
+						}
+						else
+						{
+							r = space.TimeAdaptiveKrylovGeneral(H, prop_state, this->timestep, krylovsize, InitialStateVector.n_rows * Z, prop_param);
+						}
+
+						if(time_dependent_transitions)
+						{
+							H = H - dK;
+						}
+						if(time_dependent_hamiltonian)
+						{
+							H = H - dH;
+						}
+
+						double t = r.timestep;
+						bool a = r.step_accepted;
+
+						if(itr == 0)
+						{
+							TimeSteps.push_back(r.timestep_used);
+						}
+
+						if(itr == 0)
+						{
+							CurrentTime += (a == true) ? this->timestep : r.timestep_used;
+						}
+						else
+						{
+							CurrentTime += r.timestep_used;
+						}
+						this->timestep = t;
+						prop_state = r.result;
+						step++;
 					}
-					ExptValues /= mc_samples;
+					if(itr == 0)
+					{
+						TimePoints.push_back(CurrentTime);
+						ExptValuesVec.push_back(std::vector<double>(num_transitions, 0.0));
+					}
+					prop_param.SetTimePoints = TimeSteps;
+					prop_param.UseSetTimePoints = true;
+					prop_param.ResetTrajectory();
+					B.col(itr) = prop_state;
+
+					int idx = 0;
+					for(auto o = transitions.cbegin(); o != transitions.cend(); o++)
+					{
+						double expected_value = std::abs(arma::cdot(prop_state, Operators[idx] * prop_state));
+						if(time_dependent_transitions)
+						{
+							double rate = (*o)->Rate();
+							ExptValuesVec[step][idx] += (rate * expected_value) / mc_samples;
+						}
+						else
+						{
+							ExptValuesVec[step][idx] += (std::exp(-kmin * CurrentTime) * expected_value) / mc_samples;
+						}
+						idx++;
+					}
 				}
+				time = arma::vec(TimePoints);
+				std::vector<double> ExptValuesVecFlat;
+				for(auto &v : ExptValuesVec)
+				{
+					ExptValuesVecFlat.insert(ExptValuesVecFlat.end(), v.begin(), v.end());
+					v.clear();
+				}
+				ExptValues = arma::mat(ExptValuesVecFlat.data(), time.size(), num_transitions);
+				this->timestep = InitialTimeStep;
 			}
 
-			arma::mat ans = arma::trapz(time, ExptValues);
+			ans = arma::trapz(time, ExptValues);
 
 			for (int it = 0; it < num_transitions; it++)
 			{

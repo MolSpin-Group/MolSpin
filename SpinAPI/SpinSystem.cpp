@@ -13,10 +13,13 @@
 #include "Transition.h"
 #include "Operator.h"
 #include "Pulse.h"
+#include "PulseSequence.h"
 #include "State.h"
 #include "SubSystem.h"
 #include "ObjectParser.h"
 #include "SpinSystem.h"
+#include <algorithm>
+#include <cctype>
 
 namespace SpinAPI
 {
@@ -73,11 +76,16 @@ namespace SpinAPI
 	{
 		return this->subsystems;
 	}
-	// -----------------------------------------------------
-	// Public methods to find objects by name
-	// -----------------------------------------------------
-	// Returns the Spin object with the given name
-	spin_ptr SpinSystem::spins_find(const std::string &_name) const
+
+    std::vector<PulseSequence_ptr> SpinSystem::PulseSequences()
+    {
+        return this->pulses_seq;
+    }
+    // -----------------------------------------------------
+    // Public methods to find objects by name
+    // -----------------------------------------------------
+    // Returns the Spin object with the given name
+    spin_ptr SpinSystem::spins_find(const std::string &_name) const
 	{
 		for (auto i = this->spins.cbegin(); i != this->spins.cend(); i++)
 			if ((*i)->Name().compare(_name) == 0)
@@ -126,6 +134,15 @@ namespace SpinAPI
 		return nullptr;
 	}
 
+	PulseSequence_ptr SpinSystem::pulses_seq_find(const std::string &_name) const
+	{
+		for (auto i = this->pulses_seq.cbegin(); i != this->pulses_seq.cend(); i++)
+			if ((*i)->Name().compare(_name) == 0)
+				return (*i);
+
+		return nullptr;
+	}
+
 	// Returns the state object with given name
 	state_ptr SpinSystem::states_find(const std::string &_name) const
 	{
@@ -166,6 +183,11 @@ namespace SpinAPI
 	unsigned int SpinSystem::pulses_size() const
 	{
 		return this->pulses.size();
+	}
+
+	unsigned int SpinSystem::pulse_seq_size() const
+	{
+		return this->pulses_seq.size();
 	}
 
 	// Returns the number of State objects defined for the SpinSystem
@@ -221,7 +243,16 @@ namespace SpinAPI
 				return true;
 		return false;
 	}
+
+	bool SpinSystem::Contains(const PulseSequence_ptr & ptr) const
+	{
+		if (this->pulses_seq_find(ptr->Name()) == nullptr)
+			return false;
+		return true;
+	}
+
 	// Checks whether a state object is contained by the SpinSystem
+
 	bool SpinSystem::Contains(const state_ptr &_state) const
 	{
 		for (auto i = this->states.cbegin(); i != this->states.cend(); i++)
@@ -290,6 +321,7 @@ namespace SpinAPI
 		return true;
 	}
 
+	
 	// Adds an Pulse object to the SpinSystem. The Interaction objects are not valid until SpinSystem::ValidateInteractions is called.
 	bool SpinSystem::Add(const pulse_ptr &_pulse)
 	{
@@ -297,6 +329,14 @@ namespace SpinAPI
 			return false;
 
 		this->pulses.push_back(_pulse);
+		return true;
+	}
+
+	bool SpinSystem::Add(const PulseSequence_ptr &pulseseq)
+	{
+		if(this->Contains(pulseseq))
+			return false;
+		this->pulses_seq.push_back(pulseseq);
 		return true;
 	}
 
@@ -448,6 +488,25 @@ namespace SpinAPI
 		return failedPulses;
 	}
 
+	std::vector<PulseSequence_ptr> SpinSystem::ValidatePulseSequences()
+	{
+		std::vector<PulseSequence_ptr>failedPulseSequences;
+		for(auto i = this->pulses_seq.cbegin(); i != this->pulses_seq.cend(); i++)
+		{
+			if((*i)->ParsePulseSequence(this->pulses,this->interactions,this->transitions))
+			{
+				if(!(*i)->IsValid())
+					failedPulseSequences.push_back(*i);
+			}
+			else
+			{
+				failedPulseSequences.push_back(*i);
+			}
+		}
+		RemoveFailedObjects<PulseSequence_ptr>(failedPulseSequences, this->pulses_seq);
+		return failedPulseSequences;
+	}
+
 	// Method that loads the state objects and checks whether they are valid
 	std::vector<state_ptr> SpinSystem::ValidateStates()
 	{
@@ -531,6 +590,60 @@ namespace SpinAPI
 		return iniStates;
 	}
 
+	StateFrame SpinSystem::InitialStateFrame() const
+	{
+		if (this->properties == nullptr)
+			return StateFrame::Fixed;
+
+		std::string str;
+		if (!this->properties->Get("initialstateframe", str) &&
+			!this->properties->Get("initial_state_frame", str) &&
+			!this->properties->Get("frame", str) &&
+			!this->properties->Get("stateframe", str))
+			return StateFrame::Fixed;
+
+		// Accept a few short aliases because this keyword appears in user MSD
+		// files. The returned enum is used by powder tasks when they decide
+		// whether the initial density matrix follows the molecular frame.
+		std::transform(str.begin(), str.end(), str.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+		if (str == "fixed" || str == "lab" || str == "laboratory" || str == "default")
+			return StateFrame::Fixed;
+		if (str == "molecular" || str == "mol" || str == "rotating")
+			return StateFrame::Molecular;
+		if (str == "eigen" || str == "thermal")
+			return StateFrame::Eigen;
+
+		return StateFrame::Fixed;
+	}
+
+	InitialStateCoherenceMode SpinSystem::InitialStateCoherences() const
+	{
+		if (this->properties == nullptr)
+			return InitialStateCoherenceMode::Keep;
+
+		std::string str;
+		if (!this->properties->Get("initialstatecoherences", str) &&
+			!this->properties->Get("initialcoherences", str) &&
+			!this->properties->Get("coherences", str))
+		{
+			return InitialStateCoherenceMode::Keep;
+		}
+
+		// The "dephase" mode is basis dependent. The task supplies the
+		// orientation-specific Hamiltonian used to define that eigenbasis.
+		std::transform(str.begin(), str.end(), str.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+		if (str == "keep" || str == "full" || str == "coherent" || str == "default")
+			return InitialStateCoherenceMode::Keep;
+		if (str == "dephase" || str == "discard" || str == "diagonal" || str == "populations" ||
+			str == "eigen" || str == "eigenbasis" || str == "eigenpopulations")
+		{
+			return InitialStateCoherenceMode::DephaseEigenbasis;
+		}
+
+		std::cerr << "Warning: Unknown initial-state coherences mode \"" << str << "\". Keeping coherences." << std::endl;
+		return InitialStateCoherenceMode::Keep;
+	}
+
 	// Obtain the temperature for a temperature weighted density matrix
 	double SpinSystem::Temperature()
 	{
@@ -589,6 +702,10 @@ namespace SpinAPI
 
 		// Get ActionTargets from all state objects, adding the name of the SpinSystem
 		for (auto i = this->states.cbegin(); i != this->states.cend(); i++)
+			(*i)->GetActionTargets(tmpVecScalars, tmpVecVectors, this->Name());
+
+		// Pulse-sequence delay variables are mutable ActionScalars as well.
+		for (auto i = this->pulses_seq.cbegin(); i != this->pulses_seq.cend(); i++)
 			(*i)->GetActionTargets(tmpVecScalars, tmpVecVectors, this->Name());
 
 		// Insert all the ActionScalars in the associated container
@@ -733,11 +850,32 @@ namespace SpinAPI
 			{
 				std::cout << "RelaxationDephasing";
 			}
+			else if ((*i)->Type() == OperatorType::RelaxationLindbladDoubleSpin)
+			{
+				std::cout << "RelaxationLindbladDoubleSpin";
+			}
+			else if ((*i)->Type() == OperatorType::RelaxationRandomFields)
+			{
+				std::cout << "RelaxationRandomFields";
+			}
+			else if ((*i)->Type() == OperatorType::RelaxationT1)
+			{
+				std::cout << "RelaxationT1";
+			}
+			else if ((*i)->Type() == OperatorType::RelaxationT2)
+			{
+				std::cout << "RelaxationT2";
+			}
+			else if ((*i)->Type() == OperatorType::RelaxationPhenomenological)
+			{
+				std::cout << "RelaxationPhenomenological";
+			}
 			else
 			{
 				std::cout << "unknown";
 			}
 			std::cout << ", spins: " << (*i)->SpinCount();
+			std::cout << ", frame: " << ((*i)->Frame() == RelaxationFrame::Lab ? "lab" : "molecular");
 			std::cout << ", is valid: " << (*i)->IsValid() << ")" << std::endl;
 		}
 

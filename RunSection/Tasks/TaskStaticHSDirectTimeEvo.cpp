@@ -741,7 +741,6 @@ namespace RunSection
 
 				if (symmetric)
 				{
-
 					arma::sp_cx_mat H_total = arma::cx_double(0.0, -1.0) * H;
 
 					// Precompute the matrix exponential for the entire time step

@@ -21,6 +21,7 @@
 #include "Utility.h"
 
 #include <array>
+#include <cmath>
 
 // Include additional source files
 #include "SpinSpace/SpinSpace_management.cpp"
@@ -139,6 +140,8 @@ namespace SpinAPI
 		for (auto j = this->transitions.cbegin(); j != this->transitions.cend(); j++)
 		{
 			if ((*j)->TrajectoryLength() > 0)
+				return true;
+			if((*j)->HasTD())
 				return true;
 		}
 

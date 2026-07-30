@@ -222,12 +222,7 @@ namespace RunSection
 				result = -1 * solve(arma::conv_to<arma::cx_mat>::from(A), rho0vec);
 			}
 			
-			//arma::cx_vec result2 = solve(arma::conv_to<arma::cx_mat>::from(A), rho0vec);
-			std::cout << "Trace of final result: " << arma::trace(arma::reshape(result, std::sqrt(result.n_rows), std::sqrt(result.n_rows))) << std::endl;
 			this->Log() << "Done with calculation." << std::endl;
-
-			std::cout << result << std::endl;
-			//std::cout << result2 << std::endl;
 
 			// Convert the resulting density operator back to its Hilbert space representation
 			if (!space.OperatorFromSuperspace(result, rho0))

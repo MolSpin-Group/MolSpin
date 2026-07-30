@@ -12,6 +12,90 @@
 #include <exception>
 namespace SpinAPI
 {
+	// Interaction "orientation" values are stored as passive ZYZ Euler angles.
+	// This helper returns the tensor-frame rotation used before any powder
+	// rotation is applied by the calling task.
+	arma::mat EulerZYZPassiveFrame(const arma::vec &_angles)
+	{
+		const double alpha = (_angles.n_elem >= 1) ? _angles(0) : 0.0;
+		const double beta = (_angles.n_elem >= 2) ? _angles(1) : 0.0;
+		const double gamma = (_angles.n_elem >= 3) ? _angles(2) : 0.0;
+
+		const double ca = std::cos(alpha), sa = std::sin(alpha);
+		const double cb = std::cos(beta), sb = std::sin(beta);
+		const double cg = std::cos(gamma), sg = std::sin(gamma);
+
+		arma::mat Ra = {{ca, sa, 0.0}, {-sa, ca, 0.0}, {0.0, 0.0, 1.0}};
+		arma::mat Rb = {{cb, 0.0, -sb}, {0.0, 1.0, 0.0}, {sb, 0.0, cb}};
+		arma::mat Rg = {{cg, sg, 0.0}, {-sg, cg, 0.0}, {0.0, 0.0, 1.0}};
+		return Rg * Rb * Ra;
+	}
+
+	// Build the zero-field-splitting tensor used in
+	// H_ZFS = S^T D S. With energyshift=true this is the conventional
+	// D(Sz^2 - S(S+1)/3) + E(Sx^2 - Sy^2) form.
+	arma::mat ZfsTensorFromParameters(double _D, double _E, bool _subtractIsotropicShift)
+	{
+		arma::mat zfsTensor = arma::zeros<arma::mat>(3, 3);
+		if (_subtractIsotropicShift)
+		{
+			zfsTensor(0, 0) = -_D / 3.0 + _E;
+			zfsTensor(1, 1) = -_D / 3.0 - _E;
+			zfsTensor(2, 2) = 2.0 * _D / 3.0;
+		}
+		else
+		{
+			zfsTensor(0, 0) = _E;
+			zfsTensor(1, 1) = -_E;
+			zfsTensor(2, 2) = _D;
+		}
+		return zfsTensor;
+	}
+
+	// Move an interaction tensor from its own principal-axis frame into the
+	// molecular frame. Powder rotations, when present, are applied afterwards.
+	arma::mat ApplyInteractionFrame(const arma::mat &_tensor, const interaction_ptr &_interaction)
+	{
+		const arma::mat frameToLab = EulerZYZPassiveFrame(_interaction->Framelist());
+		const arma::mat frameToMolecule = frameToLab.t();
+		return frameToMolecule * _tensor * frameToMolecule.t();
+	}
+
+	template <typename MatrixT>
+	void AddQuadraticSpinTensor(MatrixT &_out,
+								const MatrixT &_Sx,
+								const MatrixT &_Sy,
+								const MatrixT &_Sz,
+								const arma::mat &_tensor)
+	{
+		// Full quadratic form: sum_ab tensor_ab S_a S_b. This is used for
+		// quadratic-spin interactions and for the non-secular ZFS Hamiltonian.
+		_out += _Sx * _Sx * _tensor(0, 0) + _Sx * _Sy * _tensor(0, 1) + _Sx * _Sz * _tensor(0, 2);
+		_out += _Sy * _Sx * _tensor(1, 0) + _Sy * _Sy * _tensor(1, 1) + _Sy * _Sz * _tensor(1, 2);
+		_out += _Sz * _Sx * _tensor(2, 0) + _Sz * _Sy * _tensor(2, 1) + _Sz * _Sz * _tensor(2, 2);
+	}
+
+	template <typename MatrixT>
+	void AddSecularQuadraticSpinTensor(MatrixT &_out,
+									   const MatrixT &_Sz,
+									   double _s,
+									   const arma::mat &_tensor,
+									   bool _subtractIsotropicShift)
+	{
+		// Secular limit around the current z axis. Only the difference between
+		// the z component and the transverse average changes transition
+		// frequencies; the optional shift keeps the usual ZFS trace convention.
+		const double transverseMean = 0.5 * (_tensor(0, 0) + _tensor(1, 1));
+		const double coefficient = _tensor(2, 2) - transverseMean;
+		MatrixT term = _Sz * _Sz;
+		if (_subtractIsotropicShift)
+		{
+			const double shift = _s * (_s + 1.0) / 3.0;
+			term -= shift * arma::speye<MatrixT>(_Sz.n_rows, _Sz.n_cols);
+		}
+		_out += coefficient * term;
+	}
+
 	// -----------------------------------------------------
 	// Hamiltonian representations in the space
 	// -----------------------------------------------------
@@ -43,32 +127,20 @@ namespace SpinAPI
 			// Fill the matrix with the sum of all the interactions (i.e. between spin magnetic moment and fields)
 			for (auto i = spinlist.cbegin(); i != spinlist.cend(); i++)
 			{
-				if (_interaction->IgnoreTensors())
-				{
-					this->CreateOperator(arma::conv_to<arma::cx_mat>::from((*i)->Sx()), (*i), Sx);
-					this->CreateOperator(arma::conv_to<arma::cx_mat>::from((*i)->Sy()), (*i), Sy);
-					this->CreateOperator(arma::conv_to<arma::cx_mat>::from((*i)->Sz()), (*i), Sz);
-				}
-				else
-				{
-					this->CreateOperator(arma::conv_to<arma::cx_mat>::from((*i)->Tx()), (*i), Sx);
-					this->CreateOperator(arma::conv_to<arma::cx_mat>::from((*i)->Ty()), (*i), Sy);
-					this->CreateOperator(arma::conv_to<arma::cx_mat>::from((*i)->Tz()), (*i), Sz);
-				}
+				this->CreateOperator(arma::conv_to<arma::cx_mat>::from((*i)->Sx()), (*i), Sx);
+				this->CreateOperator(arma::conv_to<arma::cx_mat>::from((*i)->Sy()), (*i), Sy);
+				this->CreateOperator(arma::conv_to<arma::cx_mat>::from((*i)->Sz()), (*i), Sz);
 
-				if (ATensor != nullptr && !IsIsotropic(*ATensor))
+				arma::mat G = arma::eye<arma::mat>(3, 3);
+				if (!_interaction->IgnoreTensors())
 				{
-					// Use the tensor to calculate the product S * A * B
-					auto A = ATensor->LabFrame();
+					G = arma::conv_to<arma::mat>::from((*i)->GetTensor().LabFrame());
+				}
+				G = ApplyInteractionFrame(G, _interaction);
 
-					tmp += Sx * field(0) * A(0, 0) + Sx * field(1) * A(0, 1) + Sx * field(2) * A(0, 2);
-					tmp += Sy * field(0) * A(1, 0) + Sy * field(1) * A(1, 1) + Sy * field(2) * A(1, 2);
-					tmp += Sz * field(0) * A(2, 0) + Sz * field(1) * A(2, 1) + Sz * field(2) * A(2, 2);
-				}
-				else
-				{
-					tmp += Sx * field(0) + Sy * field(1) + Sz * field(2);
-				}
+				tmp += Sx * (field(0) * G(0, 0) + field(1) * G(0, 1) + field(2) * G(0, 2));
+				tmp += Sy * (field(0) * G(1, 0) + field(1) * G(1, 1) + field(2) * G(1, 2));
+				tmp += Sz * (field(0) * G(2, 0) + field(1) * G(2, 1) + field(2) * G(2, 2));
 			}
 		}
 		else if (_interaction->Type() == InteractionType::DoubleSpin)
@@ -111,21 +183,21 @@ namespace SpinAPI
 					if (ATensor != nullptr && !IsIsotropic(*ATensor))
 					{
 						// Use the tensor to calculate the product S_1 * A * S_2
-						auto A = ATensor->LabFrame();
+						arma::mat A = ApplyInteractionFrame(ATensor->LabFrame(), _interaction);
 
 						tmp += S1x * S2x * A(0, 0) + S1x * S2y * A(0, 1) + S1x * S2z * A(0, 2);
 						tmp += S1y * S2x * A(1, 0) + S1y * S2y * A(1, 1) + S1y * S2z * A(1, 2);
 						tmp += S1z * S2x * A(2, 0) + S1z * S2y * A(2, 1) + S1z * S2z * A(2, 2);
-					}
-					else
-					{
-						// If there is no interaction tensor or if the tensor is isotropic, just take the dot product
-						tmp += S1x * S2x + S1y * S2y + S1z * S2z;
+						}
+						else
+						{
+							// If there is no interaction tensor or if the tensor is isotropic, just take the dot product
+							tmp += S1x * S2x + S1y * S2y + S1z * S2z;
+						}
 					}
 				}
 			}
-		}
-		else if (_interaction->Type() == InteractionType::QuadraticSpin)
+			else if (_interaction->Type() == InteractionType::QuadraticSpin)
 		{
 			// Obtain lists of interacting spins, coupling tensor, and define matrices to hold the magnetic moment operators
 			auto spins1 = _interaction->Group1();
@@ -136,34 +208,41 @@ namespace SpinAPI
 			// Fill the matrix with the sum of all the interactions
 			for (auto i = spins1.cbegin(); i != spins1.cend(); i++)
 			{
-				// Obtain the magnetic moment operators within the Hilbert space
-				if (_interaction->IgnoreTensors())
-				{
-					this->CreateOperator(arma::conv_to<arma::cx_mat>::from((*i)->Sx()), (*i), S1x);
-					this->CreateOperator(arma::conv_to<arma::cx_mat>::from((*i)->Sy()), (*i), S1y);
-					this->CreateOperator(arma::conv_to<arma::cx_mat>::from((*i)->Sz()), (*i), S1z);
-				}
-				else
-				{
-					this->CreateOperator(arma::conv_to<arma::cx_mat>::from((*i)->Tx()), (*i), S1x);
-					this->CreateOperator(arma::conv_to<arma::cx_mat>::from((*i)->Ty()), (*i), S1y);
-					this->CreateOperator(arma::conv_to<arma::cx_mat>::from((*i)->Tz()), (*i), S1z);
-				}
+				// Quadratic spin tensors are interaction tensors, not spin g-tensors.
+				this->CreateOperator(arma::conv_to<arma::cx_mat>::from((*i)->Sx()), (*i), S1x);
+				this->CreateOperator(arma::conv_to<arma::cx_mat>::from((*i)->Sy()), (*i), S1y);
+				this->CreateOperator(arma::conv_to<arma::cx_mat>::from((*i)->Sz()), (*i), S1z);
 
 				if (ATensor != nullptr && !IsIsotropic(*ATensor))
 				{
-					// Use the tensor to calculate the product S_1 * A * S_2
-					auto A = ATensor->LabFrame();
-
-					tmp += S1x * S1x * A(0, 0) + S1x * S1y * A(0, 1) + S1x * S1z * A(0, 2);
-					tmp += S1y * S1x * A(1, 0) + S1y * S1y * A(1, 1) + S1y * S1z * A(1, 2);
-					tmp += S1z * S1x * A(2, 0) + S1z * S1y * A(2, 1) + S1z * S1z * A(2, 2);
+					arma::mat A = ApplyInteractionFrame(ATensor->LabFrame(), _interaction);
+					AddQuadraticSpinTensor(tmp, S1x, S1y, S1z, A);
 				}
 				else
 				{
 					// If there is no interaction tensor or if the tensor is isotropic, just take the dot product
 					tmp += S1x * S1x + S1y * S1y + S1z * S1z;
 				}
+			}
+		}
+		else if (_interaction->Type() == InteractionType::Zfs)
+		{
+			// Obtain lists of interacting spins, coupling tensor, and define matrices to hold the magnetic moment operators
+			auto spins1 = _interaction->Group1();
+			arma::cx_mat Sx;
+			arma::cx_mat Sy;
+			arma::cx_mat Sz;
+
+			// Fill the matrix with the sum of all the interactions
+			for (auto i = spins1.cbegin(); i != spins1.cend(); i++)
+			{
+				this->CreateOperator(arma::conv_to<arma::cx_mat>::from((*i)->Sx()), (*i), Sx);
+				this->CreateOperator(arma::conv_to<arma::cx_mat>::from((*i)->Sy()), (*i), Sy);
+				this->CreateOperator(arma::conv_to<arma::cx_mat>::from((*i)->Sz()), (*i), Sz);
+
+				arma::mat Dtensor = ZfsTensorFromParameters(_interaction->Dvalue(), _interaction->Evalue(), _interaction->ES());
+				Dtensor = ApplyInteractionFrame(Dtensor, _interaction);
+				AddQuadraticSpinTensor(tmp, Sx, Sy, Sz, Dtensor);
 			}
 		}
 		else if (_interaction->Type() == InteractionType::Exchange)
@@ -224,64 +303,88 @@ namespace SpinAPI
 
 						tmp += half;
 					}
-				}
-			}
-		}
-		else if (_interaction->Type() == InteractionType::Zfs)
-		{
-			// Obtain lists of interacting spins, coupling tensor, and define matrices to hold the magnetic moment operators
-			auto spins1 = _interaction->Group1();
-			arma::cx_mat Sx;
-			arma::cx_mat Sy;
-			arma::cx_mat Sz;
-
-			// Fill the matrix with the sum of all the interactions
-			for (auto i = spins1.cbegin(); i != spins1.cend(); i++)
-			{
-				// Obtain the magnetic moment operators within the Hilbert space
-				if (_interaction->IgnoreTensors())
-				{
-					this->CreateOperator(arma::conv_to<arma::cx_mat>::from((*i)->Sx()), (*i), Sx);
-					this->CreateOperator(arma::conv_to<arma::cx_mat>::from((*i)->Sy()), (*i), Sy);
-					this->CreateOperator(arma::conv_to<arma::cx_mat>::from((*i)->Sz()), (*i), Sz);
-				}
-				else
-				{
-					this->CreateOperator(arma::conv_to<arma::cx_mat>::from((*i)->Tx()), (*i), Sx);
-					this->CreateOperator(arma::conv_to<arma::cx_mat>::from((*i)->Ty()), (*i), Sy);
-					this->CreateOperator(arma::conv_to<arma::cx_mat>::from((*i)->Tz()), (*i), Sz);
-				}
-
-				// Get D and E value
-				double D = _interaction->Dvalue();
-				double E = _interaction->Evalue();
-
-				{
-					// Calculate Zfs interaction
-					// tmp = D * (Sz * Sz - ((1.00 / 3.00) * (*i)->S() * ((*i)->S() + 1))) + E * (Sx * Sx - Sy * Sy);
-					if (std::abs(D) >= 1e-100)
-					{
-						int sn = (*i)->S() * 1.0 / 2.0;
-						double val = (1.00 / 3.00) * sn * (sn + 1);
-						arma::cx_mat energy_shift = arma::zeros<arma::cx_mat>(this->HilbertSpaceDimensions(), this->HilbertSpaceDimensions());
-						if (_interaction->ES())
-							energy_shift = val * arma::eye<arma::cx_mat>(this->HilbertSpaceDimensions(), this->HilbertSpaceDimensions());
-						tmp += D * ((Sz * Sz) - energy_shift);
-					}
-					if (std::abs(E) >= 1e-100)
-					{
-						tmp += E * (Sx * Sx - Sy * Sy);
 					}
 				}
 			}
-		}
-		else if (_interaction->Type() == InteractionType::SemiClassicalField)
+			else if (_interaction->Type() == InteractionType::SemiClassicalField)
 		{
 			//  Grab orientation parameters
 			int n = _interaction->Orientations();
 			tmp = arma::zeros<arma::cx_mat>(this->HilbertSpaceDimensions(), n * this->HilbertSpaceDimensions());
 
 			InternalCreateSCCompositeMatrix(_interaction, n, tmp);
+		}
+		else if (_interaction->Type() == InteractionType::Strain)
+		{
+			auto spins1 = _interaction->Group1();
+			arma::cx_mat Sx;
+			arma::cx_mat Sy;
+			arma::cx_mat Sz;
+			// Fill the matrix with the sum of all the interactions
+			for (auto i = spins1.cbegin(); i != spins1.cend(); i++)
+			{
+				// Obtain the magnetic moment operators within the Hilbert space
+				double divider = 1.0;
+				if (_interaction->IgnoreTensors())
+				{
+					this->CreateOperator(arma::conv_to<arma::cx_mat>::from((*i)->Sx()), (*i), Sx);
+					this->CreateOperator(arma::conv_to<arma::cx_mat>::from((*i)->Sy()), (*i), Sy);
+					this->CreateOperator(arma::conv_to<arma::cx_mat>::from((*i)->Sz()), (*i), Sz);
+
+				}
+				else
+				{
+					this->CreateOperator(arma::conv_to<arma::cx_mat>::from((*i)->Tx()), (*i), Sx);
+					this->CreateOperator(arma::conv_to<arma::cx_mat>::from((*i)->Ty()), (*i), Sy);
+					this->CreateOperator(arma::conv_to<arma::cx_mat>::from((*i)->Tz()), (*i), Sz);
+					divider = 1.0  / (*i)->GetTensor().Isotropic();
+				}
+
+				auto d_list = _interaction->Strain_Succeptability();
+				double h43 = 0.0, h41 = 0.0, h26 = 0.0;
+				double h25 = 0.0, h16 = 0.0, h15 = 0.0;
+				if (d_list.size() == 3)
+				{
+					h43 = d_list[0];
+					h26 = d_list[1];
+					h16 = d_list[2];
+				}
+				else if (d_list.size() == 6)
+				{
+					h43 = d_list[0];
+					h41 = d_list[1];
+					h26 = d_list[2];
+					h25 = d_list[3];
+					h16 = d_list[4];
+					h15 = d_list[5];
+				}
+				
+				auto A = ATensor->LabFrame();
+				//Ex = exz - 1/2(h15/h16)(exx-eyy)
+				double Ex2 = A(0,2) - 0.5 * ((h26 != 0.0) ? (h25/h26) * (A(0,0)-A(1,1)) : 0.0);
+				double Ex1 = A(0,2) - 0.5 * ((h16 != 0.0) ? (h15/h16) * (A(0,0)-A(1,1)) : 0.0);
+				double Ey2 = A(1,2) + ((h26 != 0.0) ? (h25/h26) * A(0,1) : 0.0);
+				double Ey1 = A(1,2) + ((h16 != 0.0) ? (h15/h16) * A(0,1) : 0.0);
+				double Ez = A(2,2) + ((h43 != 0.0) ? (h41/h43) * (A(0,0) + A(1,1)) : 0.0);
+
+				double d0 = h43; //d_parallel
+				double d1 = 0.5 * h16; //h_perp
+				double d2 = 0.5 * h26; //h_perp
+				
+				auto AntiCommutator = [](arma::cx_mat& A, arma::cx_mat& B) {
+					arma::cx_mat return_mat;
+					return_mat = (A * B) + (B * A);
+					return return_mat;
+				};
+
+				{
+					arma::cx_mat H_parallel = d0 * Ez * (Sz * Sz) * divider;
+					arma::cx_mat H_perpendicular = d1 * (((Sx * Sx) - (Sy * Sy)) * Ex1 * divider + AntiCommutator(Sx, Sy) * Ey1 * divider);
+					arma::cx_mat H_off_diagonal = d2 * (AntiCommutator(Sx, Sz) * Ex2 * divider + AntiCommutator(Sy, Sz) * Ey2 * divider);
+					tmp += H_parallel + H_perpendicular + H_off_diagonal;
+				}
+
+			}
 		}
 		else
 		{
@@ -290,7 +393,7 @@ namespace SpinAPI
 		}
 
 		// Multiply by the isotropic value, if the tensor was isotropic
-		if (ATensor != nullptr && IsIsotropic(*ATensor))
+		if (ATensor != nullptr && IsIsotropic(*ATensor) && _interaction->Type() != InteractionType::Strain)
 			tmp *= ATensor->Isotropic();
 
 		// Multiply with the given prefactor (or 1.0 if none was specified)
@@ -325,6 +428,7 @@ namespace SpinAPI
 		{
 			// We already have the result in the Hilbert space
 			_out = tmp;
+
 		}
 
 		return true;
@@ -358,31 +462,20 @@ namespace SpinAPI
 			// Fill the matrix with the sum of all the interactions (i.e. between spin magnetic moment and fields)
 			for (auto i = spinlist.cbegin(); i != spinlist.cend(); i++)
 			{
-				if (_interaction->IgnoreTensors())
-				{
-					this->CreateOperator((*i)->Sx(), (*i), Sx);
-					this->CreateOperator((*i)->Sy(), (*i), Sy);
-					this->CreateOperator((*i)->Sz(), (*i), Sz);
-				}
-				else
-				{
-					this->CreateOperator((*i)->Tx(), (*i), Sx);
-					this->CreateOperator((*i)->Ty(), (*i), Sy);
-					this->CreateOperator((*i)->Tz(), (*i), Sz);
-				}
+				this->CreateOperator((*i)->Sx(), (*i), Sx);
+				this->CreateOperator((*i)->Sy(), (*i), Sy);
+				this->CreateOperator((*i)->Sz(), (*i), Sz);
 
-				if (ATensor != nullptr && !IsIsotropic(*ATensor))
+				arma::mat G = arma::eye<arma::mat>(3, 3);
+				if (!_interaction->IgnoreTensors())
 				{
-					// Use the tensor to calculate the product S * A * B
-					auto A = ATensor->LabFrame();
-					tmp += Sx * field(0) * A(0, 0) + Sx * field(1) * A(0, 1) + Sx * field(2) * A(0, 2);
-					tmp += Sy * field(0) * A(1, 0) + Sy * field(1) * A(1, 1) + Sy * field(2) * A(1, 2);
-					tmp += Sz * field(0) * A(2, 0) + Sz * field(1) * A(2, 1) + Sz * field(2) * A(2, 2);
+					G = arma::conv_to<arma::mat>::from((*i)->GetTensor().LabFrame());
 				}
-				else
-				{
-					tmp += Sx * field(0) + Sy * field(1) + Sz * field(2);
-				}
+				G = ApplyInteractionFrame(G, _interaction);
+
+				tmp += Sx * (field(0) * G(0, 0) + field(1) * G(0, 1) + field(2) * G(0, 2));
+				tmp += Sy * (field(0) * G(1, 0) + field(1) * G(1, 1) + field(2) * G(1, 2));
+				tmp += Sz * (field(0) * G(2, 0) + field(1) * G(2, 1) + field(2) * G(2, 2));
 			}
 		}
 		else if (_interaction->Type() == InteractionType::DoubleSpin)
@@ -424,13 +517,13 @@ namespace SpinAPI
 						this->CreateOperator((*j)->Tz(), (*j), S2z);
 					}
 
-					if (ATensor != nullptr && !IsIsotropic(*ATensor))
-					{
-						// Use the tensor to calculate the product S_1 * A * S_2
-						auto A = ATensor->LabFrame();
-						tmp += S1x * S2x * A(0, 0) + S1x * S2y * A(0, 1) + S1x * S2z * A(0, 2);
-						tmp += S1y * S2x * A(1, 0) + S1y * S2y * A(1, 1) + S1y * S2z * A(1, 2);
-						tmp += S1z * S2x * A(2, 0) + S1z * S2y * A(2, 1) + S1z * S2z * A(2, 2);
+						if (ATensor != nullptr && !IsIsotropic(*ATensor))
+						{
+							// Use the tensor to calculate the product S_1 * A * S_2
+							arma::mat A = ApplyInteractionFrame(ATensor->LabFrame(), _interaction);
+							tmp += S1x * S2x * A(0, 0) + S1x * S2y * A(0, 1) + S1x * S2z * A(0, 2);
+							tmp += S1y * S2x * A(1, 0) + S1y * S2y * A(1, 1) + S1y * S2z * A(1, 2);
+							tmp += S1z * S2x * A(2, 0) + S1z * S2y * A(2, 1) + S1z * S2z * A(2, 2);
 					}
 					else
 					{
@@ -451,28 +544,15 @@ namespace SpinAPI
 			// Fill the matrix with the sum of all the interactions
 			for (auto i = spins1.cbegin(); i != spins1.cend(); i++)
 			{
-				// Obtain the magnetic moment operators within the Hilbert space
-				if (_interaction->IgnoreTensors())
-				{
-					this->CreateOperator((*i)->Sx(), (*i), S1x);
-					this->CreateOperator((*i)->Sy(), (*i), S1y);
-					this->CreateOperator((*i)->Sz(), (*i), S1z);
-				}
-				else
-				{
-					this->CreateOperator((*i)->Tx(), (*i), S1x);
-					this->CreateOperator((*i)->Ty(), (*i), S1y);
-					this->CreateOperator((*i)->Tz(), (*i), S1z);
-				}
+				// Quadratic spin tensors are interaction tensors, not spin g-tensors.
+				this->CreateOperator((*i)->Sx(), (*i), S1x);
+				this->CreateOperator((*i)->Sy(), (*i), S1y);
+				this->CreateOperator((*i)->Sz(), (*i), S1z);
 
 				if (ATensor != nullptr && !IsIsotropic(*ATensor))
 				{
-					// Use the tensor to calculate the product S_1 * A * S_2
-					auto A = ATensor->LabFrame();
-
-					tmp += S1x * S1x * A(0, 0) + S1x * S1y * A(0, 1) + S1x * S1z * A(0, 2);
-					tmp += S1y * S1x * A(1, 0) + S1y * S1y * A(1, 1) + S1y * S1z * A(1, 2);
-					tmp += S1z * S1x * A(2, 0) + S1z * S1y * A(2, 1) + S1z * S1z * A(2, 2);
+					arma::mat A = ApplyInteractionFrame(ATensor->LabFrame(), _interaction);
+					AddQuadraticSpinTensor(tmp, S1x, S1y, S1z, A);
 
 					// std::cout << "ZFS Hamiltonian part matrix (before multiplying prefactor and commonprefactor):" << std::endl;
 					// std::cout << tmp << std::endl;
@@ -561,40 +641,13 @@ namespace SpinAPI
 			// Fill the matrix with the sum of all the interactions (i.e. between spin magnetic moment and fields)
 			for (auto i = spinlist.cbegin(); i != spinlist.cend(); i++)
 			{
-				if (_interaction->IgnoreTensors())
-				{
-					this->CreateOperator((*i)->Sx(), (*i), Sx);
-					this->CreateOperator((*i)->Sy(), (*i), Sy);
-					this->CreateOperator((*i)->Sz(), (*i), Sz);
-				}
-				else
-				{
-					this->CreateOperator((*i)->Tx(), (*i), Sx);
-					this->CreateOperator((*i)->Ty(), (*i), Sy);
-					this->CreateOperator((*i)->Tz(), (*i), Sz);
-				}
+				this->CreateOperator((*i)->Sx(), (*i), Sx);
+				this->CreateOperator((*i)->Sy(), (*i), Sy);
+				this->CreateOperator((*i)->Sz(), (*i), Sz);
 
-				// Get D and E value
-				double D = _interaction->Dvalue();
-				double E = _interaction->Evalue();
-
-				{
-					// Calculate Zfs interaction
-					// tmp = D * (Sz * Sz - ((1.00 / 3.00) * (*i)->S() * ((*i)->S() + 1))) + E * (Sx * Sx - Sy * Sy);
-					if (std::abs(D) >= 1e-100)
-					{
-						int sn = (*i)->S() * 1.0 / 2.0;
-						double val = (1.00 / 3.00) * sn * (sn + 1);
-						arma::cx_mat energy_shift = arma::zeros<arma::cx_mat>(this->HilbertSpaceDimensions(), this->HilbertSpaceDimensions());
-						if (_interaction->ES())
-							energy_shift = val * arma::eye<arma::cx_mat>(this->HilbertSpaceDimensions(), this->HilbertSpaceDimensions());
-						tmp += D * ((Sz * Sz) - energy_shift);
-					}
-					if (std::abs(E) >= 1e-100)
-					{
-						tmp += E * (Sx * Sx - Sy * Sy);
-					}
-				}
+				arma::mat Dtensor = ZfsTensorFromParameters(_interaction->Dvalue(), _interaction->Evalue(), _interaction->ES());
+				Dtensor = ApplyInteractionFrame(Dtensor, _interaction);
+				AddQuadraticSpinTensor(tmp, Sx, Sy, Sz, Dtensor);
 			}
 		}
 		else if (_interaction->Type() == InteractionType::SemiClassicalField)
@@ -605,6 +658,78 @@ namespace SpinAPI
 
 			InternalCreateSCCompositeMatrix(_interaction, n, tmp);
 		}
+		else if (_interaction->Type() == InteractionType::Strain)
+		{
+			auto spins1 = _interaction->Group1();
+			arma::sp_cx_mat Sx;
+			arma::sp_cx_mat Sy;
+			arma::sp_cx_mat Sz;
+			// Fill the matrix with the sum of all the interactions
+			for (auto i = spins1.cbegin(); i != spins1.cend(); i++)
+			{
+				// Obtain the magnetic moment operators within the Hilbert space
+				double divider = 1.0;
+				if (_interaction->IgnoreTensors())
+				{
+					this->CreateOperator((*i)->Sx(), (*i), Sx);
+					this->CreateOperator((*i)->Sy(), (*i), Sy);
+					this->CreateOperator((*i)->Sz(), (*i), Sz);
+
+				}
+				else
+				{
+					this->CreateOperator((*i)->Tx(), (*i), Sx);
+					this->CreateOperator((*i)->Ty(), (*i), Sy);
+					this->CreateOperator((*i)->Tz(), (*i), Sz);
+					divider = 1.0 / (*i)->GetTensor().Isotropic();
+				}
+
+				auto d_list = _interaction->Strain_Succeptability();
+				double h43 = 0.0, h41 = 0.0, h26 = 0.0;
+				double h25 = 0.0, h16 = 0.0, h15 = 0.0;
+				if (d_list.size() == 3)
+				{
+					h43 = d_list[0];
+					h26 = d_list[1];
+					h16 = d_list[2];
+				}
+				else if (d_list.size() == 6)
+				{
+					h43 = d_list[0];
+					h41 = d_list[1];
+					h26 = d_list[2];
+					h25 = d_list[3];
+					h16 = d_list[4];
+					h15 = d_list[5];
+				}
+				
+				auto A = ATensor->LabFrame();
+				//Ex = exz - 1/2(h15/h16)(exx-eyy)
+				double Ex2 = A(0,2) - 0.5 * ((h26 != 0.0) ? (h25/h26) * (A(0,0)-A(1,1)) : 0.0);
+				double Ex1 = A(0,2) - 0.5 * ((h16 != 0.0) ? (h15/h16) * (A(0,0)-A(1,1)) : 0.0);
+				double Ey2 = A(1,2) + ((h26 != 0.0) ? (h25/h26) * A(0,1) : 0.0);
+				double Ey1 = A(1,2) + ((h16 != 0.0) ? (h15/h16) * A(0,1) : 0.0);
+				double Ez = A(2,2) + ((h43 != 0.0) ? (h41/h43) * (A(0,0) + A(1,1)) : 0.0);
+
+				double d0 = h43; //d_parallel
+				double d1 = 0.5 * h16; //h_perp
+				double d2 = 0.5 * h26; //h_perp
+				
+				auto AntiCommutator = [](arma::sp_cx_mat& A, arma::sp_cx_mat& B) {
+					arma::sp_cx_mat return_mat;
+					return_mat = (A * B) + (B * A);
+					return return_mat;
+				};
+
+				{
+					arma::sp_cx_mat H_parallel = d0 * Ez * (Sz * Sz) * divider;
+					arma::sp_cx_mat H_perpendicular = d1 * (((Sx * Sx) - (Sy * Sy)) * Ex1 * divider + AntiCommutator(Sx, Sy) * Ey1 * divider);
+					arma::sp_cx_mat H_off_diagonal = d2 * (AntiCommutator(Sx, Sz) * Ex2 * divider + AntiCommutator(Sy, Sz) * Ey2 * divider);
+					tmp += H_parallel + H_perpendicular + H_off_diagonal;
+				}
+
+			}
+		}
 		else
 		{
 			// The interaction type was not recognized
@@ -612,7 +737,7 @@ namespace SpinAPI
 		}
 
 		// Multiply by the isotropic value, if the tensor was isotropic
-		if (ATensor != nullptr && IsIsotropic(*ATensor))
+		if (ATensor != nullptr && IsIsotropic(*ATensor) && _interaction->Type() != InteractionType::Strain)
 			tmp *= ATensor->Isotropic();
 
 		// Multiply with the given prefactor (or 1.0 if none was specified)
@@ -652,7 +777,7 @@ namespace SpinAPI
 	}
 
 	// Returns the matrix representation of the Interaction object on the spins space (sparse matrix version). Singlespin and double spin interaction are rotated with interactionframe and additionally to the point on the sphere. ZFS and Semiclassical field are currently not modified in any way
-	bool SpinSpace::InteractionOperatorRotatedZXZ(const interaction_ptr &_interaction, arma::mat &_rotationmatrix, arma::sp_cx_mat &_out) const
+	bool SpinSpace::InteractionOperatorRotatedZYZ(const interaction_ptr &_interaction, arma::mat &_rotationmatrix, arma::sp_cx_mat &_out) const
 	{
 		// Make sure the interaction is valid
 		if (_interaction == nullptr)
@@ -664,41 +789,19 @@ namespace SpinAPI
 		// Get the interaction tensor
 		auto ATensor = _interaction->CouplingTensor();
 
-		// IMPORTANT:
-		// The supplied powder-rotation matrix follows the EasySpin convention and is a *passive*
-		// transformation (molecular frame -> lab frame). Use it directly for tensor rotation.
+		// The supplied powder-rotation matrix follows the same passive
+		// molecular-to-lab convention as the powder tasks. The interaction
+		// frame is applied first; the powder orientation is applied second.
 		const arma::mat Rpowder = _rotationmatrix;
-
-		// Interaction-frame rotation from the interaction framelist.
-		// We interpret framelist Euler angles with a passive ZXZ convention, matching EasySpin
-		// (molecular frame -> tensor frame). Therefore we invert (transpose) to rotate tensors
-		// from tensor frame into molecular frame.
-		arma::mat RFrame = arma::eye<arma::mat>(3, 3);
-		{
-			auto fr = _interaction->Framelist();
-			double a = (fr.n_elem >= 1) ? fr(0) : 0.0;
-			double b = (fr.n_elem >= 2) ? fr(1) : 0.0;
-			double g = (fr.n_elem >= 3) ? fr(2) : 0.0;
-
-			// Passive ZXZ Euler rotation: R = Rz(gamma) * Ry(beta) * Rz(alpha).
-			const double ca = std::cos(a), sa = std::sin(a);
-			const double cb = std::cos(b), sb = std::sin(b);
-			const double cg = std::cos(g), sg = std::sin(g);
-
-			arma::mat Ra = {{ca, sa, 0.0}, {-sa, ca, 0.0}, {0.0, 0.0, 1.0}};
-			arma::mat Rb = {{cb, 0.0, -sb}, {0.0, 1.0, 0.0}, {sb, 0.0, cb}};
-			arma::mat Rg = {{cg, sg, 0.0}, {-sg, cg, 0.0}, {0.0, 0.0, 1.0}};
-			RFrame = Rg * Rb * Ra;
-		}
 
 		auto RotateTensorFrameAndPowder = [&](const arma::mat &A) -> arma::mat
 		{
-			const arma::mat RFrame_T2M = RFrame.t();
-			arma::mat Af = RFrame_T2M * A * RFrame_T2M.t();
+			arma::mat Af = ApplyInteractionFrame(A, _interaction);
 			arma::mat Al = Rpowder * Af * Rpowder.t();
 			if (!this->useFullTensorRotation)
 			{
-				// keep only diagonal elements (legacy behavior)
+				// Historical spectra used only the diagonal tensor components
+				// after rotation. Keep that path available for old inputs.
 				Al = Al % arma::eye<arma::mat>(3, 3);
 			}
 			return Al;
@@ -785,11 +888,34 @@ namespace SpinAPI
 					}
 				}
 			}
-		}
-		else if (_interaction->Type() == InteractionType::Exchange)
-		{
-			auto spins1 = _interaction->Group1();
-			auto spins2 = _interaction->Group2();
+			}
+			else if (_interaction->Type() == InteractionType::QuadraticSpin)
+			{
+				auto spins1 = _interaction->Group1();
+				arma::sp_cx_mat Sx, Sy, Sz;
+
+				for (auto i = spins1.cbegin(); i != spins1.cend(); i++)
+				{
+					this->CreateOperator((*i)->Sx(), (*i), Sx);
+					this->CreateOperator((*i)->Sy(), (*i), Sy);
+					this->CreateOperator((*i)->Sz(), (*i), Sz);
+
+					if (ATensor != nullptr && !IsIsotropic(*ATensor))
+					{
+						arma::mat A = arma::conv_to<arma::mat>::from(ATensor->LabFrame());
+						A = RotateTensorFrameAndPowder(A);
+						AddQuadraticSpinTensor(tmp, Sx, Sy, Sz, A);
+					}
+					else
+					{
+						tmp += Sx * Sx + Sy * Sy + Sz * Sz;
+					}
+				}
+			}
+			else if (_interaction->Type() == InteractionType::Exchange)
+			{
+				auto spins1 = _interaction->Group1();
+				auto spins2 = _interaction->Group2();
 			arma::sp_cx_mat S1x, S1y, S1z;
 			arma::sp_cx_mat S2x, S2y, S2z;
 
@@ -848,40 +974,13 @@ namespace SpinAPI
 			// Fill the matrix with the sum of all the interactions (i.e. between spin magnetic moment and fields)
 			for (auto i = spinlist.cbegin(); i != spinlist.cend(); i++)
 			{
-				if (_interaction->IgnoreTensors())
-				{
-					this->CreateOperator((*i)->Sx(), (*i), Sx);
-					this->CreateOperator((*i)->Sy(), (*i), Sy);
-					this->CreateOperator((*i)->Sz(), (*i), Sz);
-				}
-				else
-				{
-					this->CreateOperator((*i)->Tx(), (*i), Sx);
-					this->CreateOperator((*i)->Ty(), (*i), Sy);
-					this->CreateOperator((*i)->Tz(), (*i), Sz);
-				}
+				this->CreateOperator((*i)->Sx(), (*i), Sx);
+				this->CreateOperator((*i)->Sy(), (*i), Sy);
+				this->CreateOperator((*i)->Sz(), (*i), Sz);
 
-				// Get D and E value
-				double D = _interaction->Dvalue();
-				double E = _interaction->Evalue();
-
-				{
-					// Calculate Zfs interaction
-					// tmp = D * (Sz * Sz - ((1.00 / 3.00) * (*i)->S() * ((*i)->S() + 1))) + E * (Sx * Sx - Sy * Sy);
-					if (std::abs(D) >= 1e-100)
-					{
-						int sn = (*i)->S() * 1.0 / 2.0;
-						double val = (1.00 / 3.00) * sn * (sn + 1);
-						arma::cx_mat energy_shift = arma::zeros<arma::cx_mat>(this->HilbertSpaceDimensions(), this->HilbertSpaceDimensions());
-						if (_interaction->ES())
-							energy_shift = val * arma::eye<arma::cx_mat>(this->HilbertSpaceDimensions(), this->HilbertSpaceDimensions());
-						tmp += D * ((Sz * Sz) - energy_shift);
-					}
-					if (std::abs(E) >= 1e-100)
-					{
-						tmp += E * (Sx * Sx - Sy * Sy);
-					}
-				}
+				arma::mat Dtensor = ZfsTensorFromParameters(_interaction->Dvalue(), _interaction->Evalue(), _interaction->ES());
+				Dtensor = RotateTensorFrameAndPowder(Dtensor);
+				AddQuadraticSpinTensor(tmp, Sx, Sy, Sz, Dtensor);
 			}
 		}
 		else if (_interaction->Type() == InteractionType::SemiClassicalField)
@@ -938,7 +1037,10 @@ namespace SpinAPI
 		return true;
 	}
 
-	// Returns the matrix representation of the Interaction object in a secular approximation (sparse matrix version). Singlespin and double spin interaction are rotated with interactionframe and additionally to the point on the sphere. ZFS and Semiclassical field are currently not added
+	// Returns the matrix representation of the Interaction object in a
+	// high-field secular approximation (sparse matrix version). Single-spin,
+	// double-spin, quadratic-spin, and ZFS interactions are rotated with their
+	// interaction frame and with the current powder/crystallite orientation.
 	bool SpinSpace::InteractionOperatorRotated_SA(const interaction_ptr &_interaction, arma::mat &_rotationmatrix, arma::sp_cx_mat &_out) const
 	{
 		// Make sure the interaction is valid
@@ -951,14 +1053,23 @@ namespace SpinAPI
 		// Get the interaction tensor
 		auto ATensor = _interaction->CouplingTensor();
 
-		// Rotating the interaction from the tensor frame to the molecular frame using euler angles
+		// Historical _SA path: rotate from the interaction tensor frame to the
+		// molecular frame, then rotate the full crystallite to the lab frame.
+		// CreateRotationMatrix is kept here deliberately so this code follows
+		// the original implementation structure while preserving newer tensor
+		// types below.
 		auto ATensorFrame = _interaction->Framelist();
-
 		arma::mat RFrame;
 		if (!this->CreateRotationMatrix(ATensorFrame(0), ATensorFrame(1), ATensorFrame(2), RFrame))
 		{
 			std::cerr << "Failed to construct the rotation matrix for powder averaging in the lab frame." << std::endl;
 		}
+
+		auto RotateTensorFrameAndPowder = [&](const arma::mat &A) -> arma::mat
+		{
+			arma::mat Af = RFrame * A * RFrame.t();
+			return _rotationmatrix * Af * _rotationmatrix.t();
+		};
 
 		if (_interaction->Type() == InteractionType::SingleSpin)
 		{
@@ -975,17 +1086,17 @@ namespace SpinAPI
 			// Fill the matrix with the sum of all the interactions (i.e. between spin magnetic moment and fields)
 			for (auto i = spinlist.cbegin(); i != spinlist.cend(); i++)
 			{
-				// Get g-tensor
-				auto g = arma::conv_to<arma::mat>::from((*i)->GetTensor().LabFrame());
+				arma::mat g = arma::eye<arma::mat>(3, 3);
+				if (!_interaction->IgnoreTensors())
+				{
+					g = arma::conv_to<arma::mat>::from((*i)->GetTensor().LabFrame());
+				}
 
 				this->CreateOperator(arma::conv_to<arma::cx_mat>::from((*i)->Sx()), (*i), Sx);
 				this->CreateOperator(arma::conv_to<arma::cx_mat>::from((*i)->Sy()), (*i), Sy);
 				this->CreateOperator(arma::conv_to<arma::cx_mat>::from((*i)->Sz()), (*i), Sz);
 
-				// Rotate g-tensor from the tensor frame to the molecular frame
-				g = RFrame * g * RFrame.t();
-				// Rotate g-tensor to the lab frame
-				g = _rotationmatrix * g * _rotationmatrix.t();
+				g = RotateTensorFrameAndPowder(g);
 
 				// Secular approximation
 				tmp += Sz * field(2) * sqrt(g(2, 2) * g(2, 2) + g(2, 1) * g(2, 1) + g(2, 0) * g(2, 0));
@@ -1004,15 +1115,19 @@ namespace SpinAPI
 			arma::cx_mat S2z;
 
 			std::string interaction_type;
+			bool transpose_tensor_for_electron_second = false;
 
 			// Fill the matrix with the sum of all the interactions
 			for (auto i = spins1.cbegin(); i != spins1.cend(); i++)
 			{
 				for (auto j = spins2.cbegin(); j != spins2.cend(); j++)
 				{
+					transpose_tensor_for_electron_second = false;
 					if ((*i)->Type() == SpinAPI::SpinType::Electron)
 					{
-						// Obtain the magnetic moment operators within the Hilbert space. S1 always electron
+						// For better understanding: In the secular builder S1 is always the electron.
+						// This keeps the electron coherence-order projection independent of
+						// whether the user writes group1=electron/group2=nucleus or vice versa.
 						this->CreateOperator(arma::conv_to<arma::cx_mat>::from((*i)->Sx()), (*i), S1x);
 						this->CreateOperator(arma::conv_to<arma::cx_mat>::from((*i)->Sy()), (*i), S1y);
 						this->CreateOperator(arma::conv_to<arma::cx_mat>::from((*i)->Sz()), (*i), S1z);
@@ -1035,17 +1150,20 @@ namespace SpinAPI
 					}
 					else if ((*j)->Type() == SpinAPI::SpinType::Electron)
 					{
-						// Obtain the magnetic moment operators within the Hilbert space. S1 always electron
-						this->CreateOperator(arma::conv_to<arma::cx_mat>::from((*i)->Sx()), (*j), S1x);
-						this->CreateOperator(arma::conv_to<arma::cx_mat>::from((*i)->Sy()), (*j), S1y);
-						this->CreateOperator(arma::conv_to<arma::cx_mat>::from((*i)->Sz()), (*j), S1z);
-						this->CreateOperator(arma::conv_to<arma::cx_mat>::from((*j)->Sx()), (*i), S2x);
-						this->CreateOperator(arma::conv_to<arma::cx_mat>::from((*j)->Sy()), (*i), S2y);
-						this->CreateOperator(arma::conv_to<arma::cx_mat>::from((*j)->Sz()), (*i), S2z);
+						// Correct reversed hyperfine ordering. The old code
+						// embedded the nucleus local matrices on the electron spin and vice versa.
+						// Here S1 is the electron operator on spin j and S2 is the partner on spin i.
+						this->CreateOperator(arma::conv_to<arma::cx_mat>::from((*j)->Sx()), (*j), S1x);
+						this->CreateOperator(arma::conv_to<arma::cx_mat>::from((*j)->Sy()), (*j), S1y);
+						this->CreateOperator(arma::conv_to<arma::cx_mat>::from((*j)->Sz()), (*j), S1z);
+						this->CreateOperator(arma::conv_to<arma::cx_mat>::from((*i)->Sx()), (*i), S2x);
+						this->CreateOperator(arma::conv_to<arma::cx_mat>::from((*i)->Sy()), (*i), S2y);
+						this->CreateOperator(arma::conv_to<arma::cx_mat>::from((*i)->Sz()), (*i), S2z);
 
 						if ((*i)->Type() == SpinAPI::SpinType::Nucleus)
 						{
 							interaction_type = "Hyperfine";
+							transpose_tensor_for_electron_second = true;
 						}
 						else
 						{
@@ -1057,17 +1175,29 @@ namespace SpinAPI
 						std::cerr << "Could not construct hamiltonian in the secular approximation. Unrecognized type of spins. Please specify in the Spin object 'type = electron' or 'type = nucleus'. Additionally, currently there is no supported nucleus-nucleus interaction in the secular approximation." << std::endl;
 					}
 
+					// Project bilinear interactions onto the terms that are stationary
+					// in a common electron-z rotating frame. Electron-electron
+					// interactions retain total electron coherence order q=0, whereas
+					// electron-nuclear hyperfine interactions retain only electron q=0.
+					// In particular, isotropic A S.I becomes A Sz Iz in this frame.
 					if (ATensor != nullptr && !IsIsotropic(*ATensor))
 					{
-						// Get interaction tensor
 						arma::mat A = arma::conv_to<arma::mat>::from(ATensor->LabFrame());
-						// Rotate A-tensor from the tensor frame to the molecular frame
-						A = RFrame * A * RFrame.t();
-						// Rotate A-tensor to the lab frame
-						A = _rotationmatrix * A * _rotationmatrix.t();
+						A = RotateTensorFrameAndPowder(A);
+						if (transpose_tensor_for_electron_second)
+						{
+							// For better understanding: group1=nucleus/group2=electron represents
+							// I^T A S. After reordering to S^T A' I for electron-secular
+							// projection, the tensor must become A' = A^T.
+							A = A.t();
+						}
 
 						if (interaction_type == "Dipolar")
 						{
+							// Keep the historical electron-electron secular projection.
+							// The q=0 projection tested during the refactor is numerically
+							// indistinguishable for dmCry, but this form preserves the old
+							// _SA behavior for existing inputs.
 							tmp += S1x * S2x * A(0, 0) + S1y * S2y * A(1, 1) + S1z * S2z * A(2, 2);
 						}
 						else if (interaction_type == "Hyperfine")
@@ -1079,12 +1209,62 @@ namespace SpinAPI
 							std::cerr << "Unrecognized type of interaction. Could not construct hamiltonian in the secular approximation." << std::endl;
 						}
 					}
-					else
+					else if (interaction_type == "Dipolar")
 					{
-						// If there is no interaction tensor or if the tensor is isotropic, just take the dot product
+						// Isotropic electron-electron coupling is already q=0.
 						tmp += S1x * S2x + S1y * S2y + S1z * S2z;
 					}
+					else if (interaction_type == "Hyperfine")
+					{
+						// Electron-secular isotropic hyperfine limit.
+						tmp += S1z * S2z;
+					}
+					else
+					{
+						std::cerr << "Unrecognized type of interaction. Could not construct hamiltonian in the secular approximation." << std::endl;
+					}
 				}
+			}
+		}
+		else if (_interaction->Type() == InteractionType::QuadraticSpin)
+		{
+			auto spins1 = _interaction->Group1();
+			arma::sp_cx_mat Sx;
+			arma::sp_cx_mat Sy;
+			arma::sp_cx_mat Sz;
+
+			for (auto i = spins1.cbegin(); i != spins1.cend(); i++)
+			{
+				if (ATensor != nullptr && !IsIsotropic(*ATensor))
+				{
+					this->CreateOperator((*i)->Sz(), (*i), Sz);
+					arma::mat A = arma::conv_to<arma::mat>::from(ATensor->LabFrame());
+					A = RotateTensorFrameAndPowder(A);
+					const double s = 0.5 * static_cast<double>((*i)->S());
+					AddSecularQuadraticSpinTensor(tmp, Sz, s, A, false);
+				}
+				else
+				{
+					this->CreateOperator((*i)->Sx(), (*i), Sx);
+					this->CreateOperator((*i)->Sy(), (*i), Sy);
+					this->CreateOperator((*i)->Sz(), (*i), Sz);
+					tmp += Sx * Sx + Sy * Sy + Sz * Sz;
+				}
+			}
+		}
+		else if (_interaction->Type() == InteractionType::Zfs)
+		{
+			auto spinlist = _interaction->Group1();
+			arma::sp_cx_mat Sz;
+
+			arma::mat Dtensor = ZfsTensorFromParameters(_interaction->Dvalue(), _interaction->Evalue(), _interaction->ES());
+			Dtensor = RotateTensorFrameAndPowder(Dtensor);
+
+			for (auto i = spinlist.cbegin(); i != spinlist.cend(); i++)
+			{
+				this->CreateOperator((*i)->Sz(), (*i), Sz);
+				const double s = 0.5 * static_cast<double>((*i)->S());
+				AddSecularQuadraticSpinTensor(tmp, Sz, s, Dtensor, _interaction->ES());
 			}
 		}
 		else if (_interaction->Type() == InteractionType::Exchange)
@@ -1499,6 +1679,9 @@ namespace SpinAPI
 			// Skip static interactions
 			if (IsStatic(*(*i)))
 				continue;
+			
+			if(!(*i)->IsActive())
+				continue;
 
 			// Attempt to get the matrix representing the Interaction object in the spin space
 			if ((*i)->Type() == InteractionType::SemiClassicalField)
@@ -1535,6 +1718,9 @@ namespace SpinAPI
 		{
 			// Skip static interactions
 			if (IsStatic(*(*i)))
+				continue;
+			
+			if(!(*i)->IsActive())
 				continue;
 
 			if ((*i)->Type() == InteractionType::SemiClassicalField)
@@ -1636,7 +1822,63 @@ namespace SpinAPI
 		return true;
 	}
 
-	// Sets the rotated sparce matrix to the part of the Hamiltonian in the secular approximation
+	// Build the complete static Hamiltonian for one crystallite orientation.
+	// Unlike BaseHamiltonianRotatedZYZ, this method deliberately has no name
+	// list: general-purpose powder tasks must not silently drop an interaction
+	// because a task-local list was not updated when the SpinSystem changed.
+	bool SpinSpace::StaticHamiltonianRotatedZYZ(const arma::mat &rotmatrix, arma::sp_cx_mat &_out) const
+	{
+		arma::sp_cx_mat result(this->SpaceDimensions(), this->SpaceDimensions());
+		arma::sp_cx_mat tmp;
+		arma::mat rotation = rotmatrix;
+
+		for (const auto &interaction : this->interactions)
+		{
+			if (!IsStatic(*interaction))
+				continue;
+
+			// A semiclassical-field interaction represents an ensemble of
+			// Hamiltonians rather than one square operator. It cannot be mixed
+			// into the orientation-specific steady-state Hamiltonian here.
+			if (interaction->Type() == InteractionType::SemiClassicalField)
+				return false;
+
+			if (!this->InteractionOperatorRotatedZYZ(interaction, rotation, tmp))
+				return false;
+			result += tmp;
+		}
+
+		_out = std::move(result);
+		return true;
+	}
+
+	// High-field counterpart of StaticHamiltonianRotatedZYZ. Secularization is
+	// applied only after every interaction tensor and its molecular frame have
+	// been rotated into the current crystallite orientation.
+	bool SpinSpace::StaticHamiltonianRotatedSA(const arma::mat &rotmatrix, arma::sp_cx_mat &_out) const
+	{
+		arma::sp_cx_mat result(this->SpaceDimensions(), this->SpaceDimensions());
+		arma::sp_cx_mat tmp;
+		arma::mat rotation = rotmatrix;
+
+		for (const auto &interaction : this->interactions)
+		{
+			if (!IsStatic(*interaction))
+				continue;
+
+			if (interaction->Type() == InteractionType::SemiClassicalField)
+				return false;
+
+			if (!this->InteractionOperatorRotated_SA(interaction, rotation, tmp))
+				return false;
+			result += tmp;
+		}
+
+		_out = std::move(result);
+		return true;
+	}
+
+	// Sets the rotated sparse matrix to the named part of the Hamiltonian in the secular approximation
 	bool SpinSpace::BaseHamiltonianRotated_SA(std::vector<std::string> basehamiltonian_list, arma::mat rotmatrix, arma::sp_cx_mat &_out) const
 	{
 		// If we don't have any interactions, the Hamiltonian is zero
@@ -1677,7 +1919,7 @@ namespace SpinAPI
 		return true;
 	}
 
-	bool SpinSpace::BaseHamiltonianRotatedZXZ(std::vector<std::string> basehamiltonian_list, arma::mat rotmatrix, arma::sp_cx_mat &_out) const
+	bool SpinSpace::BaseHamiltonianRotatedZYZ(std::vector<std::string> basehamiltonian_list, arma::mat rotmatrix, arma::sp_cx_mat &_out) const
 	{
 		// If we don't have any interactions, the Hamiltonian is zero
 		arma::sp_cx_mat result = arma::sp_cx_mat(this->SpaceDimensions(), this->SpaceDimensions());
@@ -1706,7 +1948,7 @@ namespace SpinAPI
 					continue;
 				}
 				// Attempt to get the matrix representing the Interaction object in the spin space
-				if (!this->InteractionOperatorRotatedZXZ((*i), rotmatrix, tmp))
+				if (!this->InteractionOperatorRotatedZYZ((*i), rotmatrix, tmp))
 					return false;
 
 				result += tmp;
@@ -1714,6 +1956,27 @@ namespace SpinAPI
 		}
 
 		_out = result;
+		return true;
+	}
+
+	bool SpinSpace::PowderHamiltonianRotatedSA(const std::vector<std::string> &h0list,
+											   const std::vector<std::string> &h1list,
+											   const arma::mat &rotmatrix,
+											   arma::sp_cx_mat &H0,
+											   arma::sp_cx_mat &H1,
+											   arma::sp_cx_mat &H) const
+	{
+		// Powder magnetic-resonance tasks use one crystallite orientation for
+		// all tensor-aware terms. H0 is secularized in the static-field frame;
+		// H1 is then rotated with the same molecular-to-lab orientation so the
+		// microwave interaction does not silently live in a different frame.
+		if (!this->BaseHamiltonianRotated_SA(h0list, rotmatrix, H0))
+			return false;
+
+		if (!this->BaseHamiltonianRotatedZYZ(h1list, rotmatrix, H1))
+			return false;
+
+		H = H0 + H1;
 		return true;
 	}
 

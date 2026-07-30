@@ -6,6 +6,33 @@ https://molspin.eu/
 
 NOTE THAT THIS REPOSITORY IS IN ACTIVE DEVELOPMENT! PRODUCTION VERSIONS ARE AVAILABLE AT THE MOLSPIN WEBSITE!
 
+## Building
+
+MolSpin requires a C++17 compiler, CMake 3.14 or newer, OpenMP, and Armadillo
+8.500 or newer. Armadillo determines the BLAS/LAPACK backend; MolSpin does not
+require OpenBLAS specifically.
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build
+ctest --test-dir build --output-on-failure
+```
+
+For a self-contained Conda build:
+
+```bash
+conda create -n molspin -c conda-forge --strict-channel-priority \
+  cxx-compiler cmake ninja armadillo "libblas=*=*openblas"
+conda activate molspin
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build
+ctest --test-dir build --output-on-failure
+```
+
+Use a fresh build directory after changing compiler or Armadillo installation.
+For reproducible binaries intended for other machines, configure with
+`-DENABLE_NATIVE_ARCH=OFF`.
+
 Join the Discord server:
 
 https://discord.gg/KXNKPBgchM
@@ -51,6 +78,5 @@ PLEASE CITE THE FOLLOWING PAPER WHEN USING MOLSPIN.
 		</td>
 	</tr>
 </table>
-
 
 

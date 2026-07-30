@@ -1968,13 +1968,13 @@ namespace RunSection
 			arma::cx_vec rhovec = rho0vec;
 
 			// Read a pulse sequence from the input
-			std::vector<std::tuple<std::string, double>> Pulsesequence;
-			if (this->Properties()->GetPulseSequence("pulsesequence", Pulsesequence))
+			std::vector<std::tuple<std::string, double>> pulseSequence;
+			if (this->Properties()->GetPulseSequence("pulsesequence", pulseSequence))
 			{
-				this->Log() << "Pulsesequence" << std::endl;
+				this->Log() << "Pulse sequence" << std::endl;
 
 				// Loop through all pulse sequences
-				for (const auto &seq : Pulsesequence)
+				for (const auto &seq : pulseSequence)
 				{
 					// Write which pulse in pulsesequence is calculating now
 					this->Log() << std::get<0>(seq) << ", " << std::get<1>(seq) << std::endl;
@@ -3108,7 +3108,7 @@ namespace RunSection
 		return true;
 	}
 
-	bool TaskStaticSSSpectraNakajimaZwanzig::ProjectAndPrintOutputLine(auto &_i, SpinAPI::SpinSpace &_space, const ProjectionCache &_cache, arma::cx_vec &_rhovec, double &_printedtime, double _timestep, unsigned int &_n, bool &_cidsp, std::ostream &_datastream, std::ostream &_logstream)
+	bool TaskStaticSSSpectraNakajimaZwanzig::ProjectAndPrintOutputLine(SystemIterator &_i, SpinAPI::SpinSpace &_space, const ProjectionCache &_cache, arma::cx_vec &_rhovec, double &_printedtime, double _timestep, unsigned int &_n, bool &_cidsp, std::ostream &_datastream, std::ostream &_logstream)
 	{
 		(void)_i;
 
@@ -3170,7 +3170,7 @@ namespace RunSection
 		return true;
 	}
 
-	bool TaskStaticSSSpectraNakajimaZwanzig::ProjectAndPrintOutputLineInf(auto &_i, SpinAPI::SpinSpace &_space, const ProjectionCache &_cache, arma::cx_vec &_rhovec, double &_printedtime, double _timestep, bool &_cidsp, std::ostream &_datastream, std::ostream &_logstream)
+	bool TaskStaticSSSpectraNakajimaZwanzig::ProjectAndPrintOutputLineInf(SystemIterator &_i, SpinAPI::SpinSpace &_space, const ProjectionCache &_cache, arma::cx_vec &_rhovec, double &_printedtime, double _timestep, bool &_cidsp, std::ostream &_datastream, std::ostream &_logstream)
 	{
 		(void)_i;
 		(void)_printedtime;

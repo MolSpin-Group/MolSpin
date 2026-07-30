@@ -28,6 +28,7 @@ namespace MSDParser
 		Operator,
 		State,
 		Pulse,
+		PulseSequence,
 		SubSystem,
 		Output,
 		Task,

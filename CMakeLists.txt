@@ -1,36 +1,57 @@
 ﻿# Set cmake version requirement
 cmake_minimum_required(VERSION 3.14)
 
-project(MolSpin)
+project(MolSpin LANGUAGES CXX)
 
-# Search for OpenMP
-find_package(OpenMP)
-if (OPENMP_FOUND)
-    set (CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${OpenMP_C_FLAGS}")
-    set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
-    set (CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${OpenMP_EXE_LINKER_FLAGS}")
+option(ENABLE_NATIVE_ARCH "Compile with -march=native when supported." ON)
+option(ENABLE_LOOP_UNROLLING "Compile with -funroll-loops when supported." ON)
+
+# MolSpin uses the Armadillo wrapper API, so the BLAS/LAPACK implementation is
+# selected by the Armadillo installation. Do not link a particular backend
+# here: that would break valid MKL, BLIS, Accelerate, and Conda installations.
+find_package(Armadillo 8.500 REQUIRED)
+find_package(OpenMP REQUIRED COMPONENTS CXX)
+
+# FindArmadillo in older CMake versions only exports variables. Normalize that
+# interface to a target so include paths and libraries propagate together.
+if (NOT TARGET Armadillo::Armadillo)
+    add_library(Armadillo::Armadillo INTERFACE IMPORTED)
+    set_target_properties(Armadillo::Armadillo PROPERTIES
+        INTERFACE_INCLUDE_DIRECTORIES "${ARMADILLO_INCLUDE_DIRS}"
+        INTERFACE_LINK_LIBRARIES "${ARMADILLO_LIBRARIES}"
+    )
 endif()
 
-find_package(Armadillo)
-include_directories(${ARMADILLO_INCLUDE_DIRS})
-
-option(LINK_OPENBLAS "Whether OpenBLAS should be linked." ON)
-option(LINK_LAPACK "Whether LAPACK should be linked." ON)
-option(ENABLE_OPENMP "Whether OpenMP should be available from the MolSpin code." ON)
-
-# Compiler options
+# Compiler options shared by all MolSpin targets.
 set(CMAKE_CXX_STANDARD 17)
-add_compile_options(-O3 -g -Wall -march=native -funroll-loops -fopenmp -DARMA_DONT_PRINT_FAST_MATH_WARNING)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
+include(CheckCXXCompilerFlag)
+check_cxx_compiler_flag("-march=native" MOLSPIN_HAS_MARCH_NATIVE)
+check_cxx_compiler_flag("-funroll-loops" MOLSPIN_HAS_LOOP_UNROLLING)
+
+function(molspin_configure_target target)
+    target_compile_definitions(${target} PRIVATE
+        ARMA_DONT_PRINT_FAST_MATH_WARNING
+    )
+
+    if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(${target} PRIVATE -Wall)
+        if (ENABLE_NATIVE_ARCH AND MOLSPIN_HAS_MARCH_NATIVE)
+            target_compile_options(${target} PRIVATE -march=native)
+        endif()
+        if (ENABLE_LOOP_UNROLLING AND MOLSPIN_HAS_LOOP_UNROLLING)
+            target_compile_options(${target} PRIVATE -funroll-loops)
+        endif()
+    endif()
+endfunction()
 
 # Paths
 set(PATH_SOURCE_SPINAPI "${CMAKE_CURRENT_SOURCE_DIR}/SpinAPI")
 set(PATH_SOURCE_MSDPARSER "${CMAKE_CURRENT_SOURCE_DIR}/MSDParser")
 set(PATH_SOURCE_RUNSECTION "${CMAKE_CURRENT_SOURCE_DIR}/RunSection")
 set(PATH_SOURCE_TESTS "${CMAKE_CURRENT_SOURCE_DIR}/Tests")
-
-# Include directories
-include_directories(${PATH_SOURCE_SPINAPI} ${PATH_SOURCE_MSDPARSER} ${PATH_SOURCE_RUNSECTION} ${PATH_SOURCE_TESTS})
-include_directories("${PATH_SOURCE_RUNSECTION}/Tasks" "${PATH_SOURCE_RUNSECTION}/Tasks/Custom" "${PATH_SOURCE_RUNSECTION}/Actions")
 
 # --------------------------------------------------------------------------
 # SpinAPI Module
@@ -49,6 +70,8 @@ set(SOURCES_SPINAPI
         ${PATH_SOURCE_SPINAPI}/Trajectory.cpp
         ${PATH_SOURCE_SPINAPI}/SubSystem.cpp
         ${PATH_SOURCE_SPINAPI}/Function.cpp
+        ${PATH_SOURCE_SPINAPI}/PulseSequence.cpp
+        ${PATH_SOURCE_SPINAPI}/PowderGrid.cpp
 )
 
 # --------------------------------------------------------------------------
@@ -70,6 +93,7 @@ set(SOURCES_RUNSECTION
         ${PATH_SOURCE_RUNSECTION}/Settings.cpp
         ${PATH_SOURCE_RUNSECTION}/OutputHandler.cpp
         ${PATH_SOURCE_RUNSECTION}/Utility.cpp
+        ${PATH_SOURCE_RUNSECTION}/CubicSpline.cpp
 )
 
 # --------------------------------------------------------------------------
@@ -148,11 +172,30 @@ set(SOURCES_TESTS
 # --------------------------------------------------------------------------
 # Core functionality libraries
 add_library(molspin_core STATIC ${SOURCES_SPINAPI} ${SOURCES_MSDPARSER} ${SOURCES_RUNSECTION} ${SOURCES_RUNSECTION_TASKS} ${SOURCES_RUNSECTION_ACTIONS})
+target_include_directories(molspin_core PUBLIC
+    ${PATH_SOURCE_SPINAPI}
+    ${PATH_SOURCE_MSDPARSER}
+    ${PATH_SOURCE_RUNSECTION}
+    ${PATH_SOURCE_RUNSECTION}/Tasks
+    ${PATH_SOURCE_RUNSECTION}/Tasks/Custom
+    ${PATH_SOURCE_RUNSECTION}/Actions
+)
+target_link_libraries(molspin_core PUBLIC
+    Armadillo::Armadillo
+    OpenMP::OpenMP_CXX
+)
+molspin_configure_target(molspin_core)
 
 # MolSpin application
 add_executable(molspin ${CMAKE_CURRENT_SOURCE_DIR}/main.cpp)
-target_link_libraries(molspin molspin_core ${ARMADILLO_LIBRARIES} -lopenblas -llapack -fopenmp)
+target_link_libraries(molspin PRIVATE molspin_core ${CMAKE_DL_LIBS})
+molspin_configure_target(molspin)
 
 # Unit tests
 add_executable(molspintest ${SOURCES_TESTS})
-target_link_libraries(molspintest molspin_core ${ARMADILLO_LIBRARIES} -lopenblas -llapack -fopenmp)
+target_include_directories(molspintest PRIVATE ${PATH_SOURCE_TESTS})
+target_link_libraries(molspintest PRIVATE molspin_core)
+molspin_configure_target(molspintest)
+
+enable_testing()
+add_test(NAME molspintest COMMAND molspintest)

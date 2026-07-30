@@ -52,15 +52,31 @@ bool test_utility_block_solver()
 	result = RunSection::ThomasBlockSolver(A,b,3);
 	result2 = arma::solve(arma::cx_mat(A), b);
 
-	double diff = abs(norm(result) - norm(result2));
-    if (diff < 1e-10)
-	    return true;
-    return false;
+	double diff = arma::norm(result - result2);
+	if (diff < 1e-10)
+		return true;
+	return false;
 }
 
+bool test_utility_get_hamiltonian_without_semiclassical_samples()
+{
+	arma::sp_cx_mat hamiltonian(2, 2);
+	hamiltonian(0, 0) = 1.0;
+	hamiltonian(1, 1) = -1.0;
+
+	RunSection::SCData data = RunSection::GetHamiltonian(hamiltonian, 2);
+	return data.BlockSize == 2 &&
+		   data.samples.empty() &&
+		   data.SamplesMatrix.n_rows == 0 &&
+		   data.SamplesMatrix.n_cols == 2 &&
+		   arma::norm(data.H - hamiltonian, "fro") < 1e-14;
+}
 
 void AddUtiltiyTests(std::vector<test_case> &_cases)
 {
 	_cases.push_back(test_case("Utility test 1", test_utility_block_solver));
+	_cases.push_back(test_case(
+		"Utility GetHamiltonian without semiclassical samples",
+		test_utility_get_hamiltonian_without_semiclassical_samples));
 }
 //////////////////////////////////////////////////////////////////////////////

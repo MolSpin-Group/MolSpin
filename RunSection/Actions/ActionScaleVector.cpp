@@ -34,9 +34,13 @@ namespace RunSection
 
 		// Retrieve the vector we want to scale
 		arma::vec vec = actionVector->Get();
+		if (!vec.is_finite())
+			return false;
 
 		// Scale the vector
 		vec *= this->Value();
+		if (!vec.is_finite())
+			return false;
 
 		// Set the new vector
 		return this->actionVector->Set(vec);
@@ -64,6 +68,12 @@ namespace RunSection
 		if (this->actionVector->IsReadonly())
 		{
 			std::cout << "ERROR: Readonly ActionVector \"" << str << "\" specified for the ScaleVector action \"" << this->Name() << "\"! Cannot act on this vector!" << std::endl;
+			return false;
+		}
+
+		if (!this->actionVector->Get().is_finite())
+		{
+			std::cout << "ERROR: ActionVector \"" << str << "\" has non-finite components!" << std::endl;
 			return false;
 		}
 

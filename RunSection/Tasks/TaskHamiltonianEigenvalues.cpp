@@ -21,7 +21,8 @@ namespace RunSection
 	TaskHamiltonianEigenvalues::TaskHamiltonianEigenvalues(const MSDParser::ObjectParser &_parser, const RunSection &_runsection) : BasicTask(_parser, _runsection), printEigenvectors(false),
 																																	printHamiltonian(false), useSuperspace(false), separateRealImag(false),
 																																	initialTime(0.0), totalTime(0.0), timestep(1),
-																																	resonanceFrequencies(false), referenceStates(), transitionSpins()
+																																	resonanceFrequencies(false), referenceStates(), transitionSpins(),
+																																	useMixing(false), useReferenceStates(true),useEigenstates(false),degeneracyThreshold(1e-4),hasPreviousStep(false)
 	{
 	}
 
@@ -86,7 +87,128 @@ namespace RunSection
 				this->Log() << "Starting diagonalization..." << std::endl;
 				arma::eig_sym(lambda, V, H);
 				this->Log() << "Diagonalization done! Eigenvalues: " << lambda.n_elem << ", eigenvectors: " << V.n_cols << std::endl;
+				
+				auto mixing_probabilities = [&](){
+					std::vector<double> mixing_values = {};
+					if(this->useReferenceStates && !this->referenceStates.empty())
+					{
+						std::vector<arma::cx_mat> R_mats;
+    					std::vector<std::string> R_names;
+						for (const auto &refPair : this->referenceStates)
+    					{
+    					    if (refPair.second != (*i)->Name()) continue;
+    					    arma::cx_mat R;
+    					    if (space.GetState(refPair.first, R))
+    					    {
+    					        R_mats.push_back(R);
+    					        R_names.push_back(refPair.first->Name());
+    					    }
+    					}
 
+						size_t n_ref = R_mats.size();
+						arma::cx_mat H_ref(n_ref, n_ref, arma::fill::zeros);
+						for (size_t j = 0; j < n_ref; j++)
+						{
+							for (size_t k = 0; k < n_ref; k++)
+							{
+								arma::cx_double coupling = 0.0;
+								coupling = arma::trace(R_mats[j] * H * R_mats[k] * H);
+								H_ref(j,k) = coupling;
+							}
+						}
+						for (size_t j = 0; j < n_ref; j++)
+						{
+							for (size_t k = 0; k < n_ref; k++)
+							{
+								if(k <= j)
+								{
+									mixing_values.push_back(0.0);
+									continue;
+								}
+								double E_j = std::real(H_ref(j,j));
+								double E_k = std::real(H_ref(k,k));
+								double dE = std::abs(E_j - E_k);
+								double V_jk_sqaured = std::real(H_ref(j,k));
+
+								///double V_jk_sqaured = std::norm(V_jk);
+								double splitting = std::sqrt(dE * dE + 4.0 * V_jk_sqaured); //
+								double mixing_frac = 0.0;
+								if (splitting > this->degeneracyThreshold)
+								{
+									mixing_frac = 0.5 * (1.0 - (dE / splitting));
+								}
+
+								mixing_values.push_back(mixing_frac);
+
+							}
+						}
+					}
+					else if(this->useEigenstates && this->hasPreviousStep)
+					{
+						arma::cx_mat S = V_prev.t() * V;
+						for (size_t j = 0; j < lambda.n_elem; ++j)
+    					{
+    					    for (size_t k = 0; k < lambda.n_elem; ++k)
+    					    {
+								if(k <= j)
+								{
+									mixing_values.push_back(0.0);
+									continue;
+								}
+    					        double overlap_prob = std::norm(S(j, k));
+								mixing_values.push_back(overlap_prob);
+							}
+						}
+					}
+					else if(this->useEigenstates && !this->hasPreviousStep && this->totalTime != this->initialTime)
+					{
+						for (size_t j = 0; j < lambda.n_elem; ++j)
+            				for (size_t k = 0; k < lambda.n_elem; ++k)
+                				mixing_values.push_back(0.0);
+								//continue;
+					}
+					else if(this->useEigenstates && this->totalTime == this->initialTime)
+					{
+						for (size_t j = 0; j < lambda.n_elem; ++j)
+        				{
+        				    for (size_t k = 0; k < lambda.n_elem; ++k)
+        				    {
+								if(k <= j)
+								{
+									mixing_values.push_back(0.0);
+									continue;
+								}
+        				        double dE = std::abs(lambda[k] - lambda[j]);
+								arma::cx_double V_jk = arma::as_scalar(V.col(j).t() * H * V.col(k));
+								double splitting = std::sqrt(dE * dE + 4.0 * std::norm(V_jk));
+								double mixing_frac = 0.0;
+								if (splitting > degeneracyThreshold)
+            					{
+            					    mixing_frac = 0.5 * (1.0 - (dE / splitting));
+            					}
+								mixing_values.push_back(mixing_frac);
+        				    }
+        				}
+					}
+					//we have the top triangle, we need to map it to the lower triangle
+					const size_t rows = lambda.n_elem;
+					for(size_t j = 0; j < rows; j++)
+					{
+						for (size_t k = 0; k < j; k++)
+						{
+							const size_t c_index = j * rows + k;
+							const size_t t_index = k * rows + j;
+							mixing_values[c_index] = mixing_values[t_index];
+						}
+					}
+					return mixing_values;
+				};
+				
+				std::vector<double> mixing_vals = {};
+				if(useMixing)
+				{
+					mixing_vals = mixing_probabilities();
+				}
 				// -----------------------------------------------------
 				// Write the main results to the data file
 				// -----------------------------------------------------
@@ -98,24 +220,27 @@ namespace RunSection
 				for (auto j = this->referenceStates.cbegin(); j != this->referenceStates.cend(); j++)
 				{
 					// Check whether the current state is relevant for the current spin system
-					if (!(*i)->Contains(*j))
+					if(j->second != (*i)->Name())
+						continue;;
+					
+					if (!(*i)->Contains(j->first))
 					{
-						this->Log() << "Skipping state " << (*j)->Name() << " as it does not belong to current spin system." << std::endl;
+						this->Log() << "Skipping state " << (j->first)->Name() << " as it does not belong to current spin system." << std::endl;
 						continue;
 					}
 
 					// Get a projection operator onto the state
 					arma::cx_mat R;
-					if (!space.GetState((*j), R))
+					if (!space.GetState((j->first), R))
 					{
-						this->Log() << "Failed to obtain projection matrix onto the reference state \"" << (*j)->Name() << "\" of SpinSystem \"" << (*i)->Name() << "\"." << std::endl;
+						this->Log() << "Failed to obtain projection matrix onto the reference state \"" << (j->first)->Name() << "\" of SpinSystem \"" << (*i)->Name() << "\"." << std::endl;
 						continue;
 					}
 
 					// Make sure the dimensions fit
 					if (R.n_rows != V.n_rows || R.n_cols != V.n_cols)
 					{
-						this->Log() << "Warning: Problem with the reference state " << (*j)->Name() << ". Reference state ignored." << std::endl;
+						this->Log() << "Warning: Problem with the reference state " << (j->first)->Name() << ". Reference state ignored." << std::endl;
 						continue;
 					}
 
@@ -125,6 +250,11 @@ namespace RunSection
 					// Print the results
 					for (auto refproj = VRVProj.cbegin(); refproj != VRVProj.cend(); refproj++)
 						this->Data() << (*refproj) << " ";
+				}
+
+				for(auto i = mixing_vals.begin(); i < mixing_vals.end(); i++)
+				{
+					this->Data() << (*i) << " ";
 				}
 				// -----------------------------------------------------
 				// END of main results
@@ -297,9 +427,57 @@ namespace RunSection
 				_stream << (*i)->Name() << ".H.lambda" << j << " ";
 
 			// Write headers for the reference states
+			//for (auto refstate = this->referenceStates.cbegin(); refstate != this->referenceStates.cend(); refstate++)
+			//	for (unsigned int j = 0; j < space.SpaceDimensions(); j++)
+			//		_stream << (*i)->Name() << ".H.ref" << j << "(" << (*refstate).first->Name() << ")" << " ";
 			for (auto refstate = this->referenceStates.cbegin(); refstate != this->referenceStates.cend(); refstate++)
+			{
+				if(refstate->second != (*i)->Name())
+					continue;
+
 				for (unsigned int j = 0; j < space.SpaceDimensions(); j++)
-					_stream << (*i)->Name() << ".H.ref" << j << "(" << (*refstate)->Name() << ")" << " ";
+				{
+					_stream << (*i)->Name() << ".H.ref" << j << "(" << (*refstate).first->Name() << ")" << " ";
+				}
+			}
+
+			if(!useMixing)
+			{
+				continue;
+			}
+			if(this->useReferenceStates)
+			{
+				std::vector<std::string> validRefNames;
+            	for (auto refstate = this->referenceStates.cbegin(); refstate != this->referenceStates.cend(); refstate++)
+            	{
+            	    if (refstate->second == (*i)->Name())
+            	    {
+            	        validRefNames.push_back(refstate->first->Name());
+            	    }
+				}
+				for (size_t j = 0; j < validRefNames.size(); ++j)
+            	{
+            		for (size_t k = 0; k < validRefNames.size(); ++k)
+            		{
+            		    _stream << (*i)->Name() << ".RefMix(" 
+            		            << validRefNames[j] << "," 
+            		            << validRefNames[k] << ") ";
+            		}
+            	}
+            	
+			}
+			else if (this->useEigenstates)
+        	{
+            	size_t dim = space.SpaceDimensions();
+            	for (size_t j = 0; j < dim; ++j)
+            	{
+                	for (size_t k = 0; k < dim; ++k)
+                	{
+                	    _stream << (*i)->Name() << ".EigenMix(" 
+                	            << j << "," << k << ") ";
+                	}
+            	}
+			}
 		}
 		_stream << std::endl;
 	}
@@ -391,27 +569,63 @@ namespace RunSection
 			this->Log(MessageType_Details) << "Task " << this->Name() << ": Timestep set to " << this->timestep << "." << std::endl;
 		}
 
+
+		if(this->Properties()->Get("statemixing", this->useMixing))
+		{
+			if(!this->Properties()->Get("userefstates", this->useReferenceStates))
+			{
+				this->Properties()->Get("useeigenstates", this->useEigenstates);
+			}
+
+			this->useEigenstates = !this->useReferenceStates;
+		}
+
 		// Get a reference state (to get projections onto eigenstates), if one is specified
 		std::vector<std::string> strs;
 		if (this->Properties()->GetList("refstates", strs) || this->Properties()->GetList("referencestates", strs))
 		{
 			// Loop through the list of states that was specified
 			auto systems = this->SpinSystems();
+
+			//if state string has a identifier in front of it e.g. GS.TO go the the GS spin system
+			//otherwise assume the same state can be found in multiple spin systems 
+
+			auto spinsystem = [&](std::string in, char delimiter){
+				std::string::const_iterator start = in.begin();
+				std::string::const_iterator end = in.end();
+				std::string::const_iterator next = std::find(start,end,delimiter);
+				if(next != end) {
+					return std::make_tuple(std::string(start,next),std::string(next+1,end),1);
+				}
+				else
+					return std::make_tuple(in,std::string(""),0);
+			};
+
 			for (const std::string &s : strs)
 			{
 				SpinAPI::state_ptr state = nullptr;
+				auto[ss,state_str,valid] = spinsystem(s,'.');
+				if(!valid)
+				{
+					state_str = s;
+				}
 
 				// Loop through the spin systems until a state is found
 				for (auto i = systems.cbegin(); i != systems.cend(); i++)
 				{
+					if(valid)
+					{
+						if((*i)->Name() != ss)
+							continue;
+					}
 					// Attemp to find the state in the spin system
-					state = (*i)->states_find(s);
+					state = (*i)->states_find(state_str);
 					if (state != nullptr)
 					{
-						// A state was found, no need to look in the other spin systems
-						this->referenceStates.push_back(state);
+						// A state was found, no need to look in the other spin systems - ignore this, see above comment
+						this->referenceStates.push_back({state,(*i)->Name()});
 						this->Log(MessageType_Important | MessageType_Warning) << "Task " << this->Name() << ": Found state " << s << " in spin system " << (*i)->Name() << "!" << std::endl;
-						break;
+						//break;
 					}
 				}
 

@@ -6,6 +6,7 @@
 // See LICENSE.txt for license information.
 /////////////////////////////////////////////////////////////////////////
 #include <iostream>
+#include <cmath>
 #include "ObjectParser.h"
 #include "Action.h"
 
@@ -15,7 +16,9 @@ namespace RunSection
 	// Action Constructors and Destructor
 	// -----------------------------------------------------
 	Action::Action(const MSDParser::ObjectParser &_properties, const std::map<std::string, ActionScalar> &_scalars, const std::map<std::string, ActionVector> &_vectors)
-		: properties(std::make_shared<MSDParser::ObjectParser>(_properties)), scalars(_scalars), vectors(_vectors), isValid(false), value(1.0), first(1), last(0), period(1)
+		: properties(std::make_shared<MSDParser::ObjectParser>(_properties)), scalars(_scalars), vectors(_vectors), isValid(false), period(1), m_loop(false),
+		  first(1), last(0), value(1.0), m_ActionMode(Action::MODE::defualt), m_targetScalar(0.0), m_targetVec(),
+		  m_startScaler(0.0), m_startVec(), m_ValidLineSpace(false), m_num_steps(0)
 	{
 		this->properties->Get("value", this->value);
 		this->properties->Get("first", this->first);
@@ -33,17 +36,7 @@ namespace RunSection
 		//	this->m_Parallelize = false;
 		// }
 
-		std::string loop;
-		this->properties->Get("loop", loop);
-
-		if (loop.compare("true") == 0)
-		{
-			this->m_loop = true;
-		}
-		else
-		{
-			this->m_loop = false;
-		}
+		this->properties->Get("loop", this->m_loop);
 	}
 
 	Action::~Action()
@@ -134,9 +127,15 @@ namespace RunSection
 
 		if (m_loop)
 		{
+			if (_currentStep < this->first)
+			{
+				return;
+			}
+
 			if (_currentStep == this->last + 1 && this->last != 0)
 			{
-				this->Reset();
+				if (!this->Reset())
+					std::cerr << "ERROR: Failed to reset looping action \"" << this->Name() << "\"!" << std::endl;
 				// std::cout << "resetting" << std::endl; //current code assumes starting from 0, commented code assumes startitng from 1
 				int gap = this->last - (this->first - 1); // this-last - this-first //this-last - this-first
 				// std::cout << "resetting" << std::endl; //current code assumes starting from 1
@@ -146,11 +145,6 @@ namespace RunSection
 			}
 
 			if (((_currentStep - this->first) % this->period) != 0)
-			{
-				return;
-			}
-
-			if (_currentStep < this->first)
 			{
 				return;
 			}
@@ -164,6 +158,18 @@ namespace RunSection
 	// Prepares the action and checks whether it is valid
 	bool Action::Validate()
 	{
+		if (this->period == 0)
+		{
+			std::cout << "ERROR: Action \"" << this->Name() << "\" has period=0; the period must be at least 1." << std::endl;
+			return false;
+		}
+
+		if (!std::isfinite(this->value))
+		{
+			std::cout << "ERROR: Action \"" << this->Name() << "\" has a non-finite value." << std::endl;
+			return false;
+		}
+
 		// No need to create an action object if it is never used
 		if (this->first > this->last && this->last != 0)
 			return false;

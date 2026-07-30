@@ -16,6 +16,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <algorithm>
+#include <limits>
 
 #include "Function.h"
 namespace SpinAPI
@@ -156,6 +157,7 @@ namespace SpinAPI
 			std::stack<std::complex<double>> ValueStack;
 			std::complex<double> Val1(0);
 			std::complex<double> Val2(0);
+			const std::complex<double> invalid(std::numeric_limits<double>::quiet_NaN(), std::numeric_limits<double>::quiet_NaN());
 			std::vector<char> chr = {'+', '-', '*', '^', '/', '(', ')'};
 			bool Float = false;
 			for (unsigned int i = 0; i < PostFixEQ.size();)
@@ -171,10 +173,12 @@ namespace SpinAPI
 					}
 					if (Float)
 					{
-						while ((std::isdigit(c) || c == '.' || c == ',') && std::find(chr.begin(), chr.end(), c) == chr.end())
+						while (i < PostFixEQ.size() && (std::isdigit(c) || c == '.' || c == ',') && std::find(chr.begin(), chr.end(), c) == chr.end())
 						{
 							VarName += c;
 							i++;
+							if (i >= PostFixEQ.size())
+								break;
 							c = PostFixEQ[i];
 						}
 						i--;
@@ -204,6 +208,8 @@ namespace SpinAPI
 							{
 								VarName += c;
 								i++;
+								if (i >= PostFixEQ.size())
+									break;
 								c = PostFixEQ[i];
 							}
 						}
@@ -213,6 +219,8 @@ namespace SpinAPI
 				}
 				else
 				{
+					if (ValueStack.empty())
+						return invalid;
 					Val2 = ValueStack.top();
 					ValueStack.pop();
 					if (ValueStack.size() > 0)
@@ -250,6 +258,8 @@ namespace SpinAPI
 				}
 				i++;
 			}
+			if (ValueStack.empty())
+				return invalid;
 			return ValueStack.top();
 		};
 		index = 0;
@@ -420,6 +430,9 @@ namespace SpinAPI
 	std::shared_ptr<Function> FunctionParser(std::string &func, std::string &var, int FuncStartNum, bool ResetComplexNum)
 	{
 		std::string FunctionString = var;
+		if (FunctionString.empty())
+			return nullptr;
+
 		std::vector<char> SpecialCharacters = {'+', '-', '*', '/', '^', '(', ')'};
 		std::vector<char> IgnoreCharacters = {'.', 'i', ',', 'j'}; // characters to ignore as part of text i.e 3+4ix gets read as 3 + (4i * x) not 3 + 4 * ix
 		std::vector<std::string> MathematicalFunctionsList;
@@ -558,7 +571,8 @@ namespace SpinAPI
 			buffer += (*c);
 			FunctionString2 += (*c);
 
-			if (std::find(MathematicalFunctionsList.begin(), MathematicalFunctionsList.end(), buffer) != MathematicalFunctionsList.end() && (*(c + 1)) == '(')
+			if (std::find(MathematicalFunctionsList.begin(), MathematicalFunctionsList.end(), buffer) != MathematicalFunctionsList.end() &&
+				(c + 1) != FunctionString.end() && (*(c + 1)) == '(')
 			{
 				InternalFunction = true;
 				funcstring.first = buffer;
@@ -878,6 +892,10 @@ namespace SpinAPI
 				buffer += (*c);
 			}
 		}
+		if (variable && !buffer.empty() && FunctionString3.find(buffer) != std::string::npos)
+		{
+			variables.push_back(buffer);
+		}
 
 		// auto ReturnType = [&s_MathmaticalFunctions](std::string MathematicalFunction) {
 		// 	std::vector<std::string> vd;
@@ -975,6 +993,11 @@ namespace SpinAPI
 		{
 			_func = std::make_shared<Function>(MathematicalFunctions::expcx, Function::ReturnType::cd, FunctionName, vardef);
 		}
+		else
+		{
+			return nullptr;
+		}
+
 		_func->SetFunctionString(FunctionName + "(" + var + ")");
 		_func->SetPostFix(PostFix);
 

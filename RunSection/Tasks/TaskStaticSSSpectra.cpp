@@ -293,13 +293,13 @@ namespace RunSection
 			arma::cx_vec rhovec = rho0vec;
 
 			// Read a pulse sequence from the input
-			std::vector<std::tuple<std::string, double>> Pulsesequence;
-			if (this->Properties()->GetPulseSequence("pulsesequence", Pulsesequence))
+			std::vector<std::tuple<std::string, double>> pulseSequence;
+			if (this->Properties()->GetPulseSequence("pulsesequence", pulseSequence))
 			{
-				this->Log() << "Pulsesequence" << std::endl;
+				this->Log() << "Pulse sequence" << std::endl;
 
 				// Loop through all pulse sequences
-				for (const auto &seq : Pulsesequence)
+				for (const auto &seq : pulseSequence)
 				{
 					// Write which pulse in pulsesequence is calculating now
 					this->Log() << std::get<0>(seq) << ", " << std::get<1>(seq) << std::endl;
@@ -446,7 +446,7 @@ namespace RunSection
 								else
 									firststep = 1;
 
-								// Here we don't save tupple anymore, because the A_sp needs to be constructed on every step
+								// The Liouvillian is rebuilt on every step, so no cached tuple is kept here.
 
 								// save the density on the current step
 								arma::cx_vec tmp_rho = rhovec;
@@ -551,7 +551,7 @@ namespace RunSection
 
 								if (A.n_rows <= 64) // for the systems not bigger than two electrons and one spin 1/2 nuclei
 								{
-									// Here we don't save tupple anymore, because the A_sp  and pulse need to be constructed on every step
+									// The Liouvillian and pulse operator both depend on the current step.
 									unsigned int steps = static_cast<unsigned int>(std::abs((*pulse)->Pulsetime() / (*pulse)->Timestep()));
 									for (unsigned int n = firststep; n <= steps; n++)
 									{
@@ -1232,7 +1232,7 @@ namespace RunSection
 		return true;
 	}
 
-	bool TaskStaticSSSpectra::ProjectAndPrintOutputLine(auto &_i, SpinAPI::SpinSpace &_space, const ProjectionCache &_cache, arma::cx_vec &_rhovec, double &_printedtime, double _timestep, unsigned int &_n, bool &_cidsp, std::ostream &_datastream, std::ostream &_logstream)
+	bool TaskStaticSSSpectra::ProjectAndPrintOutputLine(SystemIterator &_i, SpinAPI::SpinSpace &_space, const ProjectionCache &_cache, arma::cx_vec &_rhovec, double &_printedtime, double _timestep, unsigned int &_n, bool &_cidsp, std::ostream &_datastream, std::ostream &_logstream)
 	{
 		(void)_i;
 
@@ -1300,7 +1300,7 @@ namespace RunSection
 		return true;
 	}
 
-	bool TaskStaticSSSpectra::ProjectAndPrintOutputLineInf(auto &_i, SpinAPI::SpinSpace &_space, const ProjectionCache &_cache, arma::cx_vec &_rhovec, double &_printedtime, double _timestep, bool &_cidsp, std::ostream &_datastream, std::ostream &_logstream)
+	bool TaskStaticSSSpectra::ProjectAndPrintOutputLineInf(SystemIterator &_i, SpinAPI::SpinSpace &_space, const ProjectionCache &_cache, arma::cx_vec &_rhovec, double &_printedtime, double _timestep, bool &_cidsp, std::ostream &_datastream, std::ostream &_logstream)
 	{
 		(void)_i;
 

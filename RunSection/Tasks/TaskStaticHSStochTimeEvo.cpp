@@ -345,6 +345,7 @@ namespace RunSection
 			double totaltime;
 			this->Properties()->Get("totaltime", totaltime);
 			ttotal = totaltime;
+			this->totaltime = totaltime;
 			double epsilon;
 			this->Properties()->Get("epsilon", epsilon);
 			if (ttotal > std::pow(2, -53))
@@ -405,8 +406,6 @@ namespace RunSection
 			int krylovsize = 0;
 			this->Properties()->Get("krylovsize", krylovsize);
 
-			double krylovtol = 0;
-			this->Properties()->Get("krylovtol", krylovtol);
 			if (propmethod == "autoexpm")
 			{
 				this->Log() << "Autoexpm is chosen as the propagation method." << std::endl;
@@ -434,32 +433,12 @@ namespace RunSection
 				if (krylovsize > 0)
 				{
 					this->Log() << "Krylov basis size is chosen as " << krylovsize << "." << std::endl;
-					if (krylovtol > 0)
-					{
-						this->Log() << "Tolerance for krylov propagation is chosen as " << krylovtol << "." << std::endl;
-					}
-					else
-					{
-						std::cout << "# ERROR: undefined tolerance for krylov subspace propagation! Using the default of 1e-16." << std::endl;
-						this->Log() << "Undefined tolerance for the krylov subspace. Using the default of 1e-16." << std::endl;
-						krylovtol = 1e-16;
-					}
 				}
 				else
 				{
 					std::cout << "# ERROR: undefined size of the krylov subspace! Using the default size of 16." << std::endl;
 					this->Log() << "Undefined size of the krylov subspace. Using the default size of 16." << std::endl;
 					krylovsize = 16;
-					if (krylovtol > 0)
-					{
-						this->Log() << "Tolerance for krylov propagation is chosen as " << krylovtol << "." << std::endl;
-					}
-					else
-					{
-						std::cout << "# ERROR: undefined tolerance for krylov subspace propagation! Using the default of 1e-16." << std::endl;
-						this->Log() << "Undefined tolerance for the krylov subspace. Using the default of 1e-16." << std::endl;
-						krylovtol = 1e-16;
-					}
 				}
 			}
 			else
@@ -537,200 +516,116 @@ namespace RunSection
 
 				// Propagation using krylov subspace method for matrix exponential
 			}
-			else if (propmethod == "krylov")
+			else if(propmethod == "krylov")
 			{
-				// Initialize time propagation placeholders
-				arma::mat ExptValues;
-				ExptValues.zeros(num_steps, num_transitions);
-				arma::vec time(num_steps);
-
-				// Symmetric matrix in the exponential
-				if (symmetric)
+				double InitialTimeStep = this->timestep;
+				double CurrentTime = 0;
+				SpinAPI::SpinSpace::PropParam prop_param = this->GetTimeAdaptiveProperties(InitialTimeStep);
+				std::vector<double> TimePoints;
+				std::vector<double> TimeSteps;
+				std::vector<std::vector<double>> ExptValues;
+				prop_param.TimePrefactor = -arma::cx_double(0.0, 1.0);
+				prop_param.UsePrefactor = true;
+				bool reset = true;
+				for(int itr = 0; itr < mc_samples; itr++)
 				{
-					// #pragma omp parallel for
-					for (int itr = 0; itr < mc_samples; itr++)
+					reset = true;
+					arma::cx_vec prop_state = B.col(itr);
+					if(itr == 0)
 					{
-						arma::cx_vec prop_state = B.col(itr);
-
-						// Set the current time
-						double current_time = 0;
-						time(0) = current_time;
-
-						// Calculate the expected values for each transition operator
-						for (int idx = 0; idx < num_transitions; idx++)
-						{
-							double result = std::exp(-kmin * current_time) * std::abs(arma::cdot(prop_state, Operators[idx] * prop_state));
-							ExptValues(0, idx) += result;
-						}
-
-						arma::cx_mat Hessen; // Upper Hessenberg matrix
-						Hessen.zeros(krylovsize, krylovsize);
-
-						arma::cx_mat KryBasis(InitialStateVector.n_rows * Z, krylovsize, arma::fill::zeros); // Orthogonal krylov subspace
-
-						KryBasis.col(0) = prop_state / norm(prop_state);
-
-						double h_mplusone_m;
-						space.LanczosProcess(H, prop_state, KryBasis, Hessen, krylovsize, h_mplusone_m);
-
-						arma::cx_colvec e1;
-						e1.zeros(krylovsize);
-						e1(0) = 1;
-						arma::cx_colvec ek;
-						ek.zeros(krylovsize);
-						ek(krylovsize - 1) = 1;
-
-						arma::cx_vec cx = arma::expmat(-arma::cx_double(0.0, 1.0) * Hessen * dt) * e1;
-
-						prop_state = norm(prop_state) * KryBasis * cx;
-
-						int k = 1;
-						int j = 0;
-
-						while (k < num_steps)
-						{
-							// Set the current time
-							current_time = k * dt;
-							time(k) = current_time;
-
-							// Calculate the expected values for each transition operator
-							for (int idx = 0; idx < num_transitions; idx++)
-							{
-								double result = std::exp(-kmin * current_time) * std::abs(arma::cdot(prop_state, Operators[idx] * prop_state));
-								ExptValues(k, idx) += result;
-							}
-
-							// Update Krylov Subspace if the tolerance is reached
-							if (h_mplusone_m * std::abs(arma::cdot(ek, cx)) > krylovtol)
-							{
-								// std::cout << "Restarted after: " << j << " iterations." <<  std::endl;
-								j = 0;
-
-								Hessen.zeros(krylovsize, krylovsize);
-								KryBasis.zeros(InitialStateVector.n_rows * Z, krylovsize);
-
-								KryBasis.col(0) = prop_state / norm(prop_state);
-								space.LanczosProcess(H, prop_state, KryBasis, Hessen, krylovsize, h_mplusone_m);
-								cx = arma::expmat(-arma::cx_double(0.0, 1.0) * Hessen * dt) * e1;
-
-								// Update the state using Krylov Subspace propagator
-								prop_state = norm(prop_state) * KryBasis * cx;
-							}
-							else
-							{
-								j = j + 1;
-								cx = arma::expmat(-arma::cx_double(0.0, 1.0) * Hessen * dt) * cx;
-
-								// Update B using Krylov Subspace propagator
-								prop_state = norm(prop_state) * KryBasis * cx;
-							}
-							k++;
-						}
+						this->timestep = InitialTimeStep;
 					}
-					ExptValues /= mc_samples;
-
-					for (int k = 0; k < num_steps; k++)
+					else
 					{
-						// Obtain results
-						this->Data() << this->RunSettings()->CurrentStep() << " ";
-						this->Data() << time(k) << " ";
-						this->WriteStandardOutput(this->Data());
-
-						for (int idx = 0; idx < num_transitions; idx++)
+						this->timestep = prop_param.GetNextTimePoint();
+					}
+					CurrentTime = 0;
+					int step = 0;
+					this->Log() << "Starting time evolution with timestep: " << this->timestep << ", total time: " << this->totaltime << ", minimum timestep: " << prop_param.min << ", maximum timestep: " << prop_param.max << std::endl;
+					while (CurrentTime <= this->totaltime)
+					{
+						//set the current time
+						if(ExptValues.size() < TimePoints.size() + 1)
 						{
-							this->Data() << " " << ExptValues(k, idx);
+							ExptValues.push_back(std::vector<double>(num_transitions, 0.0));
 						}
-						this->Data() << std::endl;
+						if(itr == 0)
+						{
+							TimePoints.push_back(CurrentTime);
+							//TimeSteps.push_back(this->timestep);
+						}
+						space.SetTime(CurrentTime);
+						SpinAPI::SpinSpace::TimePropReturnInfo r;
+
+						int idx = 0;
+						for(auto o = transitions.cbegin(); o != transitions.cend(); o++)
+						{
+							double expected_value = std::exp(-kmin * CurrentTime) * std::abs(arma::cdot(prop_state, Operators[idx] * prop_state));
+							ExptValues[step][idx] += expected_value / mc_samples;
+							idx++;
+						}
+
+						if(symmetric)
+						{
+							r = space.TimeAdaptiveKrylovSymm(H, prop_state, this->timestep, krylovsize, InitialStateVector.n_rows * Z, prop_param, reset);
+						}
+						else
+						{
+							r = space.TimeAdaptiveKrylovGeneral(H, prop_state, this->timestep, krylovsize, InitialStateVector.n_rows * Z, prop_param, reset);
+						}
+
+						double t = r.timestep;
+						bool a = r.step_accepted;
+
+						if(itr == 0)
+						{
+							TimeSteps.push_back(r.timestep_used);
+						}
+
+						if(itr == 0)
+						{
+							CurrentTime += (a == true) ? this->timestep : r.timestep_used;
+						}
+						else
+						{
+							CurrentTime += r.timestep_used;
+						}
+						this->timestep = t;
+						prop_state = r.result;
+						step++;
+						reset = false;
+					}
+					if(itr == 0)
+					{
+						TimePoints.push_back(CurrentTime);
+						ExptValues.push_back(std::vector<double>(num_transitions, 0.0));
+					}
+					prop_param.SetTimePoints = TimeSteps;
+					prop_param.UseSetTimePoints = true;
+					prop_param.ResetTrajectory();
+					B.col(itr) = prop_state;
+
+					int idx = 0;
+					for(auto o = transitions.cbegin(); o != transitions.cend(); o++)
+					{
+						double expected_value = std::exp(-kmin * CurrentTime) * std::abs(arma::cdot(prop_state, Operators[idx] * prop_state));
+						ExptValues[step][idx] += expected_value / mc_samples;
+						idx++;
 					}
 				}
-				// Non-symmetric matrix in the exponential
-				else
+				this->timestep = InitialTimeStep;
+				for (size_t k = 0; k < TimePoints.size(); k++)
 				{
-					// Include the recombination operator K
-					H = -(H * arma::cx_double(0.0, 1.0) + K);
+					// Obtain results
+					this->Data() << this->RunSettings()->CurrentStep() << " ";
+					this->Data() << TimePoints[k] << " ";
+					this->WriteStandardOutput(this->Data());
 
-					// #pragma omp parallel for
-					for (int itr = 0; itr < mc_samples; itr++)
+					for (int idx = 0; idx < num_transitions; idx++)
 					{
-						arma::cx_vec prop_state = B.col(itr);
-
-						// Set the current time
-						double current_time = 0;
-
-						time(0) = current_time;
-
-						// Calculate the expected values for each transition operator
-						for (int idx = 0; idx < num_transitions; idx++)
-						{
-							double result = std::abs(arma::cdot(prop_state, Operators[idx] * prop_state));
-							ExptValues(0, idx) += result;
-						}
-
-						arma::cx_mat Hessen; // Upper Hessenberg matrix
-						Hessen.zeros(krylovsize, krylovsize);
-
-						arma::cx_mat KryBasis(InitialStateVector.n_rows * Z, krylovsize, arma::fill::zeros); // Orthogonal krylov subspace
-
-						KryBasis.col(0) = prop_state / norm(prop_state);
-
-						double h_mplusone_m;
-						space.ArnoldiProcess(H, prop_state, KryBasis, Hessen, krylovsize, h_mplusone_m);
-
-						arma::cx_colvec e1;
-						e1.zeros(krylovsize);
-						e1(0) = 1;
-						arma::cx_colvec ek;
-						ek.zeros(krylovsize);
-						ek(krylovsize - 1) = 1;
-
-						arma::cx_vec cx = arma::expmat(Hessen * dt) * e1;
-
-						prop_state = norm(prop_state) * KryBasis * cx;
-
-						int k = 1;
-
-						while (k < num_steps)
-						{
-							// Set the current time
-							current_time = k * dt;
-							time(k) = current_time;
-
-							// Calculate the expected values for each transition operator
-							for (int idx = 0; idx < num_transitions; idx++)
-							{
-								double result = std::abs(arma::cdot(prop_state, Operators[idx] * prop_state));
-								ExptValues(k, idx) += result;
-							}
-
-							Hessen.zeros(krylovsize, krylovsize);
-							KryBasis.zeros(InitialStateVector.n_rows * Z, krylovsize);
-
-							KryBasis.col(0) = prop_state / norm(prop_state);
-
-							space.ArnoldiProcess(H, prop_state, KryBasis, Hessen, krylovsize, h_mplusone_m);
-							cx = arma::expmat(Hessen * dt) * e1;
-
-							// Update the state using Krylov Subspace propagator
-							prop_state = norm(prop_state) * KryBasis * cx;
-
-							k++;
-						}
+						this->Data() << " " << ExptValues[k][idx];
 					}
-					ExptValues /= mc_samples;
-
-					for (int k = 0; k < num_steps; k++)
-					{
-						// Obtain results
-						this->Data() << this->RunSettings()->CurrentStep() << " ";
-						this->Data() << time(k) << " ";
-						this->WriteStandardOutput(this->Data());
-
-						for (int idx = 0; idx < num_transitions; idx++)
-						{
-							this->Data() << " " << ExptValues(k, idx);
-						}
-						this->Data() << std::endl;
-					}
+					this->Data() << std::endl;
 				}
 			}
 			else if (propmethod == "normal")

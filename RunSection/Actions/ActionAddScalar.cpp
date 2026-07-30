@@ -8,6 +8,8 @@
 #include "ActionAddScalar.h"
 #include "ObjectParser.h"
 
+#include <cmath>
+
 namespace RunSection
 {
 	// -----------------------------------------------------
@@ -34,9 +36,12 @@ namespace RunSection
 
 		// Retrieve the scalar we want to change
 		double d = actionScalar->Get();
+		const double result = d + this->Value();
+		if (!std::isfinite(result))
+			return false;
 
 		// Set the new scalar
-		return this->actionScalar->Set(d + this->Value());
+		return this->actionScalar->Set(result);
 	}
 
 	// Method to prepare the action and check whether it is valid
@@ -62,6 +67,25 @@ namespace RunSection
 		{
 			std::cout << "ERROR: Readonly ActionScalar \"" << str << "\" specified for the AddScalar action \"" << this->Name() << "\"! Cannot act on this scalar!" << std::endl;
 			return false;
+		}
+
+		if (!std::isfinite(this->actionScalar->Get()))
+		{
+			std::cout << "ERROR: ActionScalar \"" << str << "\" has a non-finite value!" << std::endl;
+			return false;
+		}
+
+		if(this->m_ActionMode == MODE::linespace)
+		{
+			this->m_startScaler = this->actionScalar->Get();
+			double diff = this->m_targetScalar - this->m_startScaler;
+			if(diff < 0.0)
+			{
+				return false;
+			}
+			this->value = diff/((double)this->m_num_steps-1.0);
+			this->first = 1;
+			this->last = this->m_num_steps;
 		}
 
 		return true;

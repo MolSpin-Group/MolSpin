@@ -28,6 +28,7 @@
 #include "ActionTarget.h"
 #include "Utility.h"
 #include "SpinAPIDefines.h"
+#include "PowderGrid.h"
 
 namespace RunSection
 {
@@ -37,7 +38,8 @@ namespace RunSection
 		Default = 0, //whatever the timeevo class chooses
 		exp = 1,
 		RK4 = 2,
-		RK45 = 3
+		RK45 = 3,
+		Krylov = 4
 	};
 
 	enum class TaskName //currently used to verify what tasks support SW
@@ -51,10 +53,10 @@ namespace RunSection
 	struct TimeEvoProperties
 	{
 		Propagator prop;
-		double TotalTIme;
+		double TotalTime;
 		double TimeStep;
 		double MinTimeStep;
-		double MaxTImeStep;
+		double MaxTimeStep;
 	};
 
 	class BasicTask
@@ -84,7 +86,13 @@ namespace RunSection
 		virtual bool RunMPI();		 // MPI run method to use on a supercomputer cluster (not required to be implemented)
 		virtual bool Validate() = 0; // Method to validate the task, i.e. to check that it has the required parameters etc.
 		
+		bool propogator_cached;
 		virtual void SelectPropagator(std::string str); //Method to choose the Propagator for timeevo tasks
+		virtual void DetermineBestPropagator(arma::sp_cx_mat& L); //Method to choose the best propagator based on the stiffness of the Liouvillian
+		virtual void DetermineBestPropagator(arma::cx_mat& L);
+		virtual void CheckPropagator(arma::sp_cx_mat& L, double initial_t); //if the propagator has been defined, check if it's suitable for the given system
+		virtual SpinAPI::SpinSpace::PropParam GetTimeAdaptiveProperties(double);
+		std::string PropogatorToString(Propagator prop);
 
 		// Allow access to settings, properties, spin systems, etc. for derived classes
 		std::shared_ptr<const Settings> RunSettings() const;
@@ -95,6 +103,7 @@ namespace RunSection
 		bool WriteStandardOutputHeader(std::ostream &);
 		bool WriteStandardOutput(std::ostream &);
 		const std::vector<std::shared_ptr<Action>> &Actions() const;
+		bool ReadExplicitPowderGrid(SpinAPI::PowderGrid &);
 
 		// ActionTarget access
 		bool Scalar(std::string _name, ActionScalar **_scalar = nullptr);

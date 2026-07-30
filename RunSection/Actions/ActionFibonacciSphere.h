@@ -11,6 +11,7 @@
 
 #include "Action.h"
 
+#include <array>
 #include <tuple>
 #include <vector>
 

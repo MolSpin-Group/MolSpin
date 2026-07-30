@@ -49,16 +49,16 @@ SpinSystem GroundState
     {
         type = singlespin;
         spins = e1;
+        //field = "0.0 0.0 0.02";
         field = "0.0 0.0 0.04";
-        //field = "0.0 0.0 0.0";
     }
     
     Interaction nuclearzeeman
     {
         type = singlespin;
         spins = N14;
+        //field = "0.0 0.0 0.02";
         field = "0.0 0.0 0.04";
-        //field = "0.0 0.0 0.0";
         prefactor = -0.019327078; //g_n = 3.076Mhz/T -> 19.327078Mrad/sT -> 0.019327078rad/(ns)T
         commonprefactor = false;
     }
@@ -77,9 +77,9 @@ SpinSystem GroundState
     State TP_Z    {spin(e1) = |1>; spin(N14) = |0>;}
     State TP_D    {spin(e1) = |1>; spin(N14) = |-1>;}
 
-    State TD_U    {spin(e1) = |0>; spin(N14) = |1>;}
-    State TD_Z    {spin(e1) = |0>; spin(N14) = |0>;}
-    State TD_D    {spin(e1) = |0>; spin(N14) = |-1>;}
+    State TD_U    {spin(e1) = |-1>; spin(N14) = |1>;}
+    State TD_Z    {spin(e1) = |-1>; spin(N14) = |0>;}
+    State TD_D    {spin(e1) = |-1>; spin(N14) = |-1>;}
 
     State Identity
     {
@@ -99,9 +99,10 @@ Run
         type = eigenvalues;
         //Hamiltonian = true;
         eigenvectors = true;
+        refstates = T0_U, T0_Z, T0_D, TP_U, TP_Z, TP_D, TD_U, TD_Z, TD_D;
         logfile = "eigenvalues_es_Z.log";
-        datafile = "../../results/eigenvalues_es_Z.dat";
-        //datafile = "eigenvalues_es_Z.dat";
+        datafile = "../../results/eigenvalues_es_Z2.dat";
+        //datafile = "eigenvalues_es_Z2.dat";
     }
 }
 
@@ -109,7 +110,7 @@ Settings
 {
     Settings general
 	{
-		steps = 20000;
+		steps = 30000;
         // = 1000;
 	}
 
@@ -125,7 +126,7 @@ Settings
 		vector = GroundState.zeeman.field;
 		direction = "0 0 1";
         //value = 10e-7;
-        value = 10e-6;
+        value = 10e-7;
 	}
 
     Action increasefieldstrength2
@@ -133,7 +134,7 @@ Settings
 		type = addvector;
 		vector = GroundState.nuclearzeeman.field;
 		direction = "0 0 1"; 
-        //value = 10e-4;
-        value = 10e-6;
+        //value = 10e-7;
+        value = 10e-7;
 	}
 }

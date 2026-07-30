@@ -6,12 +6,16 @@
 // See LICENSE.txt for license information.
 /////////////////////////////////////////////////////////////////////////
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cmath>
+#include <functional>
+#include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <limits>
 #include <map>
+#include <numeric>
 
 #include "ActionAddVector.h"
 #include "TaskStaticHSTrEPRSpectra.h"
@@ -29,506 +33,6 @@
 
 namespace RunSection
 {
-	namespace
-	{
-		std::string ToLower(std::string value)
-		{
-			std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c)
-						   { return static_cast<char>(std::tolower(c)); });
-			return value;
-		}
-
-		int SopheGridPointCount(int gridSize, int nOctants, bool closedPhi)
-		{
-			if (gridSize < 1)
-				return 0;
-			if (nOctants == -1)
-				return 1;
-			if (nOctants == 0)
-				return gridSize;
-
-			int nOct = (nOctants == 8) ? 4 : nOctants;
-			int nOrient = gridSize + nOct * gridSize * (gridSize - 1) / 2;
-			if (!closedPhi)
-				nOrient -= (gridSize - 1);
-
-			if (nOctants == 8)
-			{
-				int nPhi = nOct * (gridSize - 1) + 1;
-				nOrient += (nOrient - nPhi + 1);
-			}
-
-			return nOrient;
-		}
-
-		struct MzBlocks
-		{
-			std::vector<int> mz2;		  // total Mz in units of 1/2
-			std::vector<arma::uvec> blocks; // basis indices grouped by Mz
-		};
-
-		MzBlocks BuildMzBlocks(const std::vector<SpinAPI::spin_ptr> &spins)
-		{
-			MzBlocks result;
-			if (spins.empty())
-				return result;
-
-			const size_t nspins = spins.size();
-			std::vector<size_t> mult(nspins);
-			std::vector<int> svals(nspins);
-			size_t dim = 1;
-			for (size_t i = 0; i < nspins; ++i)
-			{
-				mult[i] = static_cast<size_t>(spins[i]->Multiplicity());
-				svals[i] = spins[i]->S();
-				dim *= mult[i];
-			}
-
-			std::vector<size_t> stride(nspins, 1);
-			for (size_t i = nspins; i-- > 0;)
-			{
-				if (i + 1 < nspins)
-					stride[i] = stride[i + 1] * mult[i + 1];
-			}
-
-			result.mz2.resize(dim);
-			for (size_t idx = 0; idx < dim; ++idx)
-			{
-				int total = 0;
-				for (size_t i = 0; i < nspins; ++i)
-				{
-					const size_t local = (idx / stride[i]) % mult[i];
-					const int m = svals[i] - 2 * static_cast<int>(local);
-					total += m;
-				}
-				result.mz2[idx] = total;
-			}
-
-			std::map<int, std::vector<arma::uword>> groups;
-			for (arma::uword i = 0; i < result.mz2.size(); ++i)
-				groups[result.mz2[i]].push_back(i);
-
-			result.blocks.reserve(groups.size());
-			for (auto &kv : groups)
-			{
-				arma::uvec idx(static_cast<arma::uword>(kv.second.size()));
-				for (size_t i = 0; i < kv.second.size(); ++i)
-					idx(static_cast<arma::uword>(i)) = kv.second[i];
-				result.blocks.push_back(std::move(idx));
-			}
-
-			return result;
-		}
-
-		arma::mat PassiveZXZRotation(const arma::vec &fr)
-		{
-			double a = (fr.n_elem >= 1) ? fr(0) : 0.0;
-			double b = (fr.n_elem >= 2) ? fr(1) : 0.0;
-			double g = (fr.n_elem >= 3) ? fr(2) : 0.0;
-
-			const double ca = std::cos(a), sa = std::sin(a);
-			const double cb = std::cos(b), sb = std::sin(b);
-			const double cg = std::cos(g), sg = std::sin(g);
-
-			arma::mat Ra = {{ca, sa, 0.0}, {-sa, ca, 0.0}, {0.0, 0.0, 1.0}};
-			arma::mat Rb = {{cb, 0.0, -sb}, {0.0, 1.0, 0.0}, {sb, 0.0, cb}};
-			arma::mat Rg = {{cg, sg, 0.0}, {-sg, cg, 0.0}, {0.0, 0.0, 1.0}};
-			return Rg * Rb * Ra;
-		}
-
-		bool IsZeemanInteraction(const SpinAPI::interaction_ptr &inter)
-		{
-			if (inter == nullptr)
-				return false;
-			if (!SpinAPI::IsStatic(*inter))
-				return false;
-			if (inter->Type() != SpinAPI::InteractionType::SingleSpin)
-				return false;
-			const arma::vec field = inter->Field();
-			return (field.n_elem == 3 && field.is_finite());
-		}
-
-		std::vector<SpinAPI::interaction_ptr> CollectZeemanInteractions(const SpinAPI::system_ptr &system, const std::vector<std::string> &h0list)
-		{
-			std::vector<SpinAPI::interaction_ptr> out;
-			if (system == nullptr)
-				return out;
-
-			out.reserve(h0list.size());
-			for (const auto &name : h0list)
-			{
-				auto inter = system->interactions_find(name);
-				if (!IsZeemanInteraction(inter))
-					continue;
-				out.push_back(inter);
-			}
-
-			std::sort(out.begin(), out.end(), [](const auto &a, const auto &b) {
-				return a.get() < b.get();
-			});
-			out.erase(std::unique(out.begin(), out.end()), out.end());
-			return out;
-		}
-
-		SpinAPI::interaction_ptr FindZeemanForSpin(const SpinAPI::spin_ptr &spin, const std::vector<SpinAPI::interaction_ptr> &zeemanList)
-		{
-			if (spin == nullptr)
-				return nullptr;
-			for (const auto &inter : zeemanList)
-			{
-				if (inter == nullptr)
-					continue;
-				const auto group = inter->Group1();
-				if (std::find(group.begin(), group.end(), spin) != group.end())
-					return inter;
-			}
-			return nullptr;
-		}
-
-		bool IsParallel(const arma::vec &a, const arma::vec &b, double tol)
-		{
-			if (a.n_elem != 3 || b.n_elem != 3)
-				return false;
-			const double na = arma::norm(a);
-			const double nb = arma::norm(b);
-			if (!std::isfinite(na) || !std::isfinite(nb) || na == 0.0 || nb == 0.0)
-				return false;
-			return (arma::norm(arma::cross(a / na, b / nb)) <= tol);
-		}
-
-		bool CollectAddVectorSteps(const std::vector<std::shared_ptr<Action>> &actions,
-								   unsigned int steps,
-								   std::map<std::string, arma::vec> &stepsOut,
-								   std::string &error)
-		{
-			stepsOut.clear();
-			error.clear();
-
-			const double tol = 1e-12;
-			for (const auto &action : actions)
-			{
-				auto add = std::dynamic_pointer_cast<ActionAddVector>(action);
-				if (!add)
-				{
-					error = "Non-AddVector action present.";
-					return false;
-				}
-
-				std::string targetName;
-				if (!add->GetProperties()->Get("vector", targetName))
-					add->GetProperties()->Get("actionvector", targetName);
-				if (targetName.empty())
-				{
-					error = "AddVector action missing target vector.";
-					return false;
-				}
-
-				arma::vec direction;
-				if (!add->GetProperties()->Get("direction", direction) || direction.n_elem != 3 || !direction.is_finite())
-				{
-					error = "AddVector action has invalid direction.";
-					return false;
-				}
-				direction = arma::normalise(direction);
-
-				if (add->Period() != 1 || add->First() != 1)
-				{
-					error = "AddVector action has non-unit period or nonzero start.";
-					return false;
-				}
-				if (add->Last() != 0 && add->Last() < steps)
-				{
-					error = "AddVector action terminates before the end of the run.";
-					return false;
-				}
-
-				const arma::vec step = add->Value() * direction;
-				auto it = stepsOut.find(targetName);
-				if (it != stepsOut.end())
-				{
-					if (arma::norm(it->second - step) > tol)
-					{
-						error = "Conflicting AddVector actions for the same target.";
-						return false;
-					}
-				}
-				else
-				{
-					stepsOut.emplace(targetName, step);
-				}
-			}
-
-			return true;
-		}
-
-		struct FieldSyncGuard
-		{
-			std::vector<std::pair<SpinAPI::interaction_ptr, arma::vec>> saved;
-
-			void Apply(const std::vector<SpinAPI::interaction_ptr> &interactions, const arma::vec &field)
-			{
-				saved.clear();
-				saved.reserve(interactions.size());
-				for (const auto &inter : interactions)
-				{
-					if (inter == nullptr)
-						continue;
-					const arma::vec current = inter->Field();
-					if (current.n_elem != 3 || !current.is_finite())
-						continue;
-					saved.emplace_back(inter, current);
-					arma::vec tmp = field;
-					inter->SetField(tmp);
-				}
-			}
-
-			~FieldSyncGuard()
-			{
-				for (auto &entry : saved)
-				{
-					arma::vec tmp = entry.second;
-					entry.first->SetField(tmp);
-				}
-			}
-		};
-
-		struct SymmetryFlags
-		{
-			bool allIsotropic = true;
-			bool allDiag = true;
-			bool allAxialZ = true;
-			bool anyTensor = false;
-		};
-
-		void UpdateSymmetryFlags(const arma::mat &M, SymmetryFlags &flags, bool fullTensorRotation, double relTol)
-		{
-			arma::mat A = M;
-			if (!fullTensorRotation)
-				A = A % arma::eye<arma::mat>(3, 3);
-
-			double maxAbs = 0.0;
-			double maxOff = 0.0;
-			for (arma::uword r = 0; r < 3; ++r)
-			{
-				for (arma::uword c = 0; c < 3; ++c)
-				{
-					const double v = std::abs(A(r, c));
-					maxAbs = std::max(maxAbs, v);
-					if (r != c)
-						maxOff = std::max(maxOff, v);
-				}
-			}
-
-			if (!std::isfinite(maxAbs) || maxAbs == 0.0)
-				return;
-
-			flags.anyTensor = true;
-			if (maxOff > relTol * maxAbs)
-			{
-				flags.allDiag = false;
-				flags.allAxialZ = false;
-				flags.allIsotropic = false;
-				return;
-			}
-
-			const double a = A(0, 0);
-			const double b = A(1, 1);
-			const double c = A(2, 2);
-			const double mean = (a + b + c) / 3.0;
-			const double maxDev = std::max({std::abs(a - mean), std::abs(b - mean), std::abs(c - mean)});
-			if (maxDev > relTol * maxAbs)
-				flags.allIsotropic = false;
-
-			const bool xy_eq = (std::abs(a - b) <= relTol * maxAbs);
-			if (!xy_eq && maxDev > relTol * maxAbs)
-				flags.allAxialZ = false;
-		}
-
-		std::string AutoDetectSopheSymmetry(const SpinAPI::system_ptr &system,
-											 const SpinAPI::interaction_ptr &fieldInteraction,
-											 const std::vector<std::string> &h0list,
-											 bool fullTensorRotation)
-		{
-			if (system == nullptr)
-				return "c1";
-
-			const double relTol = 1e-8;
-			SymmetryFlags flags;
-
-			for (const auto &name : h0list)
-			{
-				auto inter = system->interactions_find(name);
-				if (inter == nullptr)
-					continue;
-				if (!SpinAPI::IsStatic(*inter))
-					continue;
-
-				if (inter->Type() == SpinAPI::InteractionType::SingleSpin)
-				{
-					arma::mat R = PassiveZXZRotation(inter->Framelist());
-					arma::mat Rt = R.t();
-					for (const auto &spin : inter->Group1())
-					{
-						arma::mat G = arma::conv_to<arma::mat>::from(spin->GetTensor().LabFrame());
-						if (inter->IgnoreTensors())
-							G = arma::eye<arma::mat>(3, 3);
-						G = Rt * G * Rt.t();
-						UpdateSymmetryFlags(G, flags, fullTensorRotation, relTol);
-					}
-				}
-				else if (SpinAPI::HasTensor(*inter))
-				{
-					arma::mat A = arma::conv_to<arma::mat>::from(inter->CouplingTensor()->LabFrame());
-					arma::mat R = PassiveZXZRotation(inter->Framelist());
-					arma::mat Rt = R.t();
-					A = Rt * A * Rt.t();
-					UpdateSymmetryFlags(A, flags, fullTensorRotation, relTol);
-				}
-				else if (inter->Type() == SpinAPI::InteractionType::Zfs)
-				{
-					const double D = inter->Dvalue();
-					const double E = inter->Evalue();
-					const double maxAbs = std::max(std::abs(D), std::abs(E));
-					if (maxAbs > relTol)
-					{
-						flags.anyTensor = true;
-						flags.allIsotropic = false;
-						if (std::abs(E) > relTol)
-						{
-							flags.allAxialZ = false;
-						}
-					}
-				}
-				else if (inter->Type() == SpinAPI::InteractionType::SemiClassicalField)
-				{
-					return "c1";
-				}
-			}
-
-			if (fieldInteraction != nullptr)
-			{
-				arma::mat R = PassiveZXZRotation(fieldInteraction->Framelist());
-				arma::mat Rt = R.t();
-				for (const auto &spin : fieldInteraction->Group1())
-				{
-					arma::mat G = arma::conv_to<arma::mat>::from(spin->GetTensor().LabFrame());
-					if (fieldInteraction->IgnoreTensors())
-						G = arma::eye<arma::mat>(3, 3);
-					G = Rt * G * Rt.t();
-					UpdateSymmetryFlags(G, flags, fullTensorRotation, relTol);
-				}
-			}
-
-			if (!flags.anyTensor || flags.allIsotropic)
-				return "o3";
-			if (flags.allAxialZ)
-				return "dinfh";
-			if (flags.allDiag)
-				return "d2h";
-			return "c1";
-		}
-
-		bool IsBlockDiagonalMz(const arma::sp_cx_mat &H, const std::vector<int> &mz2, double relTol)
-		{
-			if (H.n_nonzero == 0)
-				return true;
-			double maxAbs = 0.0;
-			for (auto it = H.begin(); it != H.end(); ++it)
-				maxAbs = std::max(maxAbs, std::abs(*it));
-			if (maxAbs == 0.0)
-				return true;
-			const double thresh = maxAbs * relTol;
-			for (auto it = H.begin(); it != H.end(); ++it)
-			{
-				if (std::abs(*it) <= thresh)
-					continue;
-				if (mz2[it.row()] != mz2[it.col()])
-					return false;
-			}
-			return true;
-		}
-
-		bool EigSymBlockMz(const arma::sp_cx_mat &H, const std::vector<arma::uvec> &blocks, arma::vec &eigval, arma::cx_mat &eigvec)
-		{
-			const arma::uword dim = H.n_rows;
-			eigval.set_size(dim);
-			eigvec.zeros(dim, dim);
-
-			struct Entry
-			{
-				double val;
-				size_t block;
-				arma::uword local;
-			};
-
-			std::vector<Entry> entries;
-			entries.reserve(dim);
-			std::vector<arma::cx_mat> block_vecs(blocks.size());
-
-			std::vector<int> block_id(static_cast<size_t>(dim), -1);
-			std::vector<arma::uword> local_pos(static_cast<size_t>(dim), 0);
-			for (size_t b = 0; b < blocks.size(); ++b)
-			{
-				const arma::uvec &idx = blocks[b];
-				for (arma::uword i = 0; i < idx.n_elem; ++i)
-				{
-					block_id[idx(i)] = static_cast<int>(b);
-					local_pos[idx(i)] = i;
-				}
-			}
-
-			std::vector<arma::cx_mat> block_mats(blocks.size());
-			for (size_t b = 0; b < blocks.size(); ++b)
-			{
-				const arma::uvec &idx = blocks[b];
-				block_mats[b].zeros(idx.n_elem, idx.n_elem);
-			}
-
-			for (auto it = H.begin(); it != H.end(); ++it)
-			{
-				const int b = block_id[it.row()];
-				if (b < 0)
-					continue;
-				if (block_id[it.col()] != b)
-					continue;
-				block_mats[static_cast<size_t>(b)](local_pos[it.row()], local_pos[it.col()]) = *it;
-			}
-
-			for (size_t b = 0; b < blocks.size(); ++b)
-			{
-				const arma::uvec &idx = blocks[b];
-				if (idx.n_elem == 0)
-					continue;
-				arma::vec evals;
-				arma::cx_mat evecs;
-				if (!arma::eig_sym(evals, evecs, block_mats[b]))
-					return false;
-				block_vecs[b] = std::move(evecs);
-				for (arma::uword k = 0; k < evals.n_elem; ++k)
-					entries.push_back({evals(k), b, k});
-			}
-
-			if (entries.size() != static_cast<size_t>(dim))
-				return false;
-
-			std::sort(entries.begin(), entries.end(), [](const Entry &a, const Entry &b)
-					  { return a.val < b.val; });
-
-			for (arma::uword col = 0; col < dim; ++col)
-			{
-				const auto &e = entries[col];
-				eigval(col) = e.val;
-				const arma::uvec &idx = blocks[e.block];
-				for (arma::uword i = 0; i < idx.n_elem; ++i)
-				{
-					eigvec(idx(i), col) = block_vecs[e.block](i, e.local);
-				}
-			}
-
-			return true;
-		}
-	}
-
 	// -----------------------------------------------------
 	// TaskStaticHSTrEPRSpectra Constructors and Destructor
 	// -----------------------------------------------------
@@ -536,23 +40,25 @@ namespace RunSection
 		: BasicTask(_parser, _runsection),
 		  mwFrequencyGHz(0.0),
 		  linewidth_mT(0.0),
-		  linewidthFad_mT(0.0),
-		  linewidthDonor_mT(0.0),
 		  lineshape("gaussian"),
-		  powderGridType("fibonacci"),
-		  powderGridSymmetry("D2h"),
+
+		  detectionHarmonic(0),
+		  modulationAmplitude_mT(0.0),
+
+		  powderGridType("sophe"),
+		  powderGridSymmetry("auto"),
 		  powderGridSize(0),
 		  powdersamplingpoints(0),
 		  powderGammaPoints(1),
 		  powderFullSphere(true),
 		  fullTensorRotation(true),
 		  useSweepCache(true),
-		  sweepCacheExact(false),
+
+		  sweepCacheExact(true),
 		  sweepCacheResfields(false),
+
 		  sweepCacheResfieldPoints(0),
 		  detectSpinNames(),
-		  electron1Name(""),
-		  electron2Name(""),
 		  fieldInteractionName(""),
 		  enforceZeemanSync(false),
 		  initialStateName(""),
@@ -570,12 +76,24 @@ namespace RunSection
 	bool TaskStaticHSTrEPRSpectra::RunLocal()
 	{
 		this->Log() << "Running task StaticHS-TrEPR-Spectra." << std::endl;
+
+		// Workflow:
+		// 1. Resolve the static Hamiltonian list, lab-field Zeeman interaction,
+		//    and spins used for microwave detection.
+		// 2. Prefer the sweep cache when the field sweep is linear: the cached
+		//    path computes the same transition moments but avoids repeating
+		//    setup work for every output field.
+		// 3. Build the requested powder grid and gamma sampling.
+		// 4. For each orientation, rotate the whole crystallite into the lab
+		//    frame, diagonalize H0, evaluate resonant transitions, and add their
+		//    weighted contributions to the spectrum.
+
 		if (this->RunSettings()->CurrentStep() == 1)
 		{
 			this->Log() << "Sweep cache " << (this->useSweepCache ? "enabled" : "disabled");
 			if (this->useSweepCache)
 			{
-				const char *mode = this->sweepCacheExact ? "exact" : (this->sweepCacheResfields ? "resfields" : "approx");
+				const char *mode = this->sweepCacheExact ? "exact" : (this->sweepCacheResfields ? "resonanceprojection" : "approx");
 				this->Log() << " (mode: " << mode << ")";
 			}
 			this->Log() << "." << std::endl;
@@ -625,7 +143,9 @@ namespace RunSection
 				continue;
 			}
 
-			// Determine Zeeman interaction used for B and for dH/dB (Jacobian)
+			// The Zeeman interaction defines the laboratory field direction and the
+			// field derivative dH/dB needed to convert energy detuning into field
+			// detuning through the resonance Jacobian.
 			SpinAPI::interaction_ptr fieldInteraction = nullptr;
 			if (!this->ResolveFieldInteraction((*sysIt), fieldInteraction))
 			{
@@ -782,10 +302,40 @@ namespace RunSection
 				}
 			}
 
-			// Build initial density matrix
+			// Build the initial density matrix. The task supports either explicit
+			// projector states or an orientation-dependent thermal state in the
+			// eigenframe. Since the observables are linear in rho, multiple initial
+			// states are summed before normalization.
+			const SpinAPI::StateFrame initialStateFrame = (*sysIt)->InitialStateFrame();
+			if (initialStateFrame == SpinAPI::StateFrame::Molecular)
+				this->Log() << "Initial state frame = molecular." << std::endl;
+
 			arma::cx_mat rho0;
 			bool hasInitialState = false;
-			if (!this->initialStateName.empty())
+			bool useOrientationThermal = false;
+			std::vector<std::string> thermalhamiltonian_list;
+			double thermalTemperature = 0.0;
+			if (initialStateFrame == SpinAPI::StateFrame::Eigen)
+			{
+				if (!this->initialStateName.empty())
+				{
+					this->Log() << "frame = eigen currently requires Thermal to be specified via the SpinSystem initialstate property in StaticHS-TrEPRSpectra." << std::endl;
+					continue;
+				}
+
+				auto initial_states = (*sysIt)->InitialState();
+				if (initial_states.size() != 1 || initial_states.front() != nullptr)
+				{
+					this->Log() << "frame = eigen currently requires a single Thermal initial state in StaticHS-TrEPRSpectra." << std::endl;
+					continue;
+				}
+
+				useOrientationThermal = true;
+				thermalhamiltonian_list = (*sysIt)->ThermalHamiltonianList();
+				thermalTemperature = (*sysIt)->Temperature();
+				this->Log() << "Initial state = thermal (orientation-dependent eigen frame)" << std::endl;
+			}
+			else if (!this->initialStateName.empty())
 			{
 				auto state = (*sysIt)->states_find(this->initialStateName);
 				if (state == nullptr)
@@ -798,7 +348,7 @@ namespace RunSection
 						hasInitialState = true;
 				}
 			}
-			if (!hasInitialState)
+			if (!hasInitialState && !useOrientationThermal)
 			{
 				auto initial_states = (*sysIt)->InitialState();
 				if (initial_states.empty())
@@ -807,14 +357,40 @@ namespace RunSection
 					continue;
 				}
 
-				for (auto state = initial_states.cbegin(); state != initial_states.cend(); state++)
+				std::vector<double> initial_weights = (*sysIt)->Weights();
+				const bool useInitialWeights = (initial_weights.size() == initial_states.size());
+				if (useInitialWeights)
 				{
+					double sum_weights = std::accumulate(initial_weights.begin(), initial_weights.end(), 0.0);
+					if (sum_weights > 0.0)
+					{
+						for (double &weight : initial_weights)
+							weight /= sum_weights;
+					}
+				}
+				else if (!initial_weights.empty())
+				{
+					this->Log() << "Initial-state weights count does not match initialstate count. Ignoring weights." << std::endl;
+				}
+
+				for (size_t stateIndex = 0; stateIndex < initial_states.size(); ++stateIndex)
+				{
+					auto state = initial_states.cbegin() + static_cast<std::ptrdiff_t>(stateIndex);
+					if ((*state) == nullptr)
+					{
+						this->Log() << "Thermal initial states are not supported in StaticHS-TrEPRSpectra." << std::endl;
+						continue;
+					}
+
 					arma::cx_mat tmp;
 					if (!space.GetState(*state, tmp))
 					{
 						this->Log() << "Failed to obtain projection matrix onto state \"" << (*state)->Name() << "\" of SpinSystem \"" << (*sysIt)->Name() << "\"." << std::endl;
 						continue;
 					}
+
+					if (useInitialWeights)
+						tmp *= initial_weights[stateIndex];
 
 					if (!hasInitialState)
 					{
@@ -830,13 +406,18 @@ namespace RunSection
 
 			if (!hasInitialState)
 			{
-				this->Log() << "Failed to construct initial state for SpinSystem \"" << (*sysIt)->Name() << "\"." << std::endl;
-				continue;
+				if (!useOrientationThermal)
+				{
+					this->Log() << "Failed to construct initial state for SpinSystem \"" << (*sysIt)->Name() << "\"." << std::endl;
+					continue;
+				}
 			}
-			rho0 /= arma::trace(rho0);
+			if (!useOrientationThermal)
+				rho0 /= arma::trace(rho0);
 
-			// Embed *bare* spin operators (Sx,Sy,Sz) into the full Hilbert space.
-			// Build magnetic dipole operators from orientation-rotated tensors to match H0's frame.
+			// Embed the bare spin operators into the full Hilbert space. The
+			// orientation-dependent magnetic dipole operators are then built from
+			// these operators and the rotated g tensors.
 			std::vector<arma::cx_mat> Sx_list(detectSpins.size());
 			std::vector<arma::cx_mat> Sy_list(detectSpins.size());
 			std::vector<arma::cx_mat> Sz_list(detectSpins.size());
@@ -858,7 +439,7 @@ namespace RunSection
 
 			// Build powder grid (theta,phi) and optional gamma sampling.
 			int numPoints = this->powdersamplingpoints;
-			std::vector<std::tuple<double, double, double>> grid;
+			SpinAPI::PowderGrid grid;
 			const bool useSopheGrid = (this->powderGridType == "sophe");
 			std::string gridSymmetry = this->powderGridSymmetry;
 			if (useSopheGrid)
@@ -875,16 +456,14 @@ namespace RunSection
 				int gridSize = this->powderGridSize;
 				if (gridSize < 2)
 				{
-					double maxPhi = 0.0;
-					bool closedPhi = false;
-					int nOctants = 0;
-					if (numPoints > 1 && this->SopheGridParams(gridSymmetry, maxPhi, closedPhi, nOctants))
+					SpinAPI::SopheGridParameters sopheParams;
+					if (numPoints > 1 && SpinAPI::GetSopheGridParameters(gridSymmetry, sopheParams))
 					{
 						int bestSize = 0;
 						int bestDiff = std::numeric_limits<int>::max();
 						for (int candidate = 2; candidate <= 200; ++candidate)
 						{
-							int count = SopheGridPointCount(candidate, nOctants, closedPhi);
+							int count = SpinAPI::SopheGridPointCount(candidate, sopheParams.nOctants, sopheParams.closedPhi);
 							int diff = std::abs(count - numPoints);
 							if (diff < bestDiff)
 							{
@@ -901,7 +480,7 @@ namespace RunSection
 						gridSize = 19;
 				}
 
-				if (!this->CreateSopheGrid(gridSize, gridSymmetry, grid))
+				if (!SpinAPI::CreateSophePowderGrid(gridSize, gridSymmetry, grid))
 				{
 					this->Log() << "Failed to obtain SOPHE grid for powder averaging." << std::endl;
 					continue;
@@ -923,7 +502,7 @@ namespace RunSection
 			else
 			{
 				grid.clear();
-				grid.emplace_back(0.0, 0.0, 1.0);
+				grid.push_back({0.0, 0.0, 1.0});
 				numPoints = 1;
 			}
 			const int gamma_points = (numPoints > 1) ? std::max(1, this->powderGammaPoints) : 1;
@@ -932,7 +511,8 @@ namespace RunSection
 			if (this->powderGammaPoints > 1)
 				this->Log() << "Sampling gamma with " << this->powderGammaPoints << " points per orientation." << std::endl;
 
-			// Field-domain linewidth (FWHM, mT). Apply the lineshape in field units.
+			// Field-domain linewidth (FWHM, mT). The spectrum is constructed as a
+			// field-swept experiment, so broadening is applied directly in field units.
 			const double lwB_mT = std::abs(this->linewidth_mT);
 
 			// Determine Zeeman interaction for each detection spin (frame + prefactor).
@@ -955,7 +535,7 @@ namespace RunSection
 
 				arma::mat RFrame = arma::eye<arma::mat>(3, 3);
 				if (spinZeeman[i] != nullptr)
-					RFrame = PassiveZXZRotation(spinZeeman[i]->Framelist());
+					RFrame = PassiveZYZRotation(spinZeeman[i]->Framelist());
 				const arma::mat RFrame_T2M = RFrame.t();
 				g_frame_base[i] = RFrame_T2M * g_base * RFrame_T2M.t();
 
@@ -989,6 +569,12 @@ namespace RunSection
 			const arma::cx_double I(0.0, 1.0);
 			const size_t spin_count = detectSpins.size();
 
+			// For one powder orientation we:
+			// 1. rotate the static Hamiltonian and the initial state,
+			// 2. diagonalize H,
+			// 3. evaluate transition populations and magnetic dipole matrix elements,
+			// 4. convert energy detuning to field detuning through dB/dE,
+			// 5. accumulate absorptive/emissive intensities.
 			auto accumulate_grid = [&](int grid_num, SpinAPI::SpinSpace &space_local,
 									   double &acc_total_x, double &acc_total_y, double &acc_total_perp,
 									   double &acc_cross_x, double &acc_cross_y,
@@ -1008,16 +594,38 @@ namespace RunSection
 					const double w = base_weight * gamma_weight;
 
 					arma::mat Rot;
-					if (!this->CreateRotationMatrix(phi, theta, gamma, Rot))
+					if (!this->CreatePassiveZYZRotationMatrix(phi, theta, gamma, Rot))
 						continue;
 
-					// Rot is a PASSIVE ZXZ rotation (EasySpin convention) from molecular to lab frame.
+					// Rot is a PASSIVE ZYZ rotation (EasySpin convention) from molecular to lab frame.
 					// Use it directly for tensor rotation and magnetic dipole operators.
 					const arma::mat Rpowder = Rot;
+					arma::cx_mat rho_oriented;
+					if (useOrientationThermal)
+					{
+						arma::sp_cx_mat Hthermal_sp;
+						if (!space_local.BaseHamiltonianRotatedZYZ(thermalhamiltonian_list, Rot, Hthermal_sp) ||
+							!space_local.ThermalStateFromHamiltonian(arma::cx_mat(Hthermal_sp), thermalTemperature, rho_oriented))
+							continue;
+					}
+					else
+					{
+						rho_oriented = rho0;
+						// Projector and explicit density states may be defined
+						// in the molecular frame. Rotate them with the same
+						// powder orientation used for the Hamiltonian.
+						if (initialStateFrame == SpinAPI::StateFrame::Molecular && !space_local.RotateState(rho0, Rot, rho_oriented))
+							continue;
+					}
 
-					// Build rotated base Hamiltonian
-					arma::sp_cx_mat H0_sp;
-					if (!space_local.BaseHamiltonianRotatedZXZ(h0list, Rot, H0_sp))
+						// Pepper-like resonance search path: TrEPR diagonalizes
+						// the full Hilbert Hamiltonian at each field/orientation.
+						// This deliberately does not call
+						// PowderHamiltonianRotatedSA; resonance positions are
+						// obtained from full transition energies, not from the
+						// rotating-frame time-propagation Liouvillian.
+						arma::sp_cx_mat H0_sp;
+					if (!space_local.BaseHamiltonianRotatedZYZ(h0list, Rot, H0_sp))
 						continue;
 
 					arma::vec eigval;
@@ -1036,12 +644,14 @@ namespace RunSection
 						continue;
 
 					const arma::cx_mat Udag = arma::trans(arma::conj(eigvec));
-					const arma::cx_mat rho_eig = Udag * rho0 * eigvec;
+					const arma::cx_mat rho_eig = Udag * rho_oriented * eigvec;
 					const arma::vec rho_diag = arma::real(rho_eig.diag());
 
-					// Zeeman-only rotated Hamiltonian -> dH/dB magnitude for field-to-energy Jacobian.
+					// The Zeeman-only Hamiltonian determines how quickly a transition
+					// moves in field when its energy changes. This Jacobian turns an
+					// energy-domain resonance condition into a field-swept intensity.
 					arma::sp_cx_mat Hz_sp;
-					if (!space_local.BaseHamiltonianRotatedZXZ(zeelist, Rot, Hz_sp))
+					if (!space_local.BaseHamiltonianRotatedZYZ(zeelist, Rot, Hz_sp))
 						continue;
 					arma::sp_cx_mat dHdB_sp = Hz_sp / Bmag; // rad/ns/T
 					// For Hermitian dHdB, Re(<n|dHdB|n> - <m|dHdB|m>) gives d(En-Em)/dB.
@@ -1085,7 +695,7 @@ namespace RunSection
 					if (!tensor_dim_ok)
 						continue;
 
-					// Transform mu operators into eigenbasis
+					// Transition moments are evaluated in the instantaneous eigenbasis.
 					arma::cx_mat muxT_eig = Udag * muxT * eigvec;
 					arma::cx_mat muyT_eig = Udag * muyT * eigvec;
 					std::vector<arma::cx_mat> mux_eig(spin_count);
@@ -1116,7 +726,9 @@ namespace RunSection
 						const double rho_mm = rho_diag(m);
 						for (arma::uword n = m + 1; n < dim; ++n)
 						{
-							const double population = rho_mm - rho_diag(n);
+
+								// Positive absorption corresponds to lower-state population minus upper-state population.
+								const double population = rho_mm - rho_diag(n);
 							if (std::abs(population) < 1e-15)
 								continue;
 
@@ -1139,6 +751,8 @@ namespace RunSection
 							if (L == 0.0)
 								continue;
 
+							// The spectral weight is the product of the field Jacobian and
+							// the chosen lineshape evaluated at the field detuning.
 							const double wField = dBdE * L;
 
 							const double ITx = std::norm(muxT_eig(m, n));
@@ -1262,6 +876,229 @@ namespace RunSection
 		return true;
 	}
 
+	void TaskStaticHSTrEPRSpectra::WriteHeader(std::ostream &_stream)
+	{
+		_stream << "Step ";
+		_stream << "Time ";
+		this->WriteStandardOutputHeader(_stream);
+
+		auto systems = this->SpinSystems();
+		for (auto i = systems.cbegin(); i != systems.cend(); i++)
+		{
+			SpinAPI::interaction_ptr fieldInteraction = nullptr;
+			std::vector<SpinAPI::spin_ptr> detectSpins;
+			std::vector<std::string> detectSpinNames;
+			this->ResolveFieldInteraction((*i), fieldInteraction);
+			if (!this->ResolveDetectionSpins((*i), fieldInteraction, detectSpins, detectSpinNames))
+			{
+				detectSpinNames.clear();
+			}
+
+			_stream << (*i)->Name() << ".Field_mT ";
+			_stream << (*i)->Name() << ".Total_x ";
+			_stream << (*i)->Name() << ".Total_y ";
+			_stream << (*i)->Name() << ".Total_perp ";
+			_stream << (*i)->Name() << ".Cross_x ";
+			_stream << (*i)->Name() << ".Cross_y ";
+
+			for (const auto &spinName : detectSpinNames)
+			{
+				_stream << (*i)->Name() << "." << spinName << "_x ";
+				_stream << (*i)->Name() << "." << spinName << "_y ";
+				_stream << (*i)->Name() << "." << spinName << "_perp ";
+				_stream << (*i)->Name() << "." << spinName << "_p ";
+				_stream << (*i)->Name() << "." << spinName << "_m ";
+			}
+		}
+
+		_stream << std::endl;
+	}
+
+	bool TaskStaticHSTrEPRSpectra::Validate()
+	{
+		bool hasFrequency = this->Properties()->Get("mwfrequency", this->mwFrequencyGHz);
+		if (!hasFrequency)
+			hasFrequency = this->Properties()->Get("frequency", this->mwFrequencyGHz);
+		if (!hasFrequency)
+		{
+			this->Log() << "Failed to obtain mwfrequency/frequency. Using frequency = 0 by default." << std::endl;
+		}
+
+		if (!this->Properties()->Get("linewidth", this->linewidth_mT))
+		{
+			this->Log() << "Failed to obtain linewidth. Using linewidth = 0 by default." << std::endl;
+			this->linewidth_mT = 0.0;
+		}
+
+		if (this->Properties()->Get("lineshape", this->lineshape))
+		{
+			this->lineshape = ToLower(this->lineshape);
+		}
+		else
+		{
+			this->lineshape = "gaussian";
+		}
+
+
+		// Harmonic post-processing models field-modulated detection after the
+		// absorption spectrum has been assembled on the sweep cache.
+		if (!this->Properties()->Get("harmonic", this->detectionHarmonic) &&
+			!this->Properties()->Get("detectionharmonic", this->detectionHarmonic) &&
+			!this->Properties()->Get("detection_harmonic", this->detectionHarmonic))
+		{
+			this->detectionHarmonic = 0;
+		}
+		if (this->detectionHarmonic < 0)
+		{
+			this->Log() << "Negative harmonic values are not supported here. Using harmonic = 0." << std::endl;
+			this->detectionHarmonic = 0;
+		}
+		if (this->detectionHarmonic > 2)
+		{
+			this->Log() << "Only harmonic = 0, 1, or 2 is supported. Using harmonic = 2." << std::endl;
+			this->detectionHarmonic = 2;
+		}
+
+		if (!this->Properties()->Get("modamp", this->modulationAmplitude_mT) &&
+			!this->Properties()->Get("modulationamplitude", this->modulationAmplitude_mT) &&
+			!this->Properties()->Get("modulation_amplitude", this->modulationAmplitude_mT) &&
+			!this->Properties()->Get("fieldmodulation", this->modulationAmplitude_mT))
+		{
+			this->modulationAmplitude_mT = 0.0;
+		}
+		if (this->modulationAmplitude_mT < 0.0)
+		{
+			this->Log() << "Negative modulation amplitudes are not supported. Using modulation amplitude = 0 mT." << std::endl;
+			this->modulationAmplitude_mT = 0.0;
+		}
+
+
+		if (!this->Properties()->Get("powdersamplingpoints", this->powdersamplingpoints))
+		{
+			this->powdersamplingpoints = 0;
+		}
+
+		if (!this->Properties()->Get("sweepcache", this->useSweepCache) &&
+			!this->Properties()->Get("cache_sweep", this->useSweepCache) &&
+			!this->Properties()->Get("sweep_cache", this->useSweepCache))
+		{
+			this->useSweepCache = true;
+		}
+
+
+		if (this->detectionHarmonic > 0 && !this->useSweepCache)
+		{
+			this->Log() << "Detection harmonic post-processing requires the sweep cache. Enabling sweepcache=true." << std::endl;
+			this->useSweepCache = true;
+		}
+
+		std::string sweepCacheMode;
+		if (this->Properties()->Get("sweepcachemode", sweepCacheMode) ||
+			this->Properties()->Get("sweep_cache_mode", sweepCacheMode) ||
+			this->Properties()->Get("cache_sweep_mode", sweepCacheMode))
+		{
+			sweepCacheMode = ToLower(sweepCacheMode);
+			if (sweepCacheMode == "exact" || sweepCacheMode == "direct" || sweepCacheMode == "matrix")
+			{
+				this->sweepCacheExact = true;
+				this->sweepCacheResfields = false;
+			}
+			else if (sweepCacheMode == "resonanceprojection" || sweepCacheMode == "projection" ||
+					 sweepCacheMode == "projectedresfields" || sweepCacheMode == "resfields" ||
+					 sweepCacheMode == "resfield")
+			{
+				this->sweepCacheExact = false;
+				this->sweepCacheResfields = true;
+			}
+			else if (sweepCacheMode == "approx" || sweepCacheMode == "approximate" || sweepCacheMode == "crossing" ||
+					 sweepCacheMode == "resonance")
+			{
+				this->sweepCacheExact = false;
+				this->sweepCacheResfields = false;
+			}
+			else
+			{
+				this->Log() << "Unknown sweepcachemode \"" << sweepCacheMode << "\". Using "
+							<< (this->sweepCacheExact ? "exact" : (this->sweepCacheResfields ? "resonanceprojection" : "approx")) << "." << std::endl;
+			}
+		}
+
+		int resfieldPoints = 0;
+		if (this->Properties()->Get("resfieldspoints", resfieldPoints) ||
+			this->Properties()->Get("resfields_points", resfieldPoints) ||
+			this->Properties()->Get("sweepcachepoints", resfieldPoints) ||
+			this->Properties()->Get("sweep_cache_points", resfieldPoints))
+		{
+			if (resfieldPoints >= 2)
+				this->sweepCacheResfieldPoints = resfieldPoints;
+			else
+				this->sweepCacheResfieldPoints = 0;
+		}
+
+		if (this->Properties()->Get("powdergridtype", this->powderGridType))
+		{
+			this->powderGridType = ToLower(this->powderGridType);
+		}
+		else
+		{
+			this->powderGridType = "sophe";
+		}
+		this->Properties()->Get("powdergridsymmetry", this->powderGridSymmetry);
+		if (!this->Properties()->Get("powdergridsize", this->powderGridSize))
+		{
+			this->powderGridSize = 0;
+		}
+
+		if (!this->Properties()->Get("powdergammapoints", this->powderGammaPoints))
+		{
+			this->Properties()->Get("powdergammastps", this->powderGammaPoints);
+		}
+		if (this->powderGammaPoints < 1)
+		{
+			this->powderGammaPoints = 1;
+		}
+
+		this->Properties()->Get("powderfullsphere", this->powderFullSphere);
+		this->Properties()->Get("fulltensorrotation", this->fullTensorRotation);
+
+		this->Log() << "TR-EPR detection model: mwfrequency = " << this->mwFrequencyGHz
+					<< " GHz, linewidth = " << this->linewidth_mT
+					<< " mT, lineshape = " << this->lineshape
+					<< ", harmonic = " << this->detectionHarmonic
+					<< ", modulation amplitude = " << this->modulationAmplitude_mT << " mT." << std::endl;
+		this->Log() << "TR-EPR powder grid request: type = " << this->powderGridType
+					<< ", symmetry = " << this->powderGridSymmetry
+					<< ", sampling points = " << this->powdersamplingpoints
+					<< ", gamma points = " << this->powderGammaPoints
+					<< ", full sphere = " << (this->powderFullSphere ? "true" : "false") << "." << std::endl;
+
+		this->detectSpinNames.clear();
+		this->Properties()->GetList("detectspins", this->detectSpinNames, ',');
+
+		this->Properties()->Get("fieldinteraction", this->fieldInteractionName);
+		this->Properties()->Get("enforce_zeeman_sync", this->enforceZeemanSync);
+		this->Properties()->Get("enforcezeemansync", this->enforceZeemanSync);
+		this->Properties()->Get("initialstate", this->initialStateName);
+
+		if (this->Properties()->GetList("hamiltonianh0list", this->hamiltonianH0list, ','))
+		{
+			this->Log() << "HamiltonianH0list = [";
+			for (size_t j = 0; j < this->hamiltonianH0list.size(); j++)
+			{
+				this->Log() << this->hamiltonianH0list[j];
+				if (j < this->hamiltonianH0list.size() - 1)
+					this->Log() << ", ";
+			}
+			this->Log() << "]" << std::endl;
+		}
+
+		return true;
+	}
+
+
+	// -----------------------------------------------------
+	// Task-specific helper methods
+	// -----------------------------------------------------
 	double TaskStaticHSTrEPRSpectra::LineshapeValue(double _delta, double _fwhm) const
 	{
 		if (!std::isfinite(_delta) || !std::isfinite(_fwhm))
@@ -1283,15 +1120,111 @@ namespace RunSection
 		return pref * std::exp(-4.0 * std::log(2.0) * x * x);
 	}
 
-	double TaskStaticHSTrEPRSpectra::LinewidthToOmega(double _fwhm_mT, double _giso) const
+
+	std::vector<double> TaskStaticHSTrEPRSpectra::ApplyFieldHarmonic(const std::vector<double> &_field_mT, const std::vector<double> &_channel) const
 	{
-		const double muB_over_hbar = 8.79410005e+1; // rad / ns / T
-		return std::abs(_fwhm_mT) * 1.0e-3 * muB_over_hbar * std::abs(_giso);
+		if (this->detectionHarmonic <= 0 || _field_mT.size() != _channel.size() || _field_mT.size() < 3)
+			return _channel;
+
+		double meanStep = 0.0;
+		size_t stepCount = 0;
+		for (size_t i = 1; i < _field_mT.size(); ++i)
+		{
+			const double dx = std::abs(_field_mT[i] - _field_mT[i - 1]);
+			if (std::isfinite(dx) && dx > 0.0)
+			{
+				meanStep += dx;
+				++stepCount;
+			}
+		}
+		if (stepCount == 0)
+			return _channel;
+		meanStep /= static_cast<double>(stepCount);
+
+		const double span = (this->modulationAmplitude_mT > 0.0) ? this->modulationAmplitude_mT : meanStep;
+		const double h = (this->modulationAmplitude_mT > 0.0) ? (0.5 * span) : span;
+		if (!std::isfinite(h) || h <= 0.0)
+			return _channel;
+
+		const bool ascending = (_field_mT.back() >= _field_mT.front());
+		auto interp = [&](double x) -> double
+		{
+			if (ascending)
+			{
+				if (x <= _field_mT.front())
+					return _channel.front();
+				if (x >= _field_mT.back())
+					return _channel.back();
+				auto it = std::lower_bound(_field_mT.begin(), _field_mT.end(), x);
+				const size_t hi = static_cast<size_t>(std::distance(_field_mT.begin(), it));
+				const size_t lo = hi - 1;
+				const double denom = _field_mT[hi] - _field_mT[lo];
+				if (std::abs(denom) <= 0.0)
+					return _channel[lo];
+				const double t = (x - _field_mT[lo]) / denom;
+				return (1.0 - t) * _channel[lo] + t * _channel[hi];
+			}
+
+			if (x >= _field_mT.front())
+				return _channel.front();
+			if (x <= _field_mT.back())
+				return _channel.back();
+			auto it = std::lower_bound(_field_mT.begin(), _field_mT.end(), x, std::greater<double>());
+			const size_t hi = static_cast<size_t>(std::distance(_field_mT.begin(), it));
+			const size_t lo = hi - 1;
+			const double denom = _field_mT[hi] - _field_mT[lo];
+			if (std::abs(denom) <= 0.0)
+				return _channel[lo];
+			const double t = (x - _field_mT[lo]) / denom;
+			return (1.0 - t) * _channel[lo] + t * _channel[hi];
+		};
+
+		std::vector<double> out(_channel.size(), 0.0);
+		for (size_t i = 0; i < _channel.size(); ++i)
+		{
+			const double x = _field_mT[i];
+			const double ym = interp(x - h);
+			const double y0 = _channel[i];
+			const double yp = interp(x + h);
+
+			if (this->detectionHarmonic == 1)
+				out[i] = (yp - ym) / (2.0 * h);
+			else
+				out[i] = (yp - 2.0 * y0 + ym) / (h * h);
+		}
+
+		return out;
 	}
 
-	bool TaskStaticHSTrEPRSpectra::CreateRotationMatrix(double &_alpha, double &_beta, double &_gamma, arma::mat &_R) const
+	void TaskStaticHSTrEPRSpectra::ApplyDetectionHarmonic(SpectrumCache &_cache) const
 	{
-		// EasySpin convention: passive ZXZ Euler rotation (molecular -> lab).
+		if (this->detectionHarmonic <= 0)
+			return;
+
+		auto apply = [&](std::vector<double> &channel)
+		{
+			channel = this->ApplyFieldHarmonic(_cache.field_mT, channel);
+		};
+
+		apply(_cache.total_x);
+		apply(_cache.total_y);
+		apply(_cache.total_perp);
+		apply(_cache.cross_x);
+		apply(_cache.cross_y);
+		for (size_t i = 0; i < _cache.spin_names.size(); ++i)
+		{
+			apply(_cache.spin_x[i]);
+			apply(_cache.spin_y[i]);
+			apply(_cache.spin_perp[i]);
+			apply(_cache.spin_p[i]);
+			apply(_cache.spin_m[i]);
+		}
+	}
+
+
+	bool TaskStaticHSTrEPRSpectra::CreatePassiveZYZRotationMatrix(double &_alpha, double &_beta, double &_gamma, arma::mat &_R) const
+	{
+		// EasySpin convention: passive ZYZ Euler rotation (molecular -> lab).
 		const double ca = std::cos(_alpha), sa = std::sin(_alpha);
 		const double cb = std::cos(_beta), sb = std::sin(_beta);
 		const double cg = std::cos(_gamma), sg = std::sin(_gamma);
@@ -1304,299 +1237,11 @@ namespace RunSection
 		return true;
 	}
 
-	bool TaskStaticHSTrEPRSpectra::SopheGridParams(const std::string &_symmetry, double &_maxPhi, bool &_closedPhi, int &_nOctants) const
+	bool TaskStaticHSTrEPRSpectra::CreateUniformGrid(int &_Npoints, SpinAPI::PowderGrid &_uniformGrid) const
 	{
-		std::string sym = ToLower(_symmetry);
-		if (sym == "c1")
-		{
-			_maxPhi = 2.0 * arma::datum::pi;
-			_closedPhi = false;
-			_nOctants = 8;
-		}
-		else if (sym == "ci")
-		{
-			_maxPhi = 2.0 * arma::datum::pi;
-			_closedPhi = false;
-			_nOctants = 4;
-		}
-		else if (sym == "c2h")
-		{
-			_maxPhi = arma::datum::pi;
-			_closedPhi = false;
-			_nOctants = 2;
-		}
-		else if (sym == "s6")
-		{
-			_maxPhi = 2.0 * arma::datum::pi / 3.0;
-			_closedPhi = false;
-			_nOctants = 2;
-		}
-		else if (sym == "c4h")
-		{
-			_maxPhi = arma::datum::pi / 2.0;
-			_closedPhi = false;
-			_nOctants = 1;
-		}
-		else if (sym == "c6h")
-		{
-			_maxPhi = arma::datum::pi / 3.0;
-			_closedPhi = false;
-			_nOctants = 1;
-		}
-		else if (sym == "d2h")
-		{
-			_maxPhi = arma::datum::pi / 2.0;
-			_closedPhi = true;
-			_nOctants = 1;
-		}
-		else if (sym == "th")
-		{
-			_maxPhi = arma::datum::pi / 2.0;
-			_closedPhi = true;
-			_nOctants = 1;
-		}
-		else if (sym == "d3d")
-		{
-			_maxPhi = arma::datum::pi / 3.0;
-			_closedPhi = true;
-			_nOctants = 1;
-		}
-		else if (sym == "d4h")
-		{
-			_maxPhi = arma::datum::pi / 4.0;
-			_closedPhi = true;
-			_nOctants = 1;
-		}
-		else if (sym == "oh")
-		{
-			_maxPhi = arma::datum::pi / 4.0;
-			_closedPhi = true;
-			_nOctants = 1;
-		}
-		else if (sym == "d6h")
-		{
-			_maxPhi = arma::datum::pi / 6.0;
-			_closedPhi = true;
-			_nOctants = 1;
-		}
-		else if (sym == "dinfh")
-		{
-			_maxPhi = 0.0;
-			_closedPhi = true;
-			_nOctants = 0;
-		}
-		else if (sym == "o3")
-		{
-			_maxPhi = 0.0;
-			_closedPhi = true;
-			_nOctants = -1;
-		}
-		else
-		{
-			return false;
-		}
-
-		return true;
-	}
-
-	bool TaskStaticHSTrEPRSpectra::CreateSopheGrid(int _gridSize, const std::string &_symmetry, std::vector<std::tuple<double, double, double>> &_grid) const
-	{
-		_grid.clear();
-		if (_gridSize < 1)
-			return false;
-
-		double maxPhi = 0.0;
-		bool closedPhi = false;
-		int nOctants = 0;
-		if (!this->SopheGridParams(_symmetry, maxPhi, closedPhi, nOctants))
-			return false;
-
-		if (nOctants == -1)
-		{
-			_grid.emplace_back(0.0, 0.0, 4.0 * arma::datum::pi);
-			return true;
-		}
-
-		if (nOctants == 0)
-		{
-			if (_gridSize < 2)
-				return false;
-			const double dtheta = (arma::datum::pi / 2.0) / static_cast<double>(_gridSize - 1);
-			std::vector<double> boundaries;
-			boundaries.reserve(static_cast<size_t>(_gridSize + 1));
-			boundaries.push_back(0.0);
-			for (int i = 0; i < _gridSize - 1; ++i)
-				boundaries.push_back(dtheta * (0.5 + static_cast<double>(i)));
-			boundaries.push_back(arma::datum::pi / 2.0);
-
-			_grid.reserve(static_cast<size_t>(_gridSize));
-			for (int i = 0; i < _gridSize; ++i)
-			{
-				const double theta = dtheta * static_cast<double>(i);
-				const double w = -2.0 * (2.0 * arma::datum::pi) * (std::cos(boundaries[i + 1]) - std::cos(boundaries[i]));
-				_grid.emplace_back(theta, 0.0, w);
-			}
-
-			return true;
-		}
-
-		if (_gridSize < 2)
-			return false;
-
-		const int nOct = (nOctants == 8) ? 4 : nOctants;
-		const double dtheta = (arma::datum::pi / 2.0) / static_cast<double>(_gridSize - 1);
-		const double sindth2 = std::sin(dtheta / 2.0);
-		const double w0 = closedPhi ? 0.5 : 1.0;
-
-		const int nOrientations = _gridSize + nOct * _gridSize * (_gridSize - 1) / 2;
-		std::vector<double> phi(static_cast<size_t>(nOrientations), 0.0);
-		std::vector<double> theta(static_cast<size_t>(nOrientations), 0.0);
-		std::vector<double> weights(static_cast<size_t>(nOrientations), 0.0);
-
-		phi[0] = 0.0;
-		theta[0] = 0.0;
-		weights[0] = maxPhi * (1.0 - std::cos(dtheta / 2.0));
-
-		int start = 1;
-		for (int iSlice = 2; iSlice <= _gridSize - 1; ++iSlice)
-		{
-			const int nPhi = nOct * (iSlice - 1) + 1;
-			const double dPhi = maxPhi / static_cast<double>(nPhi - 1);
-			for (int j = 0; j < nPhi; ++j)
-			{
-				const int idx = start + j;
-				double w = 2.0 * std::sin((iSlice - 1) * dtheta) * sindth2 * dPhi;
-				if (j == 0)
-					w *= w0;
-				else if (j == nPhi - 1)
-					w *= 0.5;
-				weights[idx] = w;
-				phi[idx] = dPhi * static_cast<double>(j);
-				theta[idx] = dtheta * static_cast<double>(iSlice - 1);
-			}
-			start += nPhi;
-		}
-
-		const int nPhiEq = nOct * (_gridSize - 1) + 1;
-		const double dPhiEq = maxPhi / static_cast<double>(nPhiEq - 1);
-		for (int j = 0; j < nPhiEq; ++j)
-		{
-			const int idx = start + j;
-			double w = sindth2 * dPhiEq;
-			if (j == 0)
-				w *= w0;
-			else if (j == nPhiEq - 1)
-				w *= 0.5;
-			weights[idx] = w;
-			phi[idx] = dPhiEq * static_cast<double>(j);
-			theta[idx] = arma::datum::pi / 2.0;
-		}
-
-		if (!closedPhi)
-		{
-			std::vector<int> rmv;
-			rmv.reserve(static_cast<size_t>(_gridSize - 1));
-			int csum = 0;
-			for (int i = 1; i <= _gridSize - 1; ++i)
-			{
-				csum += nOct * i + 1;
-				rmv.push_back(csum);
-			}
-
-			std::vector<double> phi2;
-			std::vector<double> theta2;
-			std::vector<double> weights2;
-			phi2.reserve(phi.size() - rmv.size());
-			theta2.reserve(theta.size() - rmv.size());
-			weights2.reserve(weights.size() - rmv.size());
-
-			size_t rmv_pos = 0;
-			for (size_t idx = 0; idx < phi.size(); ++idx)
-			{
-				if (rmv_pos < rmv.size() && static_cast<int>(idx) == rmv[rmv_pos])
-				{
-					++rmv_pos;
-					continue;
-				}
-				phi2.push_back(phi[idx]);
-				theta2.push_back(theta[idx]);
-				weights2.push_back(weights[idx]);
-			}
-
-			phi.swap(phi2);
-			theta.swap(theta2);
-			weights.swap(weights2);
-		}
-
-		if (nOctants == 8)
-		{
-			const int nPhi = nPhiEq;
-			const int N = static_cast<int>(theta.size());
-			int start_idx = N - nPhi;
-			if (start_idx < 0)
-				start_idx = 0;
-
-			std::vector<double> phi_add;
-			std::vector<double> theta_add;
-			std::vector<double> weights_add;
-			phi_add.reserve(static_cast<size_t>(start_idx + 1));
-			theta_add.reserve(static_cast<size_t>(start_idx + 1));
-			weights_add.reserve(static_cast<size_t>(start_idx + 1));
-
-			for (int i = start_idx; i >= 0; --i)
-			{
-				weights[i] *= 0.5;
-				phi_add.push_back(phi[i]);
-				theta_add.push_back(arma::datum::pi - theta[i]);
-				weights_add.push_back(weights[i]);
-			}
-
-			phi.insert(phi.end(), phi_add.begin(), phi_add.end());
-			theta.insert(theta.end(), theta_add.begin(), theta_add.end());
-			weights.insert(weights.end(), weights_add.begin(), weights_add.end());
-		}
-
-		const double scale = 2.0 * (2.0 * arma::datum::pi / maxPhi);
-		for (auto &w : weights)
-			w *= scale;
-
-		_grid.reserve(phi.size());
-		for (size_t i = 0; i < phi.size(); ++i)
-			_grid.emplace_back(theta[i], phi[i], weights[i]);
-
-		return true;
-	}
-
-	bool TaskStaticHSTrEPRSpectra::CreateUniformGrid(int &_Npoints, std::vector<std::tuple<double, double, double>> &_uniformGrid) const
-	{
-		std::vector<double> theta(_Npoints);
-		std::vector<double> phi(_Npoints);
-		std::vector<double> weight(_Npoints);
-
-		_uniformGrid.resize(_Npoints);
-
-		const double golden = arma::datum::pi * (1.0 + std::sqrt(5.0));
-
-		for (int i = 0; i < _Npoints; ++i)
-		{
-			double index = static_cast<double>(i) + 0.5;
-
-			if (this->powderFullSphere)
-			{
-				theta[i] = std::acos(1.0 - 2.0 * index / _Npoints);
-				phi[i] = golden * index;
-				weight[i] = 4 * arma::datum::pi / _Npoints;
-			}
-			else
-			{
-				theta[i] = std::acos(1.0 - index / _Npoints);
-				phi[i] = golden * index;
-				weight[i] = 2 * arma::datum::pi / _Npoints;
-			}
-			_uniformGrid[i] = {theta[i], phi[i], weight[i]};
-		}
-
-		return true;
+		const auto domain = this->powderFullSphere ? SpinAPI::PowderGridDomain::FullSphere
+												   : SpinAPI::PowderGridDomain::UpperHemisphere;
+		return SpinAPI::CreateUniformPowderGrid(_Npoints, domain, _uniformGrid);
 	}
 
 	bool TaskStaticHSTrEPRSpectra::ResolveFieldInteraction(const SpinAPI::system_ptr &_system, SpinAPI::interaction_ptr &_fieldInteraction) const
@@ -1649,28 +1294,14 @@ namespace RunSection
 			return true;
 		};
 
+		// Detection spins define which magnetic dipole operators contribute to the
+		// reported per-spin channels. If the user does not specify them explicitly,
+		// we fall back to the Zeeman interaction and finally to all spins.
 		if (!this->detectSpinNames.empty())
 		{
 			for (const auto &name : this->detectSpinNames)
 			{
 				auto spin = _system->spins_find(name);
-				if (spin == nullptr)
-					return false;
-				add_spin(spin);
-			}
-		}
-		else if (!this->electron1Name.empty() || !this->electron2Name.empty())
-		{
-			if (!this->electron1Name.empty())
-			{
-				auto spin = _system->spins_find(this->electron1Name);
-				if (spin == nullptr)
-					return false;
-				add_spin(spin);
-			}
-			if (!this->electron2Name.empty())
-			{
-				auto spin = _system->spins_find(this->electron2Name);
 				if (spin == nullptr)
 					return false;
 				add_spin(spin);
@@ -1735,6 +1366,11 @@ namespace RunSection
 
 	bool TaskStaticHSTrEPRSpectra::BuildCachedSpectrum(const SpinAPI::system_ptr &_system, const SpinAPI::interaction_ptr &_fieldInteraction, const arma::vec &_field0, const arma::vec &_fieldStep, SpectrumCache &_cache)
 	{
+		// Cached sweep workflow:
+		// - build the field axis once from the AddVector sweep,
+		// - separate field-dependent Zeeman terms from the static Hamiltonian,
+		// - evaluate transition moments for each powder orientation,
+		// - deposit the resonances either directly or through the projection mesh.
 		if (_system == nullptr || _fieldInteraction == nullptr)
 			return false;
 
@@ -1767,6 +1403,11 @@ namespace RunSection
 
 		const bool useResfieldsCache = this->sweepCacheResfields;
 		const bool useApproxCache = (!this->sweepCacheExact && !useResfieldsCache);
+		// Cache modes:
+		// - exact: diagonalize at every output field point.
+		// - approx: locate resonances on a coarser scan and broaden them directly.
+		// - resonanceprojection: locate resonance fields first and, when possible,
+		//   project the orientation mesh continuously onto the output field axis.
 		const double dBstep = (steps > 1) ? (field_T[1] - field_T[0]) : 0.0;
 		const double dBabs = std::abs(dBstep);
 
@@ -1821,6 +1462,12 @@ namespace RunSection
 			return false;
 		if (detectSpins.empty())
 			return false;
+		const OrientationDiagnostics orientationDebug = OrientationDiagnostics::FromProperties(*this->Properties());
+		if (orientationDebug.enabled)
+			orientationDebug.InitialiseFile(_system->Name(), detectSpinNames);
+		std::ofstream debugOut;
+		if (orientationDebug.enabled)
+			debugOut.open(orientationDebug.file, std::ios::out | std::ios::app);
 		_cache.spin_names = detectSpinNames;
 		_cache.spin_x.assign(detectSpins.size(), std::vector<double>(steps, 0.0));
 		_cache.spin_y.assign(detectSpins.size(), std::vector<double>(steps, 0.0));
@@ -1828,25 +1475,64 @@ namespace RunSection
 		_cache.spin_p.assign(detectSpins.size(), std::vector<double>(steps, 0.0));
 		_cache.spin_m.assign(detectSpins.size(), std::vector<double>(steps, 0.0));
 
+		// Prepare the same initial-state machinery used in the direct path. The
+		// cache only changes how the field sweep is sampled, not the underlying
+		// quantum-mechanical intensities.
+		const SpinAPI::StateFrame initialStateFrame = _system->InitialStateFrame();
 		arma::cx_mat rho0;
 		bool hasInitialState = false;
-		if (!this->initialStateName.empty())
+		bool useOrientationThermal = false;
+		std::vector<std::string> thermalhamiltonian_list;
+		double thermalTemperature = 0.0;
+		if (initialStateFrame == SpinAPI::StateFrame::Eigen)
+		{
+			if (!this->initialStateName.empty())
+				return false;
+
+			auto initial_states = _system->InitialState();
+			if (initial_states.size() != 1 || initial_states.front() != nullptr)
+				return false;
+
+			useOrientationThermal = true;
+			thermalhamiltonian_list = _system->ThermalHamiltonianList();
+			thermalTemperature = _system->Temperature();
+		}
+		else if (!this->initialStateName.empty())
 		{
 			auto state = _system->states_find(this->initialStateName);
 			if (state != nullptr && space.GetState(state, rho0))
 				hasInitialState = true;
 		}
-		if (!hasInitialState)
+		if (!hasInitialState && !useOrientationThermal)
 		{
 			auto initial_states = _system->InitialState();
 			if (initial_states.empty())
 				return false;
 
-			for (auto state = initial_states.cbegin(); state != initial_states.cend(); state++)
+			std::vector<double> initial_weights = _system->Weights();
+			const bool useInitialWeights = (initial_weights.size() == initial_states.size());
+			if (useInitialWeights)
 			{
+				double sum_weights = std::accumulate(initial_weights.begin(), initial_weights.end(), 0.0);
+				if (sum_weights > 0.0)
+				{
+					for (double &weight : initial_weights)
+						weight /= sum_weights;
+				}
+			}
+
+			for (size_t stateIndex = 0; stateIndex < initial_states.size(); ++stateIndex)
+			{
+				auto state = initial_states.cbegin() + static_cast<std::ptrdiff_t>(stateIndex);
+				if ((*state) == nullptr)
+					continue;
+
 				arma::cx_mat tmp;
 				if (!space.GetState(*state, tmp))
 					continue;
+
+				if (useInitialWeights)
+					tmp *= initial_weights[stateIndex];
 
 				if (!hasInitialState)
 				{
@@ -1860,9 +1546,10 @@ namespace RunSection
 			}
 		}
 
-		if (!hasInitialState)
+		if (!hasInitialState && !useOrientationThermal)
 			return false;
-		rho0 /= arma::trace(rho0);
+		if (!useOrientationThermal)
+			rho0 /= arma::trace(rho0);
 
 		std::vector<arma::cx_mat> Sx_list(detectSpins.size());
 		std::vector<arma::cx_mat> Sy_list(detectSpins.size());
@@ -1879,9 +1566,12 @@ namespace RunSection
 		}
 
 		int numPoints = this->powdersamplingpoints;
-		std::vector<std::tuple<double, double, double>> grid;
+		SpinAPI::PowderGrid grid;
 		const bool useSopheGrid = (this->powderGridType == "sophe");
 		std::string gridSymmetry = this->powderGridSymmetry;
+		SpinAPI::SopheGridParameters sopheParams;
+		bool haveSopheParams = false;
+		int sopheGridSize = 0;
 		if (useSopheGrid)
 		{
 			std::string symLower = ToLower(gridSymmetry);
@@ -1890,22 +1580,20 @@ namespace RunSection
 				gridSymmetry = AutoDetectSopheSymmetry(_system, _fieldInteraction, h0list, this->fullTensorRotation);
 				this->Log() << "Auto-detected SOPHE grid symmetry: " << gridSymmetry << "." << std::endl;
 			}
+			haveSopheParams = SpinAPI::GetSopheGridParameters(gridSymmetry, sopheParams);
 		}
 		if (useSopheGrid)
 		{
 			int gridSize = this->powderGridSize;
 			if (gridSize < 2)
 			{
-				double maxPhi = 0.0;
-				bool closedPhi = false;
-				int nOctants = 0;
-				if (numPoints > 1 && this->SopheGridParams(gridSymmetry, maxPhi, closedPhi, nOctants))
+				if (numPoints > 1 && haveSopheParams)
 				{
 					int bestSize = 0;
 					int bestDiff = std::numeric_limits<int>::max();
 					for (int candidate = 2; candidate <= 200; ++candidate)
 					{
-						int count = SopheGridPointCount(candidate, nOctants, closedPhi);
+						int count = SpinAPI::SopheGridPointCount(candidate, sopheParams.nOctants, sopheParams.closedPhi);
 						int diff = std::abs(count - numPoints);
 						if (diff < bestDiff)
 						{
@@ -1922,9 +1610,10 @@ namespace RunSection
 					gridSize = 19;
 			}
 
-			if (!this->CreateSopheGrid(gridSize, gridSymmetry, grid))
+			if (!SpinAPI::CreateSophePowderGrid(gridSize, gridSymmetry, grid))
 				return false;
 			numPoints = static_cast<int>(grid.size());
+			sopheGridSize = gridSize;
 		}
 		else if (numPoints > 1)
 		{
@@ -1934,7 +1623,7 @@ namespace RunSection
 		else
 		{
 			grid.clear();
-			grid.emplace_back(0.0, 0.0, 1.0);
+			grid.push_back({0.0, 0.0, 1.0});
 			numPoints = 1;
 		}
 		const int gamma_points = (numPoints > 1) ? std::max(1, this->powderGammaPoints) : 1;
@@ -1969,7 +1658,7 @@ namespace RunSection
 
 			arma::mat RFrame = arma::eye<arma::mat>(3, 3);
 			if (spinZeeman[i] != nullptr)
-				RFrame = PassiveZXZRotation(spinZeeman[i]->Framelist());
+				RFrame = PassiveZYZRotation(spinZeeman[i]->Framelist());
 			const arma::mat RFrame_T2M = RFrame.t();
 			g_frame_base[i] = RFrame_T2M * g_base * RFrame_T2M.t();
 
@@ -1998,12 +1687,52 @@ namespace RunSection
 
 		const arma::cx_double I(0.0, 1.0);
 		const size_t spin_count = detectSpins.size();
+		const bool projectionCandidate = useSopheGrid && haveSopheParams && numPoints > 1 && lwB_mT <= 0.0 && (useApproxCache || useResfieldsCache);
+		SpinAPI::PowderProjectionMesh projectionMesh;
+		bool projectionPossible = false;
+		size_t projectionSamples = 0;
+		std::vector<unsigned int> projectionCounts;
+		std::vector<double> projectionPositions;
+		std::vector<double> projectionTotalX;
+		std::vector<double> projectionTotalY;
+		std::vector<double> projectionTotalPerp;
+		std::vector<double> projectionCrossX;
+		std::vector<double> projectionCrossY;
+		std::vector<std::vector<double>> projectionSpinX;
+		std::vector<std::vector<double>> projectionSpinY;
+		std::vector<std::vector<double>> projectionSpinPerp;
+		std::vector<std::vector<double>> projectionSpinP;
+		std::vector<std::vector<double>> projectionSpinM;
+		if (projectionCandidate)
+		{
+			projectionPossible = SpinAPI::BuildSopheProjectionMesh(sopheParams.nOctants, sopheParams.closedPhi, sopheGridSize, grid, projectionMesh);
+			if (projectionPossible)
+			{
+				projectionSamples = static_cast<size_t>(numPoints) * static_cast<size_t>(gamma_points);
+				const size_t projectionSize = transitions.size() * projectionSamples;
+				const double nan = std::numeric_limits<double>::quiet_NaN();
+				projectionCounts.assign(projectionSize, 0U);
+				projectionPositions.assign(projectionSize, nan);
+				projectionTotalX.assign(projectionSize, 0.0);
+				projectionTotalY.assign(projectionSize, 0.0);
+				projectionTotalPerp.assign(projectionSize, 0.0);
+				projectionCrossX.assign(projectionSize, 0.0);
+				projectionCrossY.assign(projectionSize, 0.0);
+				projectionSpinX.assign(spin_count, std::vector<double>(projectionSize, 0.0));
+				projectionSpinY.assign(spin_count, std::vector<double>(projectionSize, 0.0));
+				projectionSpinPerp.assign(spin_count, std::vector<double>(projectionSize, 0.0));
+				projectionSpinP.assign(spin_count, std::vector<double>(projectionSize, 0.0));
+				projectionSpinM.assign(spin_count, std::vector<double>(projectionSize, 0.0));
+			}
+		}
 
 		const std::vector<double> *field_scan = &field_T;
 		std::vector<double> field_scan_storage;
 		unsigned int scan_steps = steps;
 		if (useResfieldsCache)
 		{
+			// The resonance scan only needs to resolve sign changes in the transition
+			// detuning, so it can use a coarser field mesh than the final output axis.
 			unsigned int points = (this->sweepCacheResfieldPoints > 1) ? static_cast<unsigned int>(this->sweepCacheResfieldPoints) : 0U;
 			if (points < 2)
 			{
@@ -2038,23 +1767,43 @@ namespace RunSection
 				const double w = base_weight * gamma_weight;
 
 				arma::mat Rot;
-				if (!this->CreateRotationMatrix(phi, theta, gamma, Rot))
+				if (!this->CreatePassiveZYZRotationMatrix(phi, theta, gamma, Rot))
 					continue;
 
 				const arma::mat Rpowder = Rot;
+				arma::cx_mat rho_oriented;
+				if (useOrientationThermal)
+				{
+					arma::sp_cx_mat Hthermal_sp;
+					if (!space.BaseHamiltonianRotatedZYZ(thermalhamiltonian_list, Rot, Hthermal_sp) ||
+						!space.ThermalStateFromHamiltonian(arma::cx_mat(Hthermal_sp), thermalTemperature, rho_oriented))
+						continue;
+				}
+				else
+				{
+					rho_oriented = rho0;
+					// Keep molecular-frame initial conditions aligned with
+					// the resonance orientation selected for this grid point.
+					if (initialStateFrame == SpinAPI::StateFrame::Molecular && !space.RotateState(rho0, Rot, rho_oriented))
+						continue;
+					}
 
-				arma::sp_cx_mat Hstatic_sp;
-				if (h0list_noB.empty())
+					// Cached TrEPR still follows the pepper-style Hilbert
+					// formulation. Splitting Hstatic and Hz only accelerates
+					// the field scan; it must remain the full rotated ZYZ
+					// Hamiltonian, not the secular H0/H1 propagation helper.
+					arma::sp_cx_mat Hstatic_sp;
+					if (h0list_noB.empty())
 				{
 					Hstatic_sp = arma::zeros<arma::sp_cx_mat>(dim, dim);
 				}
-				else if (!space.BaseHamiltonianRotatedZXZ(h0list_noB, Rot, Hstatic_sp))
+				else if (!space.BaseHamiltonianRotatedZYZ(h0list_noB, Rot, Hstatic_sp))
 				{
 					continue;
 				}
 
 				arma::sp_cx_mat Hz_sp;
-				if (!space.BaseHamiltonianRotatedZXZ(zeelist, Rot, Hz_sp))
+				if (!space.BaseHamiltonianRotatedZYZ(zeelist, Rot, Hz_sp))
 					continue;
 				const bool can_block = hasMzBlocks && IsBlockDiagonalMz(Hstatic_sp, mzBlocks.mz2, 1e-12) && IsBlockDiagonalMz(Hz_sp, mzBlocks.mz2, 1e-12);
 				arma::cx_mat Hstatic = arma::cx_mat(Hstatic_sp);
@@ -2091,6 +1840,8 @@ namespace RunSection
 
 				if (useApproxCache || useResfieldsCache)
 				{
+					// Track each transition detuning along the scan and detect zero
+					// crossings. Each zero crossing corresponds to a resonance field.
 					std::vector<double> prev_delta(transitions.size(), 0.0);
 					arma::cx_mat prev_eigvec;
 					bool have_prev = false;
@@ -2158,7 +1909,9 @@ namespace RunSection
 								const arma::cx_vec Um = eigvec_use.col(m);
 								const arma::cx_vec Vn = eigvec_use.col(n);
 
-								const double population = std::real(arma::cdot(Um, rho0 * Um)) - std::real(arma::cdot(Vn, rho0 * Vn));
+
+								const double population = std::real(arma::cdot(Um, rho_oriented * Um)) - std::real(arma::cdot(Vn, rho_oriented * Vn));
+
 								if (std::abs(population) < 1e-15)
 									continue;
 
@@ -2212,6 +1965,66 @@ namespace RunSection
 								const double amp_total_perp = population * 0.5 * (ITx + ITy) * dBdE;
 								const double amp_crossx = population * ICx * dBdE;
 								const double amp_crossy = population * ICy * dBdE;
+
+								if (orientationDebug.ShouldRecord(grid_num, Bres) && debugOut.good())
+								{
+									debugOut << _system->Name() << "\t"
+											 << grid_num << "\t"
+											 << gamma_idx << "\t"
+											 << std::setprecision(12) << theta << "\t"
+											 << phi << "\t"
+											 << gamma << "\t"
+											 << w << "\t"
+											 << m << "\t"
+											 << n << "\t"
+											 << Bres << "\t"
+											 << (1.0e3 * Bres) << "\t"
+											 << amp_total_x << "\t"
+											 << amp_total_y << "\t"
+											 << amp_total_perp << "\t"
+											 << amp_crossx << "\t"
+											 << amp_crossy;
+									for (size_t i = 0; i < spin_count; ++i)
+									{
+										debugOut << "\t" << amp_spin_x[i]
+												 << "\t" << amp_spin_y[i]
+												 << "\t" << amp_spin_perp[i]
+												 << "\t" << amp_spin_p[i]
+												 << "\t" << amp_spin_m[i];
+									}
+									debugOut << "\n";
+								}
+
+								if (projectionPossible)
+								{
+									// Store one resonance field per transition and
+									// orientation sample. These values are projected
+									// onto the final sweep axis after the powder loop.
+									const size_t sampleIndex = static_cast<size_t>(gamma_idx) * static_cast<size_t>(numPoints) + static_cast<size_t>(grid_num);
+									const size_t projectionIndex = t * projectionSamples + sampleIndex;
+									if (projectionCounts[projectionIndex] == 0U)
+									{
+										projectionPositions[projectionIndex] = 1.0e3 * Bres;
+										projectionTotalX[projectionIndex] = amp_total_x;
+										projectionTotalY[projectionIndex] = amp_total_y;
+										projectionTotalPerp[projectionIndex] = amp_total_perp;
+										projectionCrossX[projectionIndex] = amp_crossx;
+										projectionCrossY[projectionIndex] = amp_crossy;
+										for (size_t i = 0; i < spin_count; ++i)
+										{
+											projectionSpinX[i][projectionIndex] = amp_spin_x[i];
+											projectionSpinY[i][projectionIndex] = amp_spin_y[i];
+											projectionSpinPerp[i][projectionIndex] = amp_spin_perp[i];
+											projectionSpinP[i][projectionIndex] = amp_spin_p[i];
+											projectionSpinM[i][projectionIndex] = amp_spin_m[i];
+										}
+									}
+									else
+									{
+										projectionPossible = false;
+									}
+									projectionCounts[projectionIndex] += 1U;
+								}
 
 								if (lwB_mT <= 0.0 || dBabs == 0.0)
 								{
@@ -2312,7 +2125,7 @@ namespace RunSection
 							continue;
 
 						const arma::cx_mat Udag = arma::trans(arma::conj(eigvec));
-						const arma::cx_mat rho_eig = Udag * rho0 * eigvec;
+						const arma::cx_mat rho_eig = Udag * rho_oriented * eigvec;
 						const arma::vec rho_diag = arma::real(rho_eig.diag());
 
 						arma::cx_mat dHdB_ev = dHdB * eigvec;
@@ -2355,7 +2168,9 @@ namespace RunSection
 						{
 							const auto m = trans.first;
 							const auto n = trans.second;
+
 							const double population = rho_diag(m) - rho_diag(n);
+
 							if (std::abs(population) < 1e-15)
 								continue;
 
@@ -2429,179 +2244,580 @@ namespace RunSection
 			}
 		}
 
+		if (projectionPossible)
+		{
+			// Replace the provisional binned cache by the continuously projected
+			// spectrum assembled from resonance fields and the powder-orientation mesh.
+			auto projectChannel = [&](const std::vector<double> &amplitudeData, std::vector<double> &target)
+			{
+				std::fill(target.begin(), target.end(), 0.0);
+				std::vector<double> positions(static_cast<size_t>(numPoints), std::numeric_limits<double>::quiet_NaN());
+				std::vector<double> amplitudes(static_cast<size_t>(numPoints), 0.0);
+				std::vector<double> local(target.size(), 0.0);
+
+				for (int gamma_idx = 0; gamma_idx < gamma_points; ++gamma_idx)
+				{
+					for (size_t t = 0; t < transitions.size(); ++t)
+					{
+						bool hasResonance = false;
+						for (int grid_num = 0; grid_num < numPoints; ++grid_num)
+						{
+							const size_t sampleIndex = static_cast<size_t>(gamma_idx) * static_cast<size_t>(numPoints) + static_cast<size_t>(grid_num);
+							const size_t projectionIndex = t * projectionSamples + sampleIndex;
+							positions[static_cast<size_t>(grid_num)] = projectionPositions[projectionIndex];
+							amplitudes[static_cast<size_t>(grid_num)] = amplitudeData[projectionIndex];
+							hasResonance = hasResonance || std::isfinite(positions[static_cast<size_t>(grid_num)]);
+						}
+
+						if (!hasResonance)
+							continue;
+
+						std::fill(local.begin(), local.end(), 0.0);
+						if (projectionMesh.axial)
+							SpinAPI::ProjectPowderZones(positions, amplitudes, projectionMesh.weights, _cache.field_mT, local);
+						else
+							SpinAPI::ProjectPowderTriangles(projectionMesh.triangles, projectionMesh.weights, positions, amplitudes, _cache.field_mT, local);
+
+						for (size_t j = 0; j < target.size(); ++j)
+							target[j] += gamma_weight * local[j];
+					}
+				}
+			};
+
+			projectChannel(projectionTotalX, _cache.total_x);
+			projectChannel(projectionTotalY, _cache.total_y);
+			projectChannel(projectionTotalPerp, _cache.total_perp);
+			projectChannel(projectionCrossX, _cache.cross_x);
+			projectChannel(projectionCrossY, _cache.cross_y);
+			for (size_t i = 0; i < spin_count; ++i)
+			{
+				projectChannel(projectionSpinX[i], _cache.spin_x[i]);
+				projectChannel(projectionSpinY[i], _cache.spin_y[i]);
+				projectChannel(projectionSpinPerp[i], _cache.spin_perp[i]);
+				projectChannel(projectionSpinP[i], _cache.spin_p[i]);
+				projectChannel(projectionSpinM[i], _cache.spin_m[i]);
+			}
+		}
+
+
+		this->ApplyDetectionHarmonic(_cache);
+
+
 		return true;
 	}
 
-	void TaskStaticHSTrEPRSpectra::WriteHeader(std::ostream &_stream)
-	{
-		_stream << "Step ";
-		_stream << "Time ";
-		this->WriteStandardOutputHeader(_stream);
+	// -----------------------------------------------------
+	// TaskStaticHSTrEPRSpectra private helper methods
+	// -----------------------------------------------------
 
-		auto systems = this->SpinSystems();
-		for (auto i = systems.cbegin(); i != systems.cend(); i++)
+	TaskStaticHSTrEPRSpectra::OrientationDiagnostics TaskStaticHSTrEPRSpectra::OrientationDiagnostics::FromProperties(const MSDParser::ObjectParser &_props)
+	{
+		OrientationDiagnostics diagnostics;
+		(void)_props.Get("debugpowder", diagnostics.enabled);
+		(void)_props.Get("debugtrepr", diagnostics.enabled);
+		(void)_props.Get("debugorientationdump", diagnostics.enabled);
+		if (!diagnostics.enabled)
+			return diagnostics;
+
+		(void)_props.Get("debugfieldmin", diagnostics.fieldMinT);
+		(void)_props.Get("debugfieldmax", diagnostics.fieldMaxT);
+		(void)_props.Get("debugmaxorientations", diagnostics.maxOrientations);
+
+		std::string datafile;
+		if (_props.Get("datafile", datafile) && !datafile.empty())
+			diagnostics.file = datafile + ".orientation_debug.tsv";
+		else
+			diagnostics.file = "statichs_trepr.orientation_debug.tsv";
+		(void)_props.Get("debugfile", diagnostics.file);
+
+		if (diagnostics.fieldMinT > diagnostics.fieldMaxT)
+			std::swap(diagnostics.fieldMinT, diagnostics.fieldMaxT);
+		return diagnostics;
+	}
+
+	void TaskStaticHSTrEPRSpectra::OrientationDiagnostics::InitialiseFile(const std::string &_systemName, const std::vector<std::string> &_spinNames) const
+	{
+		if (!enabled)
+			return;
+
+		std::ofstream out(file, std::ios::out | std::ios::trunc);
+		out << "system\tgrid_index\tgamma_index\ttheta\tphi\tgamma\tweight\ttransition_m\ttransition_n\tresonance_T\tresonance_mT\ttotal_x\ttotal_y\ttotal_perp\tcross_x\tcross_y";
+		for (const auto &spinName : _spinNames)
 		{
-			SpinAPI::interaction_ptr fieldInteraction = nullptr;
-			std::vector<SpinAPI::spin_ptr> detectSpins;
-			std::vector<std::string> detectSpinNames;
-			this->ResolveFieldInteraction((*i), fieldInteraction);
-			if (!this->ResolveDetectionSpins((*i), fieldInteraction, detectSpins, detectSpinNames))
+			out << "\t" << _systemName << "." << spinName << "_x";
+			out << "\t" << _systemName << "." << spinName << "_y";
+			out << "\t" << _systemName << "." << spinName << "_perp";
+			out << "\t" << _systemName << "." << spinName << "_p";
+			out << "\t" << _systemName << "." << spinName << "_m";
+		}
+		out << "\n";
+	}
+
+	bool TaskStaticHSTrEPRSpectra::OrientationDiagnostics::ShouldRecord(size_t _gridIndex, double _resonanceFieldT) const
+	{
+		return enabled &&
+			   (maxOrientations <= 0 || _gridIndex < static_cast<size_t>(maxOrientations)) &&
+			   _resonanceFieldT >= fieldMinT &&
+			   _resonanceFieldT <= fieldMaxT;
+	}
+
+	void TaskStaticHSTrEPRSpectra::FieldSyncGuard::Apply(const std::vector<SpinAPI::interaction_ptr> &_interactions, const arma::vec &_field)
+	{
+		saved.clear();
+		saved.reserve(_interactions.size());
+		for (const auto &inter : _interactions)
+		{
+			if (inter == nullptr)
+				continue;
+			const arma::vec current = inter->Field();
+			if (current.n_elem != 3 || !current.is_finite())
+				continue;
+			saved.emplace_back(inter, current);
+			arma::vec tmp = _field;
+			inter->SetField(tmp);
+		}
+	}
+
+	TaskStaticHSTrEPRSpectra::FieldSyncGuard::~FieldSyncGuard()
+	{
+		for (auto &entry : saved)
+		{
+			arma::vec tmp = entry.second;
+			entry.first->SetField(tmp);
+		}
+	}
+
+	std::string TaskStaticHSTrEPRSpectra::ToLower(std::string value)
+	{
+		std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c)
+					   { return static_cast<char>(std::tolower(c)); });
+		return value;
+	}
+
+	// If the Hamiltonian conserves total Mz, the Hilbert space splits into
+	// independent sectors. Diagonalizing these sectors is only an algebraic
+	// acceleration; it does not modify the physical model.
+	TaskStaticHSTrEPRSpectra::MzBlocks TaskStaticHSTrEPRSpectra::BuildMzBlocks(const std::vector<SpinAPI::spin_ptr> &spins)
+	{
+		MzBlocks result;
+		if (spins.empty())
+			return result;
+
+		const size_t nspins = spins.size();
+		std::vector<size_t> mult(nspins);
+		std::vector<int> svals(nspins);
+		size_t dim = 1;
+		for (size_t i = 0; i < nspins; ++i)
+		{
+			mult[i] = static_cast<size_t>(spins[i]->Multiplicity());
+			svals[i] = spins[i]->S();
+			dim *= mult[i];
+		}
+
+		std::vector<size_t> stride(nspins, 1);
+		for (size_t i = nspins; i-- > 0;)
+		{
+			if (i + 1 < nspins)
+				stride[i] = stride[i + 1] * mult[i + 1];
+		}
+
+		result.mz2.resize(dim);
+		for (size_t idx = 0; idx < dim; ++idx)
+		{
+			int total = 0;
+			for (size_t i = 0; i < nspins; ++i)
 			{
-				detectSpinNames.clear();
+				const size_t local = (idx / stride[i]) % mult[i];
+				const int m = svals[i] - 2 * static_cast<int>(local);
+				total += m;
+			}
+			result.mz2[idx] = total;
+		}
+
+		std::map<int, std::vector<arma::uword>> groups;
+		for (arma::uword i = 0; i < result.mz2.size(); ++i)
+			groups[result.mz2[i]].push_back(i);
+
+		result.blocks.reserve(groups.size());
+		for (auto &kv : groups)
+		{
+			arma::uvec idx(static_cast<arma::uword>(kv.second.size()));
+			for (size_t i = 0; i < kv.second.size(); ++i)
+				idx(static_cast<arma::uword>(i)) = kv.second[i];
+			result.blocks.push_back(std::move(idx));
+		}
+
+		return result;
+	}
+
+	arma::mat TaskStaticHSTrEPRSpectra::PassiveZYZRotation(const arma::vec &fr)
+	{
+		double a = (fr.n_elem >= 1) ? fr(0) : 0.0;
+		double b = (fr.n_elem >= 2) ? fr(1) : 0.0;
+		double g = (fr.n_elem >= 3) ? fr(2) : 0.0;
+
+		const double ca = std::cos(a), sa = std::sin(a);
+		const double cb = std::cos(b), sb = std::sin(b);
+		const double cg = std::cos(g), sg = std::sin(g);
+
+		arma::mat Ra = {{ca, sa, 0.0}, {-sa, ca, 0.0}, {0.0, 0.0, 1.0}};
+		arma::mat Rb = {{cb, 0.0, -sb}, {0.0, 1.0, 0.0}, {sb, 0.0, cb}};
+		arma::mat Rg = {{cg, sg, 0.0}, {-sg, cg, 0.0}, {0.0, 0.0, 1.0}};
+		return Rg * Rb * Ra;
+	}
+
+	bool TaskStaticHSTrEPRSpectra::IsZeemanInteraction(const SpinAPI::interaction_ptr &inter)
+	{
+		if (inter == nullptr)
+			return false;
+		if (!SpinAPI::IsStatic(*inter))
+			return false;
+		if (inter->Type() != SpinAPI::InteractionType::SingleSpin)
+			return false;
+		const arma::vec field = inter->Field();
+		return (field.n_elem == 3 && field.is_finite());
+	}
+
+	std::vector<SpinAPI::interaction_ptr> TaskStaticHSTrEPRSpectra::CollectZeemanInteractions(const SpinAPI::system_ptr &system, const std::vector<std::string> &h0list)
+	{
+		std::vector<SpinAPI::interaction_ptr> out;
+		if (system == nullptr)
+			return out;
+
+		out.reserve(h0list.size());
+		for (const auto &name : h0list)
+		{
+			auto inter = system->interactions_find(name);
+			if (!IsZeemanInteraction(inter))
+				continue;
+			out.push_back(inter);
+		}
+
+		std::sort(out.begin(), out.end(), [](const auto &a, const auto &b) {
+			return a.get() < b.get();
+		});
+		out.erase(std::unique(out.begin(), out.end()), out.end());
+		return out;
+	}
+
+	SpinAPI::interaction_ptr TaskStaticHSTrEPRSpectra::FindZeemanForSpin(const SpinAPI::spin_ptr &spin, const std::vector<SpinAPI::interaction_ptr> &zeemanList)
+	{
+		if (spin == nullptr)
+			return nullptr;
+		for (const auto &inter : zeemanList)
+		{
+			if (inter == nullptr)
+				continue;
+			const auto group = inter->Group1();
+			if (std::find(group.begin(), group.end(), spin) != group.end())
+				return inter;
+		}
+		return nullptr;
+	}
+
+	bool TaskStaticHSTrEPRSpectra::IsParallel(const arma::vec &a, const arma::vec &b, double tol)
+	{
+		if (a.n_elem != 3 || b.n_elem != 3)
+			return false;
+		const double na = arma::norm(a);
+		const double nb = arma::norm(b);
+		if (!std::isfinite(na) || !std::isfinite(nb) || na == 0.0 || nb == 0.0)
+			return false;
+		return (arma::norm(arma::cross(a / na, b / nb)) <= tol);
+	}
+
+	bool TaskStaticHSTrEPRSpectra::CollectAddVectorSteps(const std::vector<std::shared_ptr<Action>> &actions,
+							   unsigned int steps,
+							   std::map<std::string, arma::vec> &stepsOut,
+							   std::string &error)
+	{
+		stepsOut.clear();
+		error.clear();
+
+		for (const auto &action : actions)
+		{
+			auto add = std::dynamic_pointer_cast<ActionAddVector>(action);
+			if (!add)
+			{
+				error = "Non-AddVector action present.";
+				return false;
 			}
 
-			_stream << (*i)->Name() << ".Field_mT ";
-			_stream << (*i)->Name() << ".Total_x ";
-			_stream << (*i)->Name() << ".Total_y ";
-			_stream << (*i)->Name() << ".Total_perp ";
-			_stream << (*i)->Name() << ".Cross_x ";
-			_stream << (*i)->Name() << ".Cross_y ";
-
-			for (const auto &spinName : detectSpinNames)
+			std::string targetName;
+			if (!add->GetProperties()->Get("vector", targetName))
+				add->GetProperties()->Get("actionvector", targetName);
+			if (targetName.empty())
 			{
-				_stream << (*i)->Name() << "." << spinName << "_x ";
-				_stream << (*i)->Name() << "." << spinName << "_y ";
-				_stream << (*i)->Name() << "." << spinName << "_perp ";
-				_stream << (*i)->Name() << "." << spinName << "_p ";
-				_stream << (*i)->Name() << "." << spinName << "_m ";
+				error = "AddVector action missing target vector.";
+				return false;
 			}
-		}
 
-		_stream << std::endl;
-	}
-
-	bool TaskStaticHSTrEPRSpectra::Validate()
-	{
-		bool hasFrequency = this->Properties()->Get("mwfrequency", this->mwFrequencyGHz);
-		if (!hasFrequency)
-			hasFrequency = this->Properties()->Get("frequency", this->mwFrequencyGHz);
-		if (!hasFrequency)
-			hasFrequency = this->Properties()->Get("rffrequency", this->mwFrequencyGHz);
-		if (!hasFrequency)
-		{
-			this->Log() << "Failed to obtain mwfrequency/frequency. Using frequency = 0 by default." << std::endl;
-		}
-
-		const bool hasLinewidth = this->Properties()->Get("linewidth", this->linewidth_mT);
-		const bool hasLegacyFad = this->Properties()->Get("linewidth_fad", this->linewidthFad_mT);
-		const bool hasLegacyDonor = this->Properties()->Get("linewidth_donor", this->linewidthDonor_mT);
-		if (!hasLinewidth)
-		{
-			if (!hasLegacyFad && !hasLegacyDonor)
+			arma::vec direction;
+			if (!add->GetProperties()->Get("direction", direction) || direction.n_elem != 3 || !direction.is_finite())
 			{
-				this->Log() << "Failed to obtain linewidth. Using linewidth = 0 by default." << std::endl;
+				error = "AddVector action has invalid direction.";
+				return false;
 			}
-			this->linewidth_mT = 0.5 * (std::abs(this->linewidthFad_mT) + std::abs(this->linewidthDonor_mT));
-		}
+			direction = arma::normalise(direction);
 
-		if (this->Properties()->Get("lineshape", this->lineshape))
-		{
-			this->lineshape = ToLower(this->lineshape);
-		}
-		else
-		{
-			this->lineshape = "gaussian";
-		}
-
-	if (!this->Properties()->Get("powdersamplingpoints", this->powdersamplingpoints))
-	{
-		this->powdersamplingpoints = 0;
-	}
-
-	if (!this->Properties()->Get("sweepcache", this->useSweepCache) &&
-		!this->Properties()->Get("cache_sweep", this->useSweepCache) &&
-		!this->Properties()->Get("sweep_cache", this->useSweepCache))
-	{
-		this->useSweepCache = true;
-	}
-	std::string sweepCacheMode;
-	if (this->Properties()->Get("sweepcachemode", sweepCacheMode) ||
-		this->Properties()->Get("sweep_cache_mode", sweepCacheMode) ||
-		this->Properties()->Get("cache_sweep_mode", sweepCacheMode))
-	{
-		sweepCacheMode = ToLower(sweepCacheMode);
-		if (sweepCacheMode == "exact" || sweepCacheMode == "direct" || sweepCacheMode == "matrix")
-		{
-			this->sweepCacheExact = true;
-			this->sweepCacheResfields = false;
-		}
-		else if (sweepCacheMode == "resfields" || sweepCacheMode == "resfield")
-		{
-			this->sweepCacheExact = false;
-			this->sweepCacheResfields = true;
-		}
-		else if (sweepCacheMode == "approx" || sweepCacheMode == "approximate" || sweepCacheMode == "crossing" ||
-				 sweepCacheMode == "resonance" || sweepCacheMode == "pepper")
-		{
-			this->sweepCacheExact = false;
-			this->sweepCacheResfields = false;
-		}
-		else
-		{
-			this->Log() << "Unknown sweepcachemode \"" << sweepCacheMode << "\". Using "
-						<< (this->sweepCacheExact ? "exact" : (this->sweepCacheResfields ? "resfields" : "approx")) << "." << std::endl;
-		}
-	}
-	int resfieldPoints = 0;
-	if (this->Properties()->Get("resfieldspoints", resfieldPoints) ||
-		this->Properties()->Get("resfields_points", resfieldPoints) ||
-		this->Properties()->Get("sweepcachepoints", resfieldPoints) ||
-		this->Properties()->Get("sweep_cache_points", resfieldPoints))
-	{
-		if (resfieldPoints >= 2)
-			this->sweepCacheResfieldPoints = resfieldPoints;
-		else
-			this->sweepCacheResfieldPoints = 0;
-	}
-
-		if (this->Properties()->Get("powdergridtype", this->powderGridType))
-		{
-			this->powderGridType = ToLower(this->powderGridType);
-		}
-		else
-		{
-			this->powderGridType = "fibonacci";
-		}
-		this->Properties()->Get("powdergridsymmetry", this->powderGridSymmetry);
-		if (!this->Properties()->Get("powdergridsize", this->powderGridSize))
-		{
-			this->powderGridSize = 0;
-		}
-
-		if (!this->Properties()->Get("powdergammapoints", this->powderGammaPoints))
-		{
-			this->Properties()->Get("powdergammastps", this->powderGammaPoints);
-		}
-		if (this->powderGammaPoints < 1)
-		{
-			this->powderGammaPoints = 1;
-		}
-
-		this->Properties()->Get("powderfullsphere", this->powderFullSphere);
-		this->Properties()->Get("fulltensorrotation", this->fullTensorRotation);
-
-		this->detectSpinNames.clear();
-		this->Properties()->GetList("detectspins", this->detectSpinNames, ',');
-		this->Properties()->Get("electron1", this->electron1Name);
-		this->Properties()->Get("electron2", this->electron2Name);
-
-		this->Properties()->Get("fieldinteraction", this->fieldInteractionName);
-		this->Properties()->Get("enforce_zeeman_sync", this->enforceZeemanSync);
-		this->Properties()->Get("enforcezeemansync", this->enforceZeemanSync);
-		this->Properties()->Get("initialstate", this->initialStateName);
-
-		if (this->Properties()->GetList("hamiltonianh0list", this->hamiltonianH0list, ','))
-		{
-			this->Log() << "HamiltonianH0list = [";
-			for (size_t j = 0; j < this->hamiltonianH0list.size(); j++)
+			if (add->Period() != 1 || add->First() != 1)
 			{
-				this->Log() << this->hamiltonianH0list[j];
-				if (j < this->hamiltonianH0list.size() - 1)
-					this->Log() << ", ";
+				error = "AddVector action has non-unit period or does not start at step 1.";
+				return false;
 			}
-			this->Log() << "]" << std::endl;
+			if (add->Last() != 0 && add->Last() < steps)
+			{
+				error = "AddVector action terminates before the end of the run.";
+				return false;
+			}
+
+			const arma::vec step = add->Value() * direction;
+			auto it = stepsOut.find(targetName);
+			if (it != stepsOut.end())
+			{
+				// RunSection applies every action. Multiple increments for one
+				// target therefore compose into one net sweep step.
+				it->second += step;
+			}
+			else
+			{
+				stepsOut.emplace(targetName, step);
+			}
 		}
 
 		return true;
 	}
+
+	void TaskStaticHSTrEPRSpectra::UpdateSymmetryFlags(const arma::mat &M, SymmetryFlags &flags, bool fullTensorRotation, double relTol)
+	{
+		arma::mat A = M;
+		if (!fullTensorRotation)
+			A = A % arma::eye<arma::mat>(3, 3);
+
+		double maxAbs = 0.0;
+		double maxOff = 0.0;
+		for (arma::uword r = 0; r < 3; ++r)
+		{
+			for (arma::uword c = 0; c < 3; ++c)
+			{
+				const double v = std::abs(A(r, c));
+				maxAbs = std::max(maxAbs, v);
+				if (r != c)
+					maxOff = std::max(maxOff, v);
+			}
+		}
+
+		if (!std::isfinite(maxAbs) || maxAbs == 0.0)
+			return;
+
+		flags.anyTensor = true;
+		if (maxOff > relTol * maxAbs)
+		{
+			flags.allDiag = false;
+			flags.allAxialZ = false;
+			flags.allIsotropic = false;
+			return;
+		}
+
+		const double a = A(0, 0);
+		const double b = A(1, 1);
+		const double c = A(2, 2);
+		const double mean = (a + b + c) / 3.0;
+		const double maxDev = std::max({std::abs(a - mean), std::abs(b - mean), std::abs(c - mean)});
+		if (maxDev > relTol * maxAbs)
+			flags.allIsotropic = false;
+
+		const bool xy_eq = (std::abs(a - b) <= relTol * maxAbs);
+		if (!xy_eq && maxDev > relTol * maxAbs)
+			flags.allAxialZ = false;
+	}
+
+	// The SOPHE grid can exploit point-group symmetry. We inspect the static
+	// tensors entering the Hamiltonian and choose the largest symmetry that
+	// leaves the tensor set invariant, which reduces the number of powder
+	// orientations needed for the same orientational integral.
+	std::string TaskStaticHSTrEPRSpectra::AutoDetectSopheSymmetry(const SpinAPI::system_ptr &system,
+										 const SpinAPI::interaction_ptr &fieldInteraction,
+										 const std::vector<std::string> &h0list,
+										 bool fullTensorRotation)
+	{
+		if (system == nullptr)
+			return "c1";
+
+		const double relTol = 1e-8;
+		SymmetryFlags flags;
+
+		for (const auto &name : h0list)
+		{
+			auto inter = system->interactions_find(name);
+			if (inter == nullptr)
+				continue;
+			if (!SpinAPI::IsStatic(*inter))
+				continue;
+
+			if (inter->Type() == SpinAPI::InteractionType::SingleSpin)
+			{
+				arma::mat R = PassiveZYZRotation(inter->Framelist());
+				arma::mat Rt = R.t();
+				for (const auto &spin : inter->Group1())
+				{
+					arma::mat G = arma::conv_to<arma::mat>::from(spin->GetTensor().LabFrame());
+					if (inter->IgnoreTensors())
+						G = arma::eye<arma::mat>(3, 3);
+					G = Rt * G * Rt.t();
+					UpdateSymmetryFlags(G, flags, fullTensorRotation, relTol);
+				}
+			}
+			else if (SpinAPI::HasTensor(*inter))
+			{
+				arma::mat A = arma::conv_to<arma::mat>::from(inter->CouplingTensor()->LabFrame());
+				arma::mat R = PassiveZYZRotation(inter->Framelist());
+				arma::mat Rt = R.t();
+				A = Rt * A * Rt.t();
+				UpdateSymmetryFlags(A, flags, fullTensorRotation, relTol);
+			}
+			else if (inter->Type() == SpinAPI::InteractionType::Zfs)
+			{
+				const double D = inter->Dvalue();
+				const double E = inter->Evalue();
+				const double maxAbs = std::max(std::abs(D), std::abs(E));
+				if (maxAbs > relTol)
+				{
+					flags.anyTensor = true;
+					flags.allIsotropic = false;
+					if (std::abs(E) > relTol)
+					{
+						flags.allAxialZ = false;
+					}
+				}
+			}
+			else if (inter->Type() == SpinAPI::InteractionType::SemiClassicalField)
+			{
+				return "c1";
+			}
+		}
+
+		if (fieldInteraction != nullptr)
+		{
+			arma::mat R = PassiveZYZRotation(fieldInteraction->Framelist());
+			arma::mat Rt = R.t();
+			for (const auto &spin : fieldInteraction->Group1())
+			{
+				arma::mat G = arma::conv_to<arma::mat>::from(spin->GetTensor().LabFrame());
+				if (fieldInteraction->IgnoreTensors())
+					G = arma::eye<arma::mat>(3, 3);
+				G = Rt * G * Rt.t();
+				UpdateSymmetryFlags(G, flags, fullTensorRotation, relTol);
+			}
+		}
+
+		if (!flags.anyTensor || flags.allIsotropic)
+			return "o3";
+		if (flags.allAxialZ)
+			return "dinfh";
+		if (flags.allDiag)
+			return "d2h";
+		return "c1";
+	}
+
+	bool TaskStaticHSTrEPRSpectra::IsBlockDiagonalMz(const arma::sp_cx_mat &H, const std::vector<int> &mz2, double relTol)
+	{
+		if (H.n_nonzero == 0)
+			return true;
+		double maxAbs = 0.0;
+		for (auto it = H.begin(); it != H.end(); ++it)
+			maxAbs = std::max(maxAbs, std::abs(*it));
+		if (maxAbs == 0.0)
+			return true;
+		const double thresh = maxAbs * relTol;
+		for (auto it = H.begin(); it != H.end(); ++it)
+		{
+			if (std::abs(*it) <= thresh)
+				continue;
+			if (mz2[it.row()] != mz2[it.col()])
+				return false;
+		}
+		return true;
+	}
+
+	bool TaskStaticHSTrEPRSpectra::EigSymBlockMz(const arma::sp_cx_mat &H, const std::vector<arma::uvec> &blocks, arma::vec &eigval, arma::cx_mat &eigvec)
+	{
+		const arma::uword dim = H.n_rows;
+		eigval.set_size(dim);
+		eigvec.zeros(dim, dim);
+
+		struct Entry
+		{
+			double val;
+			size_t block;
+			arma::uword local;
+		};
+
+		std::vector<Entry> entries;
+		entries.reserve(dim);
+		std::vector<arma::cx_mat> block_vecs(blocks.size());
+
+		std::vector<int> block_id(static_cast<size_t>(dim), -1);
+		std::vector<arma::uword> local_pos(static_cast<size_t>(dim), 0);
+		for (size_t b = 0; b < blocks.size(); ++b)
+		{
+			const arma::uvec &idx = blocks[b];
+			for (arma::uword i = 0; i < idx.n_elem; ++i)
+			{
+				block_id[idx(i)] = static_cast<int>(b);
+				local_pos[idx(i)] = i;
+			}
+		}
+
+		std::vector<arma::cx_mat> block_mats(blocks.size());
+		for (size_t b = 0; b < blocks.size(); ++b)
+		{
+			const arma::uvec &idx = blocks[b];
+			block_mats[b].zeros(idx.n_elem, idx.n_elem);
+		}
+
+		for (auto it = H.begin(); it != H.end(); ++it)
+		{
+			const int b = block_id[it.row()];
+			if (b < 0)
+				continue;
+			if (block_id[it.col()] != b)
+				continue;
+			block_mats[static_cast<size_t>(b)](local_pos[it.row()], local_pos[it.col()]) = *it;
+		}
+
+		for (size_t b = 0; b < blocks.size(); ++b)
+		{
+			const arma::uvec &idx = blocks[b];
+			if (idx.n_elem == 0)
+				continue;
+			arma::vec evals;
+			arma::cx_mat evecs;
+			if (!arma::eig_sym(evals, evecs, block_mats[b]))
+				return false;
+			block_vecs[b] = std::move(evecs);
+			for (arma::uword k = 0; k < evals.n_elem; ++k)
+				entries.push_back({evals(k), b, k});
+		}
+
+		if (entries.size() != static_cast<size_t>(dim))
+			return false;
+
+		std::sort(entries.begin(), entries.end(), [](const Entry &a, const Entry &b)
+				  { return a.val < b.val; });
+
+		for (arma::uword col = 0; col < dim; ++col)
+		{
+			const auto &e = entries[col];
+			eigval(col) = e.val;
+			const arma::uvec &idx = blocks[e.block];
+			for (arma::uword i = 0; i < idx.n_elem; ++i)
+			{
+				eigvec(idx(i), col) = block_vecs[e.block](i, e.local);
+			}
+		}
+
+		return true;
+	}
+
 }

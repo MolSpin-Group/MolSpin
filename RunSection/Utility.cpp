@@ -10,12 +10,36 @@
 #include "Utility.h"
 #include <random>
 #include <thread>
+#include "PulseSequence.h"
+#include "Pulse.h"
+#include <sstream>
+#include "Interaction.h"
+#include "Transition.h"
+#include <cctype>
+#include <string>
 #ifdef _OPENMP
 #include <omp.h>
 #endif
 
 namespace RunSection
 {
+
+    struct ArnoldiResult 
+    {
+        arma::field<arma::cx_vec> V;
+        arma::sp_cx_mat Hessian;
+        double Beta;
+        std::complex<double> h_res;
+    };
+
+    arma::cx_mat CubicSplineInterpolation(Buffer<arma::cx_mat>& buff, double T)
+    {
+        arma::cx_vec timeList = buff.time();
+        MatrixSpline ms;
+        ms.build(timeList, buff.rhoPoints);
+        arma::cx_mat rho_Tk = ms.Eval(T);
+        return rho_Tk;
+    }
 
     FibSpherePoint *CalculateFibPoints(int n)
     {
@@ -54,7 +78,330 @@ namespace RunSection
         return true;
     }
 
-MCSpherePoint* CalculateMCSpherePoints(int n, double rmax_x, double rmax_y, double rmax_z)
+
+//string manipulation functions
+    std::string lowercase(std::string str)
+    {
+        std::transform(str.begin(), str.end(), str.begin(),
+            [](unsigned char c) { return std::tolower(c); });
+        return str;
+    }
+
+    std::string uppercase(std::string str)
+    {
+        std::transform(str.begin(), str.end(), str.begin(),
+            [](unsigned char c) { return std::toupper(c); });
+        return str;
+    }
+
+    std::string trim(const std::string& str)
+    {
+        size_t first = str.find_first_not_of(" \t\r\n");
+        if (first == std::string::npos)
+            return "";
+        size_t last = str.find_last_not_of(" \t\r\n");
+        return str.substr(first, (last - first + 1));
+    }
+
+    std::vector<std::string> split(const std::string& str, char delimiter)
+    {
+        std::vector<std::string> tokens;
+        std::string token;
+        std::istringstream tokenStream(str);
+        while (std::getline(tokenStream, token, delimiter))
+        {
+            tokens.push_back(trim(token));
+        }
+        return tokens;
+    }
+
+    std::vector<std::string> split(const std::string& str, const std::string& delimiter)
+    {
+        std::vector<std::string> tokens;
+        size_t start = 0;
+        size_t end = 0;
+        while ((end = str.find(delimiter, start)) != std::string::npos)
+        {
+            tokens.push_back(trim(str.substr(start, end - start)));
+            start = end + delimiter.length();
+        }
+        tokens.push_back(trim(str.substr(start)));
+        return tokens;
+    }
+
+    bool startsWith(const std::string& str, const std::string& prefix)
+    {
+        return str.length() >= prefix.length() && str.substr(0, prefix.length()) == prefix;
+    }
+
+    bool endsWith(const std::string& str, const std::string& suffix)
+    {
+        return str.length() >= suffix.length() && str.substr(str.length() - suffix.length()) == suffix;
+    }
+
+    //std::tuple<std::vector<SpinAPI::pulse_ptr>,std::vector<double>> EvaluatePulseSequence(std::vector<SpinAPI::pulse_ptr> pulses, SpinAPI::PulseSequence PulseSeq)
+    //{
+    //    std::vector<SpinAPI::pulse_ptr> pulse_sequence;
+    //    std::vector<double> gaps;
+//
+    //    pulse_sequence.reserve(PulseSeq.size());
+    //    gaps.reserve(PulseSeq.size());
+//
+    //    std::unordered_map<std::string, SpinAPI::pulse_ptr> pulse_map;
+    //    pulse_map.reserve(pulses.size())
+    //    for(const auto& p : pulses)
+    //    {
+    //        if (p) 
+    //        {
+    //            pulse_map[p->Name()] = p;
+    //        }
+    //    }
+//
+    //    for(const auto &seq : PulseSeq)
+    //    {
+    //        auto[pulse,tau] = seq;
+    //        auto it = pulse_map.find(pulse);
+    //        if(it != pulse_map.end())
+    //        {
+    //            pulse_sequence.push_back(it->second);
+    //            gaps.push_back(tau);
+    //        }
+    //        else
+    //        {
+    //            std::cerr << "Pulse: " << pulse << " not found in pulse list";
+    //        }
+    //    }
+//
+    //}
+
+    std::vector<block> GenerateTimeEvoBlocking(std::vector<SpinAPI::PulseSequence_ptr>& seq, std::pair<double,double> MinMaxTimesteps, double TotalEvoTime)
+    {
+
+        std::vector<std::vector<PulseEvent>> timelines(seq.size());
+        std::vector<double> critical_time_points;
+        critical_time_points.push_back(0.0);
+
+        for(size_t ch = 0; ch < seq.size(); ch++)
+        {
+            const auto& track = seq[ch];
+            double track_time = 0.0;
+            double ch_offset = track->Get_offset();
+            if(ch_offset > 0.0) 
+            {
+                PulseEvent o_event;
+                o_event.time = 0.0;
+                o_event.is_pulse = false;
+                o_event.pulse = SpinAPI::SequenceObject();
+                timelines[ch].push_back(o_event);
+                critical_time_points.push_back(ch_offset);
+                track_time = ch_offset;
+            }
+            for(auto step = track->begin(); step != track->end(); step++)
+            {
+                auto[seq_step, tau_key] = *step; //need to change this to handle sequence steps
+                auto[pulse_event, interaction_event, transition_event] = seq_step.get();
+                double pulse_duration = 0.0;
+                if (pulse_event)
+                    pulse_duration = (pulse_event->Type() == SpinAPI::PulseType::InstantPulse) ? 0.0 : pulse_event->Pulsetime();
+                else
+                    pulse_duration = (interaction_event) ? interaction_event->ActiveTime() : transition_event->ActiveTime();
+                PulseEvent p_event;
+                p_event.time = track_time;
+                p_event.pulse = seq_step;
+                p_event.is_pulse = true;
+                timelines[ch].push_back(p_event);
+
+                track_time += pulse_duration;
+                critical_time_points.push_back(track_time);
+
+                double gap_duration = 0.0;
+                auto it = track->Get_tau_list().find(tau_key);
+                if (it != track->Get_tau_list().end()) 
+                {
+                    gap_duration = it->second;
+                }
+
+                if (gap_duration > 0.0) 
+                {
+                    PulseEvent g_event;
+                    g_event.time = track_time;
+                    g_event.is_pulse = false;
+                    g_event.pulse = SpinAPI::SequenceObject();
+                    timelines[ch].push_back(g_event);
+                    
+                    track_time += gap_duration;
+                    critical_time_points.push_back(track_time);
+                }
+            }
+        }
+
+        std::sort(critical_time_points.begin(), critical_time_points.end());
+        critical_time_points.erase(std::unique(critical_time_points.begin(), critical_time_points.end(), [](double a, double b) { return std::abs(a - b) < 1e-14; }), critical_time_points.end());
+
+        std::vector<block> blocks = {};
+        bool empty = seq.empty();
+        if (empty)
+        {
+            block first_block;
+            first_block.start = 0.0;
+            first_block.end = TotalEvoTime;
+            first_block.max_timestep = MinMaxTimesteps.second;
+            first_block.min_timestep = MinMaxTimesteps.first;
+            first_block.free_evolution = true;
+            blocks.push_back(first_block);
+            return blocks;
+        }
+
+        for(size_t i = 0; i < critical_time_points.size() - 1; i++)
+        {
+            double b_start = critical_time_points[i];
+            double b_end = critical_time_points[i+1];
+
+            if(std::abs(b_end - b_start) < 1e-14) continue;
+
+            bool global_free = true;
+            double block_min = MinMaxTimesteps.first;
+            double block_max = MinMaxTimesteps.second;
+
+            for (size_t ch = 0; ch < seq.size(); ch++)
+            {
+                const auto& timeline = timelines[ch];
+                if(timeline.empty()) continue;
+                auto it = std::upper_bound(timeline.begin(), timeline.end(), b_start, [](double val, const PulseEvent& ev) { return val < ev.time;});
+                if (it != timeline.begin())
+                {
+                    auto active_ev = *(it-1);
+                    if(active_ev.is_pulse && !active_ev.pulse.IsNullptr()) 
+                    {
+                        global_free = false;
+                        auto[pulse_event, interaction_event, transition_event] = active_ev.pulse.get();
+                        double ps,ts = 0.0;
+                        if(pulse_event)
+                        {
+                            ps = (pulse_event->Type() == SpinAPI::PulseType::InstantPulse) ? 0.0 : pulse_event->Pulsetime();
+                            ts = pulse_event->Timestep();
+                        }
+                        else
+                        {
+                            ps = (interaction_event) ? interaction_event->ActiveTime() : transition_event->ActiveTime();
+                        }
+
+                        if(pulse_event)
+                        {
+                            if(pulse_event->Type() != SpinAPI::PulseType::InstantPulse)
+                            {
+                                double max_allowed = std::min(ps / 20.0, ts*1e3);
+                                double pulse_max = std::min(max_allowed, MinMaxTimesteps.second);
+                                double pulse_min = std::min(MinMaxTimesteps.first, ps / 1e3);
+                            
+                                
+                                block_max = std::min(block_max, pulse_max);
+                                block_min = std::min(block_min, pulse_min);
+                            }
+                            else
+                            {
+                                block_max = MinMaxTimesteps.first;
+                                block_min = MinMaxTimesteps.second;
+                            }
+                        }
+                        else
+                        {
+                            double max_allowed = ps / 20.0;
+                            double pulse_max = std::min(max_allowed, MinMaxTimesteps.second);
+                            double pulse_min = std::min(MinMaxTimesteps.first, ps / 1e3);
+                            
+                                
+                            block_max = std::min(block_max, pulse_max);
+                            block_min = std::min(block_min, pulse_min);
+                        }
+                    }
+                }
+            }
+
+            block new_block;
+            new_block.start = b_start;
+            new_block.end = b_end;
+            new_block.max_timestep = block_max;
+            new_block.min_timestep = block_min;
+            new_block.free_evolution = global_free;
+            blocks.push_back(new_block);
+        }
+
+        return blocks;
+
+    }
+
+    std::string PrintOutBlockStructure(const std::vector<block>& blocks)
+    {
+        std::ostringstream ss;
+        ss << "\n" << std::string(90, '=') << "\n";
+        ss << "\t\t\t\t Generated time evolution block sections\n";
+        ss << std::string(90, '=') << "\n";
+
+        ss << std::left 
+           << std::setw(8)  << "Block section "
+           << std::setw(18) << "Start Time (ns)"
+           << std::setw(18) << "End Time (ns)"
+           << std::setw(16) << "Duration (ns)"
+           << std::setw(16) << "Max Timestep"
+           << std::setw(16) << "Min Timestep"
+           << "Evolution Type\n";
+        ss << std::string(90, '-') << "\n";
+        ss << std::scientific << std::setprecision(6);
+
+        for (size_t i = 0; i < blocks.size(); ++i)
+        {
+            const auto& b = blocks[i];
+            double duration = b.end - b.start;
+            
+            std::string evo_type = b.free_evolution ? "FREE EVOLUTION" : "ACTIVE PULSE(S)";
+
+            ss << std::left
+               << std::setw(8)  << i
+               << std::setw(18) << b.start
+               << std::setw(18) << b.end
+               << std::setw(16) << duration
+               << std::setw(16) << b.max_timestep
+               << std::setw(16) << b.min_timestep
+               << evo_type << "\n";
+        }
+        ss << std::string(90, '=') << "\n\n";
+        std::string return_str = ss.str();
+        return return_str;
+    }
+
+    void ClampTimeEvolution(double ctime, double ttime, const std::vector<block>& blocks, size_t& current_block, double& block_timestep, SpinAPI::SpinSpace::PropParam& params)
+    {
+        while(current_block < blocks.size() && ctime >= blocks[current_block].end)
+        {
+            current_block++;
+        }
+        const block& active_block = (current_block < blocks.size())
+                                  ? blocks[current_block]
+                                  : blocks.back();
+        params.max = active_block.max_timestep;
+        params.min = active_block.min_timestep;
+
+        if(block_timestep > active_block.max_timestep)
+        {
+            block_timestep = active_block.max_timestep;
+        }
+        if(block_timestep < active_block.min_timestep)
+        {
+            block_timestep = active_block.min_timestep;
+        }
+
+        if(ctime + block_timestep > active_block.end)
+        {
+            block_timestep = active_block.end - ctime;
+        }
+        if(ctime + block_timestep > ttime)
+        {
+            block_timestep = ttime - ctime;
+        }
+    }
+
+    MCSpherePoint* CalculateMCSpherePoints(int n, double rmax_x, double rmax_y, double rmax_z)
     {
         MCSpherePoint* TempPointArray = (MCSpherePoint*)malloc(n * sizeof(MCSpherePoint));
         if(TempPointArray == NULL)
@@ -122,14 +469,29 @@ MCSpherePoint* CalculateMCSpherePoints(int n, double rmax_x, double rmax_y, doub
     SCData GetHamiltonian(arma::sp_cx_mat& CompositeMatrix, int Dimension)
     {
         SCData container;
-        arma::sp_cx_mat H = CompositeMatrix.submat(0,0,Dimension-1,Dimension-1);
-        arma::sp_cx_mat SampleMatrix = CompositeMatrix.submat(Dimension,0,CompositeMatrix.n_rows-1,CompositeMatrix.n_cols-1);
-        for (unsigned int i = 0; i < SampleMatrix.n_rows; i += Dimension)
+        if (Dimension <= 0 ||
+            CompositeMatrix.n_rows < static_cast<arma::uword>(Dimension) ||
+            CompositeMatrix.n_cols < static_cast<arma::uword>(Dimension))
+        {
+            return container;
+        }
+
+        arma::sp_cx_mat H = CompositeMatrix.submat(0, 0, Dimension - 1, Dimension - 1);
+        arma::sp_cx_mat SampleMatrix(0, CompositeMatrix.n_cols);
+        if (CompositeMatrix.n_rows > static_cast<arma::uword>(Dimension))
+        {
+            SampleMatrix = CompositeMatrix.submat(
+                Dimension, 0, CompositeMatrix.n_rows - 1, CompositeMatrix.n_cols - 1);
+        }
+
+        const arma::uword blockSize = static_cast<arma::uword>(Dimension);
+        for (arma::uword i = 0; i + blockSize <= SampleMatrix.n_rows; i += blockSize)
         {
             int samples = 0;
-            for (unsigned int e = 0; e < SampleMatrix.n_cols; e+= Dimension)
+            for (arma::uword e = 0; e + blockSize <= SampleMatrix.n_cols; e += blockSize)
             {
-                arma::sp_cx_mat SubMat = SampleMatrix.submat(i,e,i+Dimension-1,e+Dimension-1);
+                arma::sp_cx_mat SubMat = SampleMatrix.submat(
+                    i, e, i + blockSize - 1, e + blockSize - 1);
                 if(SubMat.n_nonzero == 0)
                     break;
                 
@@ -245,9 +607,66 @@ MCSpherePoint* CalculateMCSpherePoints(int n, double rmax_x, double rmax_y, doub
     typedef arma::sp_cx_mat MatrixArma;
     typedef arma::cx_vec VecType;
 
-    double RungeKutta45Armadillo(arma::sp_cx_mat &L, arma::cx_vec &rho0, arma::cx_vec &drhodt, double dumpstep, RungeKuttaFuncArma func, std::pair<double, double> tolerance, double MinTimeStep, double MaxTimeStep, double time)
+    double EstimateStiffnessArmadillo(arma::sp_cx_mat &L)
+    {
+        static double tol = 1e-3;
+        static int max_iterations = 1000;
+
+        //get symmetric part of L
+        arma::sp_cx_mat Ls = 0.5 * (L + arma::trans(L));
+        Ls = -1 * Ls;
+        //create random wavefunction 
+        arma::cx_vec psi(L.n_rows);
+        size_t n = L.n_rows;
+        #pragma omp parallel
+        {
+            std::random_device rd;
+            std::mt19937 gen(rd());
+            std::normal_distribution<double> dist(0.0, 1.0);
+            #pragma omp for
+            for(size_t i = 0; i < n; i++)
+            {
+                double re = dist(gen);
+                double img = dist(gen);
+                psi(i) = std::complex<double>(re,img);
+            }
+        }
+
+        double norm = arma::norm(psi,2);
+        //std::cout << psi << std::endl;
+        psi = psi / norm;
+        arma::cx_vec psi2 = psi;
+
+        std::vector<std::complex<double>> max_eigenvalue = {0.0,0.0};
+        std::vector<std::complex<double>>old_eigenvalue = {0.0,0.0};
+        arma::cx_vec phi(L.n_rows);
+        arma::cx_vec phi2(L.n_rows);
+
+        for(int i = 0; i < max_iterations; i++)
+        {
+            phi = Ls * psi;
+            phi2 = L * psi2;
+            max_eigenvalue[0] = arma::norm(phi,2);
+            max_eigenvalue[1] = arma::norm(phi2,2);
+            psi = phi / max_eigenvalue[0];
+            psi2 = phi2 / max_eigenvalue[1];
+
+            if(std::abs(max_eigenvalue[0] - old_eigenvalue[0]) <= tol && std::abs(max_eigenvalue[1] - old_eigenvalue[1]) <= tol)
+            {
+                break;
+            }
+
+            old_eigenvalue = max_eigenvalue;
+        }
+
+        double stiffness = std::abs(max_eigenvalue[1]) / std::abs(max_eigenvalue[0]);
+        return stiffness;
+    }
+
+    SpinAPI::SpinSpace::TimePropReturnInfo RungeKutta45Armadillo(arma::sp_cx_mat &L, arma::cx_vec &rho0, arma::cx_vec &drhodt, double dumpstep, RungeKuttaFuncArma func, double time, SpinAPI::SpinSpace::PropParam params)
     {
         VecType k0(rho0.n_rows);
+        double used = 0.0;
 
         std::vector<std::pair<float, std::vector<float>>> ButcherTable = {{0.0, {}},
                                                                           {0.25, {0.25}},
@@ -305,53 +724,215 @@ MCSpherePoint* CalculateMCSpherePoints(int n, double rmax_x, double rmax_y, doub
             return std::make_tuple(ReturnVecRK4, ReturnVecRK5);
         };
 
-        auto [RK4, RK5] = RungeKutta45(L, rho0, dumpstep, func);
-
-        double change = 0;
+        bool keep_step = false;
+        bool first_step = true;
+        while(!keep_step)
         {
-            VecType diff = RK5 - RK4;
-            double sum = 0;
+            auto [RK4, RK5] = RungeKutta45(L, rho0, dumpstep, func);
+
+            double relative_error = 0.0;
+            //auto[atol, rtol, min_step, max_step, safety, f1, f2,t1,t2,ct, i1, i2, i3, i4, i5,i6] = params;
+            double atol, rtol, safety, f1, f2;
+            atol = params.atol;
+            rtol = params.rtol;
+            safety = params.safety;
+            f1 = params.f1;
+            f2 = params.f2;
+
+            double change = 0;
+            {
+                VecType diff = RK5 - RK4;
+                double sum = 0;
+                double relative_error_sum = 0.0;
 
 #pragma omp parallel for reduction(+ : sum)
-            for (int i = 0; i < int(diff.n_rows); i++)
-            {
-                sum += std::pow(std::abs(diff[i]), 2);
+                for (int i = 0; i < int(diff.n_rows); i++)
+                {
+                    sum += std::pow(std::abs(diff[i]), 2);
+                    relative_error_sum += rtol * std::pow(std::abs(RK5[i]), 2); 
+                }
+
+                change = std::sqrt(sum);
+                relative_error = std::sqrt(relative_error_sum);
             }
 
-            change = std::sqrt(sum);
-        }
-
-        auto Adjusth = [](double tol, double ch)
-        {
-            double h4 = (tol / (2 * ch));
-            return std::sqrt(std::sqrt(h4));
-        };
-
-        double NewStepSize = 0.0;
-        if (change < tolerance.first && dumpstep < MaxTimeStep)
-        {
-            NewStepSize = dumpstep * Adjusth(tolerance.first, change);
-            if (NewStepSize > MaxTimeStep)
+            auto Adjusth = [&](double error_ratio, double tol, double ch, double safety, double f1, double f2)
             {
-                NewStepSize = MaxTimeStep;
-            }
-        }
-        else if (change > tolerance.second && dumpstep > MinTimeStep)
-        {
-            NewStepSize = dumpstep * Adjusth(tolerance.second, change);
-            if (NewStepSize < MinTimeStep)
-            {
-                NewStepSize = MinTimeStep;
-            }
-        }
-        else
-        {
-            NewStepSize = dumpstep;
-        }
+                return dumpstep * std::min(f2, std::max(f1, safety * std::pow(error_ratio, -1.0/5.0)));
+            };
 
-        drhodt = RK4;
-        return NewStepSize;
+            double NewStepSize = 0.0;
+
+            double max_change = atol + relative_error;
+            double error_ratio = change / max_change;
+            NewStepSize = Adjusth(error_ratio, max_change, change, safety, f1, f2);
+            if (error_ratio <= params.reject_limit)
+            {
+                drhodt = RK4;
+                keep_step = true;
+                used = dumpstep;
+                //dumpstep = NewStepSize;
+            }
+            if(NewStepSize < params.min && error_ratio >= params.reject_limit)
+            {
+                params.min = NewStepSize;
+                first_step = false;
+            }
+            if(NewStepSize > params.max)
+            {
+                NewStepSize = params.max;
+                keep_step = true;
+                used = dumpstep;
+            }
+            if(error_ratio >= params.reject_limit)
+            {
+                first_step = false;
+            }
+            dumpstep = NewStepSize;
+
+        }
+        return {dumpstep,used,first_step,drhodt};
     }
+
+    //TimePropReturnInfo AdaptiveDirectKrylovArmadillo(arma::sp_cx_mat &L, arma::cx_vec &rho0, arma::cx_vec &drhodt, double dumpstep, double time, PropParam PropParams, HamiltonainTimeDepFuncArma GetTDH)
+    //{
+//
+    //    auto ArnoldiIteration = [=](const arma::sp_cx_mat&L, const arma::cx_vec& rho, int m_max) {
+    //        const int N = rho.n_rows;
+    //        
+    //        ArnoldiResult result;
+    //        result.V.set_size(m_max);
+    //        result.Hessian = arma::sp_cx_mat(m_max,m_max);
+    //        
+    //        result.Beta = arma::norm(rho,2);
+    //        arma::cx_vec rhoi = rho / result.Beta;
+    //        result.V(0) = rhoi;
+//
+    //        arma::cx_vec AV(N);
+    //        std::complex<double> h_next = 0.0;
+    //        int m = m_max;
+    //        for(int j = 0; j < m_max; j++)
+    //        {
+    //            AV = L * result.V(j);
+    //            for(int i = 0; i <= j; i++)
+    //            {
+    //                std::complex<double> h_ij = arma::cdot(result.V(i), AV);
+    //                result.Hessian(i,j) = h_ij;
+    //                arma::cx_vec temp = h_ij * result.V(i);
+    //                AV -= temp;
+    //            }
+//
+    //            h_next = arma::norm(AV,2);
+//
+    //            if(j == m_max - 1) {
+    //                result.h_res = h_next;
+    //                break;
+    //            }
+//
+    //            if(std::abs(h_next) < 1e-14)
+    //            {
+    //                result.h_res = std::complex<double>(0.0, 0.0);
+    //                m = j + 1;
+    //                result.Hessian = result.Hessian.submat(0,0,m-1,m-1);
+    //                result.V.set_size(m);
+    //                break;
+    //            }
+//
+    //            result.V(j+1) = AV / h_next;
+    //            result.Hessian(j+1,j) = h_next;
+    //        }
+//
+    //        return result;
+    //    };
+//
+    //    struct StepReturnStruct
+    //    {
+    //        arma::cx_vec rho_new;
+    //        double err;
+    //    };
+//
+    //    auto MagnusExpansion2ndOrder = [&](const arma::sp_cx_mat& L, double h) {
+    //        arma::sp_cx_mat At = GetTDH(PropParams.CurrentTime, L);
+    //        arma::sp_cx_mat Atpto2 = GetTDH(PropParams.CurrentTime + h/2.0, L);
+//
+    //        arma::sp_cx_mat Omega = (h/2.0) * (Atpto2 * At - At * Atpto2);
+    //        return Omega;
+    //    };
+//
+    //    auto step = [&](const arma::sp_cx_mat& L, const arma::cx_vec& rho, double h, int m_krylov)  {
+//
+    //        ArnoldiResult ar;
+    //        if(GetTDH != nullptr)
+    //        {
+    //            ar = ArnoldiIteration(MagnusExpansion2ndOrder(L,h), rho, m_krylov);
+    //        }
+    //        else
+    //        {
+    //            ar = ArnoldiIteration(L, rho, m_krylov);
+    //        }
+    //        int m = ar.Hessian.n_rows;
+    //        arma::sp_cx_mat Hm = h * ar.Hessian;
+    //        
+    //        arma::cx_mat Exponent = arma::expmat(arma::conv_to<arma::cx_mat>::from(Hm));
+    //        arma::cx_vec e1(m,arma::fill::zeros);
+    //        e1(0) = std::complex<double>(1.0, 0.0);
+    //        arma::cx_vec w = Exponent * e1;
+//
+    //        arma::cx_vec rho_new(rho.n_rows, arma::fill::zeros);
+    //        for(int j = 0; j < m; j++)
+    //        {
+    //            arma::cx_vec temp = ar.Beta * w(j) * ar.V(j);
+    //            rho_new += temp;
+    //        }
+//
+    //        std::complex<double> error_val = Exponent(m-1,0);
+    //        double err = std::abs(ar.Beta * ar.h_res * error_val);
+//
+    //        StepReturnStruct return_struct;
+    //        return_struct.rho_new = rho_new;
+    //        return_struct.err = err;
+//
+    //        return return_struct;
+    //    };
+//
+    //    bool keep_step = false;
+    //    bool first_attempt = true;
+    //    while(!keep_step)
+    //    {
+    //        auto KrylovStep = step(L,rho0,dumpstep,PropParams.max_krylov_iterations);
+//
+    //        double ynorm = arma::norm(KrylovStep.rho_new,2);
+    //        double tol = PropParams.atol + PropParams.rtol * ynorm;
+    //        double R = KrylovStep.err / tol;
+//
+    //        auto Adjusth = [&](double R, double safety, double f1, double f2, double h) {
+    //            return h * std::min(f2, std::max(f1, safety * std::pow(R, -1.0/5.0)));
+    //        };
+//
+    //        dumpstep = Adjusth(R, PropParams.safety, PropParams.f1, PropParams.f2, dumpstep);
+    //        if(R <= PropParams.reject_limit)
+    //        {
+    //            drhodt = KrylovStep.rho_new;
+    //            keep_step = true;
+    //        }
+//
+    //        if(dumpstep < PropParams.min && R > PropParams.reject_limit)
+    //        {
+    //            PropParams.min = dumpstep;
+    //        }
+    //        if(dumpstep > PropParams.max)
+    //        {
+    //            dumpstep = PropParams.max;
+    //        }
+    //        if(R >= PropParams.reject_limit)
+    //        {
+    //            first_attempt = false;
+    //        }
+    //    }
+//
+    //    return {dumpstep, first_attempt};
+//
+    //}
 
     unsigned int GetNumThreads()
     {
@@ -508,16 +1089,16 @@ MCSpherePoint* CalculateMCSpherePoints(int n, double rmax_x, double rmax_y, doub
         
     }
 
-    bool BlockSolver(arma::sp_cx_mat &A, arma::cx_vec &b, int block_size, arma::cx_vec &x)
+    bool BlockSolver(arma::sp_cx_mat &A, arma::cx_vec &b, std::vector<int> block_sizes, arma::cx_vec &x)
     {
         bool inverted = false;
-        if(IsBlockTridiagonal(A,block_size))
-        {
-            x = ThomasBlockSolver(A, b, block_size);
-            return true;
-        }
+        //if(IsBlockTridiagonal(A,block_sizes[0]))
+        //{
+        //    x = ThomasBlockSolver(A, b, block_sizes[0]);
+        //    return true;
+        //}
 
-        arma::cx_mat A_inv = BlockMatrixInverse(A, block_size, inverted);
+        arma::cx_mat A_inv = BlockMatrixInverse(A, block_sizes, inverted);
         if(!inverted)
         {
             x = arma::cx_vec(arma::size(b), arma::fill::zeros);
@@ -528,14 +1109,29 @@ MCSpherePoint* CalculateMCSpherePoints(int n, double rmax_x, double rmax_y, doub
     }
 
     //DONT USE THESE FUNCTIONS THEY ARE SLOW
-    arma::cx_mat BlockMatrixInverse(arma::sp_cx_mat &A, int block_size, bool &Invertible)
+    arma::cx_mat BlockMatrixInverse(arma::sp_cx_mat &A, std::vector<int> block_sizes, bool &Invertible)
     {
         //Matrix Partitions
         arma::sp_cx_mat A11, A12, A21, A22;
-        A11 = A.submat(0, 0, block_size -1, block_size -1);
-        A12 = A.submat(0, block_size, block_size -1, A.n_cols -1);
-        A21 = A.submat(block_size, 0, A.n_rows-1, block_size -1);
-        A22 = A.submat(block_size, block_size, A.n_rows -1, A.n_cols -1);
+        //A11 is square
+        //A12 is rectangular - wide
+        //A21 is rectangular - tall
+        //A22 is square
+        auto sum = [](std::vector<int> v, int start, int perodicity) {
+            int s = 0;
+            for(int i = start; i < (int)v.size(); i += perodicity)
+            {
+                s= s + v[i];            
+            }
+            return s;
+        };
+        std::pair<int, int> A11_size = {block_sizes[0], block_sizes[0]};
+        std::pair<int, int> A12_size = {block_sizes[0], sum(block_sizes,1,1)};
+        std::pair<int, int> A21_size = {sum(block_sizes,1,1), block_sizes[0]};
+        A11 = A.submat(0, 0, A11_size.first -1, A11_size.second -1);
+        A12 = A.submat(0, A11_size.second, A12_size.first -1, A.n_cols -1);
+        A21 = A.submat(A11_size.first, 0, A.n_rows -1, A21_size.second -1);
+        A22 = A.submat(A11_size.first, A11_size.second, A.n_rows -1, A.n_cols -1);
 
         //Check if A11 and A22 are invertible
         arma::cx_mat A11_inv, A22_inv; //The inverse of a sparse matrix is usually dense, so we use a dense matrix here
@@ -547,15 +1143,16 @@ MCSpherePoint* CalculateMCSpherePoints(int n, double rmax_x, double rmax_y, doub
             arma::cx_mat id(A11.n_rows,A11.n_cols,arma::fill::eye);
             A11_invertible = arma::solve(A11_inv,arma::cx_mat(A11),id);
             //A22_invertible = arma::inv(A22_inv, arma::cx_mat(A22));
-            if (A22.n_rows > (unsigned int)block_size)
+            if (block_sizes.size() > 2)
             {
                 bool Invertible2;
-                A22_inv = BlockMatrixInverse(A22, block_size, Invertible2);
+                auto block_sizes_sub = std::vector<int>(block_sizes.begin() +1, block_sizes.end());
+                A22_inv = BlockMatrixInverse(A22, block_sizes_sub, Invertible2);
                 A22_invertible = Invertible2;
             }
             else
             {
-                arma::cx_mat id(A11.n_rows,A11.n_cols,arma::fill::eye);
+                arma::cx_mat id(A22.n_rows,A22.n_cols,arma::fill::eye);
                 A22_invertible = arma::solve(A22_inv,arma::cx_mat(A22),id);
             }
             //std::cout << A22 << std::endl;
@@ -598,9 +1195,9 @@ MCSpherePoint* CalculateMCSpherePoints(int n, double rmax_x, double rmax_y, doub
     arma::cx_mat SchurComplementA(arma::cx_mat &A11_inv, arma::sp_cx_mat &A12, arma::sp_cx_mat &A21, arma::sp_cx_mat &A22, bool &Invertible)
     {
         arma::cx_mat S = A22 - A21 * A11_inv * A12;
-        arma::cx_mat S_inv;
-        arma::cx_mat id(A12.n_rows,A12.n_cols,arma::fill::eye);
-        bool S_invertible  = arma::solve(S_inv,S,id);
+        arma::cx_mat S_inv = arma::cx_mat(S.n_rows, S.n_cols);
+        arma::cx_mat id(S.n_rows,S.n_cols,arma::fill::eye);
+        bool S_invertible = arma::solve(S_inv,S,id);
         if(!S_invertible)
         {
             Invertible = false;
@@ -612,11 +1209,11 @@ MCSpherePoint* CalculateMCSpherePoints(int n, double rmax_x, double rmax_y, doub
         arma::cx_mat P21 = -1 * S_inv * A21 * A11_inv;
         arma::cx_mat P22 = S_inv;
 
-        arma::cx_mat Inv = arma::cx_mat(A11_inv.n_rows * 2, A11_inv.n_cols * 2);
-        Inv.submat(0, 0, A11_inv.n_rows -1, A11_inv.n_cols -1) = P11;
-        Inv.submat(0, A11_inv.n_cols, A11_inv.n_rows -1, Inv.n_cols -1) = P12;
-        Inv.submat(A11_inv.n_rows, 0, Inv.n_rows -1, A11_inv.n_cols -1) = P21;
-        Inv.submat(A11_inv.n_rows, A11_inv.n_cols, Inv.n_rows -1, Inv.n_cols -1) = P22;
+        arma::cx_mat Inv = arma::cx_mat(P11.n_rows + P21.n_rows, P11.n_cols + P12.n_cols);
+        Inv.submat(0, 0, P11.n_rows -1, P11.n_cols -1) = P11;
+        Inv.submat(0, P11.n_cols, P12.n_rows -1, Inv.n_cols -1) = P12;
+        Inv.submat(P11.n_rows, 0, Inv.n_rows -1, P21.n_cols -1) = P21;
+        Inv.submat(P11.n_rows, P11.n_cols, Inv.n_rows -1, Inv.n_cols -1) = P22;
 
         Invertible = true;
         return Inv;
@@ -625,8 +1222,8 @@ MCSpherePoint* CalculateMCSpherePoints(int n, double rmax_x, double rmax_y, doub
     arma::cx_mat SchurComplementB(arma::sp_cx_mat &A11, arma::sp_cx_mat &A12, arma::sp_cx_mat &A21, arma::cx_mat &A22_inv, bool &invertible)
     {
         arma::cx_mat S = A11 - A12 * A22_inv * A21;
-        arma::cx_mat id(A11.n_rows,A11.n_cols,arma::fill::eye);
-        arma::cx_mat S_inv;
+        arma::cx_mat S_inv = arma::cx_mat(S.n_rows, S.n_cols);
+        arma::cx_mat id(S.n_rows,S.n_cols,arma::fill::eye);
         bool S_invertible  = arma::solve(S_inv,S,id);
         if(!S_invertible)
         {
@@ -639,11 +1236,11 @@ MCSpherePoint* CalculateMCSpherePoints(int n, double rmax_x, double rmax_y, doub
         arma::cx_mat P21 = -1 * A22_inv * A21 * S_inv;
         arma::cx_mat P22 = A22_inv + A22_inv * A21 * S_inv * A12 * A22_inv;
 
-        arma::cx_mat Inv = arma::cx_mat(A11.n_rows * 2, A11.n_cols * 2);
-        Inv.submat(0, 0, A11.n_rows -1, A11.n_cols -1) = P11;
-        Inv.submat(0, A11.n_cols, A11.n_rows -1, Inv.n_cols -1) = P12;
-        Inv.submat(A11.n_rows, 0, Inv.n_rows -1, A11.n_cols -1) = P21;
-        Inv.submat(A11.n_rows, A11.n_cols, Inv.n_rows -1, Inv.n_cols -1) = P22;
+        arma::cx_mat Inv = arma::cx_mat(P11.n_rows + P21.n_rows, P11.n_cols + P12.n_cols);
+        Inv.submat(0, 0, P11.n_rows -1, P11.n_cols -1) = P11;
+        Inv.submat(0, P11.n_cols, P12.n_rows -1, Inv.n_cols -1) = P12;
+        Inv.submat(P11.n_rows, 0, Inv.n_rows -1, P21.n_cols -1) = P21;
+        Inv.submat(P11.n_rows, P11.n_cols, Inv.n_rows -1, Inv.n_cols -1) = P22;
 
         invertible = true;
         return Inv;
@@ -654,9 +1251,10 @@ MCSpherePoint* CalculateMCSpherePoints(int n, double rmax_x, double rmax_y, doub
         arma::cx_mat S1 = A11 - A12 * A22_inv * A21;
         arma::cx_mat S2 = A22 - A21 * A11_inv * A12;
         arma::cx_mat S1_inv, S2_inv;
-        arma::cx_mat id(A11.n_rows,A11.n_cols,arma::fill::eye);
-        bool S1_invertible  = arma::solve(S1_inv,S1,id);
-        bool S2_invertible  = arma::solve(S2_inv,S2,id);
+        arma::cx_mat id1(S1.n_rows,S1.n_cols,arma::fill::eye);
+        arma::cx_mat id2(S2.n_rows,S2.n_cols,arma::fill::eye);
+        bool S1_invertible  = arma::solve(S1_inv,S1,id1);
+        bool S2_invertible  = arma::solve(S2_inv,S2,id2);
         if(!S1_invertible || !S2_invertible)
         {
             invertible = false;
@@ -668,11 +1266,11 @@ MCSpherePoint* CalculateMCSpherePoints(int n, double rmax_x, double rmax_y, doub
         arma::cx_mat P21 = -1 * S2_inv * A21 * A11_inv;
         arma::cx_mat P22 = S2_inv;
 
-        arma::cx_mat Inv = arma::cx_mat(A11.n_rows * 2, A11.n_cols * 2);
-        Inv.submat(0, 0, A11.n_rows -1, A11.n_cols -1) = P11;
-        Inv.submat(0, A11.n_cols, A11.n_rows -1, Inv.n_cols -1) = P12;
-        Inv.submat(A11.n_rows, 0, Inv.n_rows -1, A11.n_cols -1) = P21;
-        Inv.submat(A11.n_rows, A11.n_cols, Inv.n_rows -1, Inv.n_cols -1) = P22;
+        arma::cx_mat Inv = arma::cx_mat(P11.n_rows + P21.n_rows, P11.n_cols + P12.n_cols);
+        Inv.submat(0, 0, P11.n_rows -1, P11.n_cols -1) = P11;
+        Inv.submat(0, P11.n_cols, P12.n_rows -1, Inv.n_cols -1) = P12;
+        Inv.submat(P11.n_rows, 0, Inv.n_rows -1, P21.n_cols -1) = P21;
+        Inv.submat(P11.n_rows, P11.n_cols, Inv.n_rows -1, Inv.n_cols -1) = P22;
         
         invertible = true;
         return Inv;
