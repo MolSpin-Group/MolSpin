@@ -1,5 +1,5 @@
 /////////////////////////////////////////////////////////////////////////
-// TaskStaticHSTrEPRSpectra implementation (RunSection module)
+// TaskStaticHSResonanceSpectra implementation (RunSection module)
 //
 // Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
 // (c) 2025 Quantum Biology and Computational Physics Group.
@@ -18,7 +18,7 @@
 #include <numeric>
 
 #include "ActionAddVector.h"
-#include "TaskStaticHSTrEPRSpectra.h"
+#include "TaskStaticHSResonanceSpectra.h"
 #include "ObjectParser.h"
 #include "Settings.h"
 #include "Spin.h"
@@ -34,9 +34,9 @@
 namespace RunSection
 {
 	// -----------------------------------------------------
-	// TaskStaticHSTrEPRSpectra Constructors and Destructor
+	// TaskStaticHSResonanceSpectra Constructors and Destructor
 	// -----------------------------------------------------
-	TaskStaticHSTrEPRSpectra::TaskStaticHSTrEPRSpectra(const MSDParser::ObjectParser &_parser, const RunSection &_runsection)
+	TaskStaticHSResonanceSpectra::TaskStaticHSResonanceSpectra(const MSDParser::ObjectParser &_parser, const RunSection &_runsection)
 		: BasicTask(_parser, _runsection),
 		  mwFrequencyGHz(0.0),
 		  linewidth_mT(0.0),
@@ -52,6 +52,7 @@ namespace RunSection
 		  powderGammaPoints(1),
 		  powderFullSphere(true),
 		  fullTensorRotation(true),
+		  useMzBlocks(true),
 		  useSweepCache(true),
 
 		  sweepCacheExact(true),
@@ -66,16 +67,16 @@ namespace RunSection
 	{
 	}
 
-	TaskStaticHSTrEPRSpectra::~TaskStaticHSTrEPRSpectra()
+	TaskStaticHSResonanceSpectra::~TaskStaticHSResonanceSpectra()
 	{
 	}
 
 	// -----------------------------------------------------
-	// TaskStaticHSTrEPRSpectra protected methods
+	// TaskStaticHSResonanceSpectra protected methods
 	// -----------------------------------------------------
-	bool TaskStaticHSTrEPRSpectra::RunLocal()
+	bool TaskStaticHSResonanceSpectra::RunLocal()
 	{
-		this->Log() << "Running task StaticHS-TrEPR-Spectra." << std::endl;
+		this->Log() << "Running task StaticHS-Resonance-Spectra." << std::endl;
 
 		// Workflow:
 		// 1. Resolve the static Hamiltonian list, lab-field Zeeman interaction,
@@ -119,7 +120,7 @@ namespace RunSection
 			const arma::uword spaceDim = space.HilbertSpaceDimensions();
 			const auto allSpins = (*sysIt)->Spins();
 			const MzBlocks mzBlocks = BuildMzBlocks(allSpins);
-			const bool hasMzBlocks = (!mzBlocks.mz2.empty() && mzBlocks.mz2.size() == static_cast<size_t>(spaceDim) && mzBlocks.blocks.size() > 1);
+			const bool hasMzBlocks = (this->useMzBlocks && !mzBlocks.mz2.empty() && mzBlocks.mz2.size() == static_cast<size_t>(spaceDim) && mzBlocks.blocks.size() > 1);
 			if (this->fullTensorRotation)
 			{
 				this->Log() << "Full tensor rotation enabled (off-diagonal terms retained)." << std::endl;
@@ -319,14 +320,14 @@ namespace RunSection
 			{
 				if (!this->initialStateName.empty())
 				{
-					this->Log() << "frame = eigen currently requires Thermal to be specified via the SpinSystem initialstate property in StaticHS-TrEPRSpectra." << std::endl;
+					this->Log() << "frame = eigen currently requires Thermal to be specified via the SpinSystem initialstate property in StaticHS-Resonance-Spectra." << std::endl;
 					continue;
 				}
 
 				auto initial_states = (*sysIt)->InitialState();
 				if (initial_states.size() != 1 || initial_states.front() != nullptr)
 				{
-					this->Log() << "frame = eigen currently requires a single Thermal initial state in StaticHS-TrEPRSpectra." << std::endl;
+					this->Log() << "frame = eigen currently requires a single Thermal initial state in StaticHS-Resonance-Spectra." << std::endl;
 					continue;
 				}
 
@@ -378,7 +379,7 @@ namespace RunSection
 					auto state = initial_states.cbegin() + static_cast<std::ptrdiff_t>(stateIndex);
 					if ((*state) == nullptr)
 					{
-						this->Log() << "Thermal initial states are not supported in StaticHS-TrEPRSpectra." << std::endl;
+						this->Log() << "Thermal initial states are not supported in StaticHS-Resonance-Spectra." << std::endl;
 						continue;
 					}
 
@@ -618,7 +619,7 @@ namespace RunSection
 							continue;
 					}
 
-						// Pepper-like resonance search path: TrEPR diagonalizes
+						// Pepper-like resonance search path: Resonance spectra diagonalizes
 						// the full Hilbert Hamiltonian at each field/orientation.
 						// This deliberately does not call
 						// PowderHamiltonianRotatedSA; resonance positions are
@@ -643,7 +644,10 @@ namespace RunSection
 					if (!have_eig)
 						continue;
 
-					const arma::cx_mat Udag = arma::trans(arma::conj(eigvec));
+					// Armadillo's complex transpose is already Hermitian. Applying conj()
+					// first would produce U^T instead of U^dagger and corrupt complex
+					// eigenbasis populations and transition moments.
+					const arma::cx_mat Udag = eigvec.t();
 					const arma::cx_mat rho_eig = Udag * rho_oriented * eigvec;
 					const arma::vec rho_diag = arma::real(rho_eig.diag());
 
@@ -876,7 +880,7 @@ namespace RunSection
 		return true;
 	}
 
-	void TaskStaticHSTrEPRSpectra::WriteHeader(std::ostream &_stream)
+	void TaskStaticHSResonanceSpectra::WriteHeader(std::ostream &_stream)
 	{
 		_stream << "Step ";
 		_stream << "Time ";
@@ -914,7 +918,7 @@ namespace RunSection
 		_stream << std::endl;
 	}
 
-	bool TaskStaticHSTrEPRSpectra::Validate()
+	bool TaskStaticHSResonanceSpectra::Validate()
 	{
 		bool hasFrequency = this->Properties()->Get("mwfrequency", this->mwFrequencyGHz);
 		if (!hasFrequency)
@@ -1060,13 +1064,14 @@ namespace RunSection
 
 		this->Properties()->Get("powderfullsphere", this->powderFullSphere);
 		this->Properties()->Get("fulltensorrotation", this->fullTensorRotation);
+		this->Properties()->Get("mzblocks", this->useMzBlocks);
 
-		this->Log() << "TR-EPR detection model: mwfrequency = " << this->mwFrequencyGHz
+		this->Log() << "Full-Hamiltonian resonance detection model: mwfrequency = " << this->mwFrequencyGHz
 					<< " GHz, linewidth = " << this->linewidth_mT
 					<< " mT, lineshape = " << this->lineshape
 					<< ", harmonic = " << this->detectionHarmonic
 					<< ", modulation amplitude = " << this->modulationAmplitude_mT << " mT." << std::endl;
-		this->Log() << "TR-EPR powder grid request: type = " << this->powderGridType
+		this->Log() << "Full-Hamiltonian resonance powder grid request: type = " << this->powderGridType
 					<< ", symmetry = " << this->powderGridSymmetry
 					<< ", sampling points = " << this->powdersamplingpoints
 					<< ", gamma points = " << this->powderGammaPoints
@@ -1099,7 +1104,7 @@ namespace RunSection
 	// -----------------------------------------------------
 	// Task-specific helper methods
 	// -----------------------------------------------------
-	double TaskStaticHSTrEPRSpectra::LineshapeValue(double _delta, double _fwhm) const
+	double TaskStaticHSResonanceSpectra::LineshapeValue(double _delta, double _fwhm) const
 	{
 		if (!std::isfinite(_delta) || !std::isfinite(_fwhm))
 			return 0.0;
@@ -1121,7 +1126,7 @@ namespace RunSection
 	}
 
 
-	std::vector<double> TaskStaticHSTrEPRSpectra::ApplyFieldHarmonic(const std::vector<double> &_field_mT, const std::vector<double> &_channel) const
+	std::vector<double> TaskStaticHSResonanceSpectra::ApplyFieldHarmonic(const std::vector<double> &_field_mT, const std::vector<double> &_channel) const
 	{
 		if (this->detectionHarmonic <= 0 || _field_mT.size() != _channel.size() || _field_mT.size() < 3)
 			return _channel;
@@ -1196,7 +1201,7 @@ namespace RunSection
 		return out;
 	}
 
-	void TaskStaticHSTrEPRSpectra::ApplyDetectionHarmonic(SpectrumCache &_cache) const
+	void TaskStaticHSResonanceSpectra::ApplyDetectionHarmonic(SpectrumCache &_cache) const
 	{
 		if (this->detectionHarmonic <= 0)
 			return;
@@ -1222,7 +1227,7 @@ namespace RunSection
 	}
 
 
-	bool TaskStaticHSTrEPRSpectra::CreatePassiveZYZRotationMatrix(double &_alpha, double &_beta, double &_gamma, arma::mat &_R) const
+	bool TaskStaticHSResonanceSpectra::CreatePassiveZYZRotationMatrix(double &_alpha, double &_beta, double &_gamma, arma::mat &_R) const
 	{
 		// EasySpin convention: passive ZYZ Euler rotation (molecular -> lab).
 		const double ca = std::cos(_alpha), sa = std::sin(_alpha);
@@ -1237,14 +1242,14 @@ namespace RunSection
 		return true;
 	}
 
-	bool TaskStaticHSTrEPRSpectra::CreateUniformGrid(int &_Npoints, SpinAPI::PowderGrid &_uniformGrid) const
+	bool TaskStaticHSResonanceSpectra::CreateUniformGrid(int &_Npoints, SpinAPI::PowderGrid &_uniformGrid) const
 	{
 		const auto domain = this->powderFullSphere ? SpinAPI::PowderGridDomain::FullSphere
 												   : SpinAPI::PowderGridDomain::UpperHemisphere;
 		return SpinAPI::CreateUniformPowderGrid(_Npoints, domain, _uniformGrid);
 	}
 
-	bool TaskStaticHSTrEPRSpectra::ResolveFieldInteraction(const SpinAPI::system_ptr &_system, SpinAPI::interaction_ptr &_fieldInteraction) const
+	bool TaskStaticHSResonanceSpectra::ResolveFieldInteraction(const SpinAPI::system_ptr &_system, SpinAPI::interaction_ptr &_fieldInteraction) const
 	{
 		_fieldInteraction = nullptr;
 		if (_system == nullptr)
@@ -1273,7 +1278,7 @@ namespace RunSection
 		return (_fieldInteraction != nullptr);
 	}
 
-	bool TaskStaticHSTrEPRSpectra::ResolveDetectionSpins(const SpinAPI::system_ptr &_system, const SpinAPI::interaction_ptr &_fieldInteraction,
+	bool TaskStaticHSResonanceSpectra::ResolveDetectionSpins(const SpinAPI::system_ptr &_system, const SpinAPI::interaction_ptr &_fieldInteraction,
 														 std::vector<SpinAPI::spin_ptr> &_spins, std::vector<std::string> &_spinNames) const
 	{
 		_spins.clear();
@@ -1332,7 +1337,7 @@ namespace RunSection
 		return true;
 	}
 
-	bool TaskStaticHSTrEPRSpectra::GetLinearFieldSweep(const SpinAPI::system_ptr &_system, const SpinAPI::interaction_ptr &_fieldInteraction, arma::vec &_field0, arma::vec &_fieldStep) const
+	bool TaskStaticHSResonanceSpectra::GetLinearFieldSweep(const SpinAPI::system_ptr &_system, const SpinAPI::interaction_ptr &_fieldInteraction, arma::vec &_field0, arma::vec &_fieldStep) const
 	{
 		if (_system == nullptr || _fieldInteraction == nullptr)
 			return false;
@@ -1364,7 +1369,7 @@ namespace RunSection
 		return true;
 	}
 
-	bool TaskStaticHSTrEPRSpectra::BuildCachedSpectrum(const SpinAPI::system_ptr &_system, const SpinAPI::interaction_ptr &_fieldInteraction, const arma::vec &_field0, const arma::vec &_fieldStep, SpectrumCache &_cache)
+	bool TaskStaticHSResonanceSpectra::BuildCachedSpectrum(const SpinAPI::system_ptr &_system, const SpinAPI::interaction_ptr &_fieldInteraction, const arma::vec &_field0, const arma::vec &_fieldStep, SpectrumCache &_cache)
 	{
 		// Cached sweep workflow:
 		// - build the field axis once from the AddVector sweep,
@@ -1419,7 +1424,7 @@ namespace RunSection
 		const arma::uword spaceDim = space.HilbertSpaceDimensions();
 		const auto allSpins = _system->Spins();
 		const MzBlocks mzBlocks = BuildMzBlocks(allSpins);
-		const bool hasMzBlocks = (!mzBlocks.mz2.empty() && mzBlocks.mz2.size() == static_cast<size_t>(spaceDim) && mzBlocks.blocks.size() > 1);
+		const bool hasMzBlocks = (this->useMzBlocks && !mzBlocks.mz2.empty() && mzBlocks.mz2.size() == static_cast<size_t>(spaceDim) && mzBlocks.blocks.size() > 1);
 
 		std::vector<std::string> h0list = this->hamiltonianH0list;
 		if (h0list.empty())
@@ -1788,7 +1793,7 @@ namespace RunSection
 						continue;
 					}
 
-					// Cached TrEPR still follows the pepper-style Hilbert
+					// Cached Resonance spectra still follows the pepper-style Hilbert
 					// formulation. Splitting Hstatic and Hz only accelerates
 					// the field scan; it must remain the full rotated ZYZ
 					// Hamiltonian, not the secular H0/H1 propagation helper.
@@ -2124,7 +2129,10 @@ namespace RunSection
 						if (!have_eig)
 							continue;
 
-						const arma::cx_mat Udag = arma::trans(arma::conj(eigvec));
+						// Armadillo's complex transpose is already Hermitian. Applying conj()
+						// first would produce U^T instead of U^dagger and corrupt complex
+						// eigenbasis populations and transition moments.
+						const arma::cx_mat Udag = eigvec.t();
 						const arma::cx_mat rho_eig = Udag * rho_oriented * eigvec;
 						const arma::vec rho_diag = arma::real(rho_eig.diag());
 
@@ -2307,13 +2315,14 @@ namespace RunSection
 	}
 
 	// -----------------------------------------------------
-	// TaskStaticHSTrEPRSpectra private helper methods
+	// TaskStaticHSResonanceSpectra private helper methods
 	// -----------------------------------------------------
 
-	TaskStaticHSTrEPRSpectra::OrientationDiagnostics TaskStaticHSTrEPRSpectra::OrientationDiagnostics::FromProperties(const MSDParser::ObjectParser &_props)
+	TaskStaticHSResonanceSpectra::OrientationDiagnostics TaskStaticHSResonanceSpectra::OrientationDiagnostics::FromProperties(const MSDParser::ObjectParser &_props)
 	{
 		OrientationDiagnostics diagnostics;
 		(void)_props.Get("debugpowder", diagnostics.enabled);
+		(void)_props.Get("debugresonance", diagnostics.enabled);
 		(void)_props.Get("debugtrepr", diagnostics.enabled);
 		(void)_props.Get("debugorientationdump", diagnostics.enabled);
 		if (!diagnostics.enabled)
@@ -2327,7 +2336,7 @@ namespace RunSection
 		if (_props.Get("datafile", datafile) && !datafile.empty())
 			diagnostics.file = datafile + ".orientation_debug.tsv";
 		else
-			diagnostics.file = "statichs_trepr.orientation_debug.tsv";
+			diagnostics.file = "statichs_resonance.orientation_debug.tsv";
 		(void)_props.Get("debugfile", diagnostics.file);
 
 		if (diagnostics.fieldMinT > diagnostics.fieldMaxT)
@@ -2335,7 +2344,7 @@ namespace RunSection
 		return diagnostics;
 	}
 
-	void TaskStaticHSTrEPRSpectra::OrientationDiagnostics::InitialiseFile(const std::string &_systemName, const std::vector<std::string> &_spinNames) const
+	void TaskStaticHSResonanceSpectra::OrientationDiagnostics::InitialiseFile(const std::string &_systemName, const std::vector<std::string> &_spinNames) const
 	{
 		if (!enabled)
 			return;
@@ -2353,7 +2362,7 @@ namespace RunSection
 		out << "\n";
 	}
 
-	bool TaskStaticHSTrEPRSpectra::OrientationDiagnostics::ShouldRecord(size_t _gridIndex, double _resonanceFieldT) const
+	bool TaskStaticHSResonanceSpectra::OrientationDiagnostics::ShouldRecord(size_t _gridIndex, double _resonanceFieldT) const
 	{
 		return enabled &&
 			   (maxOrientations <= 0 || _gridIndex < static_cast<size_t>(maxOrientations)) &&
@@ -2361,7 +2370,7 @@ namespace RunSection
 			   _resonanceFieldT <= fieldMaxT;
 	}
 
-	void TaskStaticHSTrEPRSpectra::FieldSyncGuard::Apply(const std::vector<SpinAPI::interaction_ptr> &_interactions, const arma::vec &_field)
+	void TaskStaticHSResonanceSpectra::FieldSyncGuard::Apply(const std::vector<SpinAPI::interaction_ptr> &_interactions, const arma::vec &_field)
 	{
 		saved.clear();
 		saved.reserve(_interactions.size());
@@ -2378,7 +2387,7 @@ namespace RunSection
 		}
 	}
 
-	TaskStaticHSTrEPRSpectra::FieldSyncGuard::~FieldSyncGuard()
+	TaskStaticHSResonanceSpectra::FieldSyncGuard::~FieldSyncGuard()
 	{
 		for (auto &entry : saved)
 		{
@@ -2387,7 +2396,7 @@ namespace RunSection
 		}
 	}
 
-	std::string TaskStaticHSTrEPRSpectra::ToLower(std::string value)
+	std::string TaskStaticHSResonanceSpectra::ToLower(std::string value)
 	{
 		std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c)
 					   { return static_cast<char>(std::tolower(c)); });
@@ -2397,7 +2406,7 @@ namespace RunSection
 	// If the Hamiltonian conserves total Mz, the Hilbert space splits into
 	// independent sectors. Diagonalizing these sectors is only an algebraic
 	// acceleration; it does not modify the physical model.
-	TaskStaticHSTrEPRSpectra::MzBlocks TaskStaticHSTrEPRSpectra::BuildMzBlocks(const std::vector<SpinAPI::spin_ptr> &spins)
+	TaskStaticHSResonanceSpectra::MzBlocks TaskStaticHSResonanceSpectra::BuildMzBlocks(const std::vector<SpinAPI::spin_ptr> &spins)
 	{
 		MzBlocks result;
 		if (spins.empty())
@@ -2450,7 +2459,7 @@ namespace RunSection
 		return result;
 	}
 
-	arma::mat TaskStaticHSTrEPRSpectra::PassiveZYZRotation(const arma::vec &fr)
+	arma::mat TaskStaticHSResonanceSpectra::PassiveZYZRotation(const arma::vec &fr)
 	{
 		double a = (fr.n_elem >= 1) ? fr(0) : 0.0;
 		double b = (fr.n_elem >= 2) ? fr(1) : 0.0;
@@ -2466,7 +2475,7 @@ namespace RunSection
 		return Rg * Rb * Ra;
 	}
 
-	bool TaskStaticHSTrEPRSpectra::IsZeemanInteraction(const SpinAPI::interaction_ptr &inter)
+	bool TaskStaticHSResonanceSpectra::IsZeemanInteraction(const SpinAPI::interaction_ptr &inter)
 	{
 		if (inter == nullptr)
 			return false;
@@ -2478,7 +2487,7 @@ namespace RunSection
 		return (field.n_elem == 3 && field.is_finite());
 	}
 
-	std::vector<SpinAPI::interaction_ptr> TaskStaticHSTrEPRSpectra::CollectZeemanInteractions(const SpinAPI::system_ptr &system, const std::vector<std::string> &h0list)
+	std::vector<SpinAPI::interaction_ptr> TaskStaticHSResonanceSpectra::CollectZeemanInteractions(const SpinAPI::system_ptr &system, const std::vector<std::string> &h0list)
 	{
 		std::vector<SpinAPI::interaction_ptr> out;
 		if (system == nullptr)
@@ -2500,7 +2509,7 @@ namespace RunSection
 		return out;
 	}
 
-	SpinAPI::interaction_ptr TaskStaticHSTrEPRSpectra::FindZeemanForSpin(const SpinAPI::spin_ptr &spin, const std::vector<SpinAPI::interaction_ptr> &zeemanList)
+	SpinAPI::interaction_ptr TaskStaticHSResonanceSpectra::FindZeemanForSpin(const SpinAPI::spin_ptr &spin, const std::vector<SpinAPI::interaction_ptr> &zeemanList)
 	{
 		if (spin == nullptr)
 			return nullptr;
@@ -2515,7 +2524,7 @@ namespace RunSection
 		return nullptr;
 	}
 
-	bool TaskStaticHSTrEPRSpectra::IsParallel(const arma::vec &a, const arma::vec &b, double tol)
+	bool TaskStaticHSResonanceSpectra::IsParallel(const arma::vec &a, const arma::vec &b, double tol)
 	{
 		if (a.n_elem != 3 || b.n_elem != 3)
 			return false;
@@ -2526,7 +2535,7 @@ namespace RunSection
 		return (arma::norm(arma::cross(a / na, b / nb)) <= tol);
 	}
 
-	bool TaskStaticHSTrEPRSpectra::CollectAddVectorSteps(const std::vector<std::shared_ptr<Action>> &actions,
+	bool TaskStaticHSResonanceSpectra::CollectAddVectorSteps(const std::vector<std::shared_ptr<Action>> &actions,
 							   unsigned int steps,
 							   std::map<std::string, arma::vec> &stepsOut,
 							   std::string &error)
@@ -2588,7 +2597,7 @@ namespace RunSection
 		return true;
 	}
 
-	void TaskStaticHSTrEPRSpectra::UpdateSymmetryFlags(const arma::mat &M, SymmetryFlags &flags, bool fullTensorRotation, double relTol)
+	void TaskStaticHSResonanceSpectra::UpdateSymmetryFlags(const arma::mat &M, SymmetryFlags &flags, bool fullTensorRotation, double relTol)
 	{
 		arma::mat A = M;
 		if (!fullTensorRotation)
@@ -2636,7 +2645,7 @@ namespace RunSection
 	// tensors entering the Hamiltonian and choose the largest symmetry that
 	// leaves the tensor set invariant, which reduces the number of powder
 	// orientations needed for the same orientational integral.
-	std::string TaskStaticHSTrEPRSpectra::AutoDetectSopheSymmetry(const SpinAPI::system_ptr &system,
+	std::string TaskStaticHSResonanceSpectra::AutoDetectSopheSymmetry(const SpinAPI::system_ptr &system,
 										 const SpinAPI::interaction_ptr &fieldInteraction,
 										 const std::vector<std::string> &h0list,
 										 bool fullTensorRotation)
@@ -2720,7 +2729,7 @@ namespace RunSection
 		return "c1";
 	}
 
-	bool TaskStaticHSTrEPRSpectra::IsBlockDiagonalMz(const arma::sp_cx_mat &H, const std::vector<int> &mz2, double relTol)
+	bool TaskStaticHSResonanceSpectra::IsBlockDiagonalMz(const arma::sp_cx_mat &H, const std::vector<int> &mz2, double relTol)
 	{
 		if (H.n_nonzero == 0)
 			return true;
@@ -2740,7 +2749,7 @@ namespace RunSection
 		return true;
 	}
 
-	bool TaskStaticHSTrEPRSpectra::EigSymBlockMz(const arma::sp_cx_mat &H, const std::vector<arma::uvec> &blocks, arma::vec &eigval, arma::cx_mat &eigvec)
+	bool TaskStaticHSResonanceSpectra::EigSymBlockMz(const arma::sp_cx_mat &H, const std::vector<arma::uvec> &blocks, arma::vec &eigval, arma::cx_mat &eigvec)
 	{
 		const arma::uword dim = H.n_rows;
 		eigval.set_size(dim);

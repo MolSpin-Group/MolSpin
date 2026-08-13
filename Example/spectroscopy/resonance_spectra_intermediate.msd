@@ -14,13 +14,6 @@ SpinSystem system1
     tensor = matrix(" 2.0066 0.000 0.000 ; 0.0000 2.0054 0.000 ; 0.000 0.000 2.0022 ");
   }
 
-  Spin N1
-  {
-    type = nucleus;
-    spin = 1/2;
-    tensor = isotropic(1);
-  }
-
   Interaction zeeman1
   {
     type = zeeman;
@@ -42,16 +35,6 @@ SpinSystem system1
     Prefactor = 1.0;
   }
 
-  Interaction zeemannuc
-  {
-    type = zeeman;
-    field = "0.0 0.0 3.380";
-    group1 = N1;
-    ignoretensors = true;
-    CommonPrefactor = false;
-    Prefactor = -0.019331;
-  }
-
   Interaction dipolar
   {
     type = doublespin;
@@ -59,28 +42,6 @@ SpinSystem system1
     group2 = WE2;
     orientation = -1.1956, -1.2497, 0.0000;
     tensor = matrix("0.000082666 0.000000000 0.000000000 ; 0.000000000 0.000082666 0.000000000 ; 0.000000000 0.000000000 -0.000165333");
-    ignoretensors = true;
-    CommonPrefactor = true;
-    prefactor = 2.002319304;
-  }
-
-  Interaction HFN
-  {
-    type = doublespin;
-    group1 = WE2;
-    group2 = N1;
-    tensor = matrix("  0.0005352 0.0 0.0; 0.0 0.0003925 0.0; 0.0 0.0 0.0034184 ");
-    ignoretensors = true;
-    CommonPrefactor = true;
-    prefactor = 2.002319304;
-  }
-
-  Interaction HFN2
-  {
-    type = doublespin;
-    group1 = FE1;
-    group2 = N1;
-    tensor = matrix("  0.0005352 0.0 0.0; 0.0 0.0003925 0.0; 0.0 0.0 0.0034184 ");
     ignoretensors = true;
     CommonPrefactor = true;
     prefactor = 2.002319304;
@@ -113,35 +74,28 @@ Settings
     vector = system1.zeeman2.field;
     direction = "0 0 1"; value = 0.00005;
   }
-
-  Action field_strength3
-  {
-    type = AddVector;
-    vector = system1.zeemannuc.field;
-    direction = "0 0 1"; value = 0.00005;
-  }
 }
 
 Run
 {
-  Task TrEPR_full
+  Task resonance_spectra_intermediate
   {
-    type = statichs-trepr-spectra;
+    type = statichs-resonance-spectra;
     mwfrequency = 95.0;
-    linewidth_fad = 0.004692082111;
-    linewidth_donor = 0.004692082111;
+    linewidth = 0.1;
     lineshape = gaussian;
     electron1 = FE1;
     electron2 = WE2;
     fieldinteraction = zeeman2;
     initialstate = Singlet;
-    HamiltonianH0list = zeeman1,zeeman2,zeemannuc,HFN,HFN2,dipolar;
+    HamiltonianH0list = zeeman1,zeeman2,dipolar;
     powdersamplingpoints = 2000;
     powdergridtype = fibonacci;
     powdergammapoints = 1;
     powderfullsphere = true;
     fulltensorrotation = true;
-    sweepcache = false;
-    datafile = "trepr_next_test_full.dat";
+    sweepcache = true;
+    sweepcachemode = exact;
+    datafile = "resonance_spectra_intermediate.dat";
   }
 }

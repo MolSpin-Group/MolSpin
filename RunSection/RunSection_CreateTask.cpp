@@ -55,7 +55,7 @@
 #include "TaskStaticHSDirectTimeEvoSymmUncoupled.h"
 #include "TaskStaticHSStochTimeEvoSymmUncoupled.h"
 #include "TaskStaticHSDirectSpectra.h"
-#include "TaskStaticHSTrEPRSpectra.h"
+#include "TaskStaticHSResonanceSpectra.h"
 // #include "TaskDynamicHSDirectSpectra.h"
 
 #include "TaskActionSpectrumHistogram.h"
@@ -247,14 +247,19 @@ namespace RunSection
 			task = std::make_shared<TaskStaticHSStochTimeEvoSymmUncoupled>(_obj, *this);
 		}
 
-		// NEW (ADDED by Luca Gerhards): Spectroscopy task in Hilbert space
-		else if (_tasktype.compare("statichs-direct-spectra") == 0 || _tasktype.compare("StaticHS-Direct-Yields") == 0)
+		// Hilbert-space rotating-frame spectroscopy.
+		else if (_tasktype.compare("statichs-direct-spectra") == 0 || _tasktype.compare("StaticHS-Direct-Spectra") == 0)
 		{
 			task = std::make_shared<TaskStaticHSDirectSpectra>(_obj, *this);
 		}
-		else if (_tasktype.compare("statichs-trepr-spectra") == 0 || _tasktype.compare("StaticHS-TrEPR-Spectra") == 0)
+		// Full-Hamiltonian field-swept resonance spectroscopy. The TrEPR names
+		// are retained only as compatibility aliases for existing input files.
+		else if (_tasktype.compare("statichs-resonance-spectra") == 0 ||
+				 _tasktype.compare("StaticHS-Resonance-Spectra") == 0 ||
+				 _tasktype.compare("statichs-trepr-spectra") == 0 ||
+				 _tasktype.compare("StaticHS-TrEPR-Spectra") == 0)
 		{
-			task = std::make_shared<TaskStaticHSTrEPRSpectra>(_obj, *this);
+			task = std::make_shared<TaskStaticHSResonanceSpectra>(_obj, *this);
 		}
 
 		// NEW (ADDED by Luca Gerhards): Including Action Histrograms in the context of Hamish Hiscock

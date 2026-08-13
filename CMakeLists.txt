@@ -138,7 +138,7 @@ set(SOURCES_RUNSECTION_TASKS
         ${PATH_SOURCE_RUNSECTION}/Tasks/TaskDynamicHSStochYields.cpp
         ${PATH_SOURCE_RUNSECTION}/Tasks/TaskDynamicHSStochTimeEvo.cpp
         ${PATH_SOURCE_RUNSECTION}/Tasks/TaskStaticHSDirectSpectra.cpp
-        ${PATH_SOURCE_RUNSECTION}/Tasks/TaskStaticHSTrEPRSpectra.cpp
+        ${PATH_SOURCE_RUNSECTION}/Tasks/TaskStaticHSResonanceSpectra.cpp
         ${PATH_SOURCE_RUNSECTION}/Tasks/TaskStaticSSPowderSpectra.cpp
         ${PATH_SOURCE_RUNSECTION}/Tasks/TaskStaticSSPowderSpectraNakajimaZwanzig.cpp
         ${PATH_SOURCE_RUNSECTION}/Tasks/TaskActionSpectrumHistogram.cpp

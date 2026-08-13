@@ -34,7 +34,7 @@ using test_case = std::pair<std::string, test_ptr>; // Function pointer and name
 #include "tests_TaskMultiStaticSS.cpp"
 #include "tests_TaskStaticRPOnlyHSSymDec.cpp"
 #include "tests_TaskStaticSSSpectra.cpp"
-#include "tests_TaskStaticHSTrEPRSpectra.cpp"
+#include "tests_TaskStaticHSResonanceSpectra.cpp"
 #include "tests_TaskStaticPowderSpectra.cpp"
 #include "tests_utility.cpp"
 //////////////////////////////////////////////////////////////////////////////
@@ -64,8 +64,8 @@ using test_case = std::pair<std::string, test_ptr>; // Function pointer and name
 #ifndef STATICSSSPECTRA_TEST
 #define STATICSSSPECTRA_TEST 1
 #endif
-#ifndef STATICHSTEPR_TEST
-#define STATICHSTEPR_TEST 1
+#ifndef STATICHSRESONANCE_TEST
+#define STATICHSRESONANCE_TEST 1
 #endif
 #ifndef STATICPOWDERSPECTRA_TEST
 #define STATICPOWDERSPECTRA_TEST 1
@@ -135,8 +135,8 @@ int main(int argc, char **argv)
 #if STATICSSSPECTRA_TEST == 1 
 	AddTaskStaticSSSpectraTests(cases);
 #endif
-#if STATICHSTEPR_TEST == 1 
-	AddTaskStaticHSTrEPRSpectraTests(cases);
+#if STATICHSRESONANCE_TEST == 1
+	AddTaskStaticHSResonanceSpectraTests(cases);
 #endif
 #if STATICPOWDERSPECTRA_TEST == 1 
 	AddTaskStaticPowderSpectraTests(cases);

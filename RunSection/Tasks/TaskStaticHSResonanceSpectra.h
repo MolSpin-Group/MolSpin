@@ -1,5 +1,5 @@
-#ifndef MOD_RunSection_TaskStaticHSTrEPRSpectra
-#define MOD_RunSection_TaskStaticHSTrEPRSpectra
+#ifndef MOD_RunSection_TaskStaticHSResonanceSpectra
+#define MOD_RunSection_TaskStaticHSResonanceSpectra
 
 #include "BasicTask.h"
 #include "PowderGrid.h"
@@ -12,7 +12,7 @@
 
 namespace RunSection
 {
-	class TaskStaticHSTrEPRSpectra : public BasicTask
+	class TaskStaticHSResonanceSpectra : public BasicTask
 	{
 	private:
 		// Sweep-cache output channels. The task can assemble these either by
@@ -91,6 +91,7 @@ namespace RunSection
 		int powderGammaPoints;
 		bool powderFullSphere;
 		bool fullTensorRotation;
+		bool useMzBlocks;
 		bool useSweepCache;
 		bool sweepCacheExact;
 		bool sweepCacheResfields;
@@ -136,8 +137,8 @@ namespace RunSection
 		bool Validate() override;
 
 	public:
-		TaskStaticHSTrEPRSpectra(const MSDParser::ObjectParser &, const RunSection &);
-		~TaskStaticHSTrEPRSpectra();
+		TaskStaticHSResonanceSpectra(const MSDParser::ObjectParser &, const RunSection &);
+		~TaskStaticHSResonanceSpectra();
 	};
 }
 
