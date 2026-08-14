@@ -94,6 +94,7 @@ set(SOURCES_RUNSECTION
         ${PATH_SOURCE_RUNSECTION}/OutputHandler.cpp
         ${PATH_SOURCE_RUNSECTION}/Utility.cpp
         ${PATH_SOURCE_RUNSECTION}/CubicSpline.cpp
+        ${PATH_SOURCE_RUNSECTION}/HSGeneralConfiguration.cpp
 )
 
 # --------------------------------------------------------------------------

@@ -26,6 +26,8 @@
 #include <vector>
 #include <memory>
 #include <functional>
+#include <random>
+#include <string>
 #include <armadillo>
 #include "SpinAPIDefines.h"
 #include "SpinAPIfwd.h"
@@ -82,6 +84,37 @@ namespace SpinAPI
 		arma::cx_mat Jy;
 		arma::cx_mat Jz;
 		bool rotationInvariant = false;
+	};
+
+	enum class HamiltonianApproximation
+	{
+		Full,
+		Secular
+	};
+
+	struct HilbertPowderHamiltonian
+	{
+		// H0 and H1 are kept separate because relaxation bases and rotating-frame
+		// propagators use H0 explicitly. Both parts always use the same powder
+		// orientation; only H0 is secularized when requested.
+		arma::sp_cx_mat H0;
+		arma::sp_cx_mat H1;
+		arma::sp_cx_mat total;
+	};
+
+	enum class TraceSamplingMethod
+	{
+		SUZ,
+		SpinCoherent
+	};
+
+	struct HilbertTraceSampleSet
+	{
+		// Each column is a normalized Hilbert-space state factor. The sample
+		// average B B^dagger approaches the normalized density represented by
+		// the supplied State, and only omitted spins are trace sampled.
+		arma::cx_mat factors;
+		arma::uword sampledSubspaceDimension = 0;
 	};
 
 	struct HilbertRelaxationCache
@@ -193,13 +226,21 @@ namespace SpinAPI
 		bool GetState(const CompleteState &, arma::cx_vec &, bool _useFullBasis = true) const;			 // Vector representing the state
 		bool GetState(const state_ptr &, arma::cx_vec &) const;											 // Vector representing the state
 		bool GetState(const state_ptr &, arma::cx_mat &) const;											 // Projection operator onto the state (dense matrix)
-			bool GetState(const state_ptr &, arma::sp_cx_mat &) const;										 // Projection operator onto the state (sparse matrix)
-			bool GetStateSubSpace(const state_ptr &_state, arma::cx_vec &_out) const;						 // Vector representing the state in subspace
-			bool RotateState(const arma::cx_mat &_state, const arma::mat &_rotation, arma::cx_mat &_out) const; // Rotate a density matrix with the same spatial rotation used for powder averaging
-			bool CreateStateRotationCache(const arma::cx_mat &_state, HilbertStateRotationCache &_cache, double _tolerance = 1.0e-12) const; // Precompute total-spin generators and detect rotationally invariant density matrices
-			bool RotateState(const arma::cx_mat &_state, const arma::mat &_rotation, const HilbertStateRotationCache &_cache, arma::cx_mat &_out) const; // Cached molecular-frame density-matrix rotation
-			bool PrepareInitialDensityForPowder(const arma::cx_mat &_referenceDensity, const arma::mat &_orientationRotation, StateFrame _stateFrame, bool _discardHamiltonianCoherences, const std::vector<std::string> &_dephasingHamiltonian, const HilbertStateRotationCache *_rotationCache, arma::cx_mat &_orientedDensity); // Apply molecular rotation and optional orientation-specific eigenbasis dephasing
-			bool DephaseStateInEigenbasis(const arma::cx_mat &_state, const arma::cx_mat &_hamiltonian, arma::cx_mat &_out) const; // Keep only populations in a Hamiltonian eigenbasis
+		bool GetState(const state_ptr &, arma::sp_cx_mat &) const;										 // Projection operator onto the state (sparse matrix)
+		bool GetStateSubSpace(const state_ptr &_state, arma::cx_vec &_out) const;						 // Vector representing the state in subspace
+		bool FactorizeDensityMatrix(const arma::cx_mat &_density, arma::cx_mat &_factors,
+								std::string *_error = nullptr, double _tolerance = 1.0e-10) const; // Build B such that B B^dagger is the normalized density
+		bool BuildTraceSamples(const state_ptr &_state, arma::uword _sampleCount, TraceSamplingMethod _method,
+						   std::mt19937 &_generator, HilbertTraceSampleSet &_samples,
+						   std::string *_error = nullptr) const; // Trace sample only spins omitted from a State object
+		bool RotateState(const arma::cx_mat &_state, const arma::mat &_rotation, arma::cx_mat &_out) const; // Rotate a density matrix with the same spatial rotation used for powder averaging
+		bool CreateStateRotationCache(const arma::cx_mat &_state, HilbertStateRotationCache &_cache, double _tolerance = 1.0e-12) const; // Precompute total-spin generators and detect rotationally invariant density matrices
+		bool CreateStateRotationOperator(const arma::mat &_rotation, const HilbertStateRotationCache &_cache, arma::cx_mat &_operator) const; // Spin-space representation of a molecular-to-lab powder rotation
+		bool RotateState(const arma::cx_mat &_state, const arma::mat &_rotation, const HilbertStateRotationCache &_cache, arma::cx_mat &_out) const; // Cached molecular-frame density-matrix rotation
+		bool RotateStateFactors(const arma::cx_mat &_factors, const arma::mat &_rotation, const HilbertStateRotationCache &_cache, arma::cx_mat &_out) const; // Rotate pure-state/trace-sampling factors without forming density matrices
+		bool PrepareInitialDensityForPowder(const arma::cx_mat &_referenceDensity, const arma::mat &_orientationRotation, StateFrame _stateFrame, bool _discardHamiltonianCoherences, const std::vector<std::string> &_dephasingHamiltonian, const HilbertStateRotationCache *_rotationCache, arma::cx_mat &_orientedDensity); // Apply molecular rotation and optional orientation-specific eigenbasis dephasing
+		bool PrepareInitialDensityForPowder(const arma::cx_mat &_referenceDensity, const arma::mat &_orientationRotation, StateFrame _stateFrame, bool _discardHamiltonianCoherences, const std::vector<std::string> &_dephasingHamiltonian, HamiltonianApproximation _dephasingApproximation, const HilbertStateRotationCache *_rotationCache, arma::cx_mat &_orientedDensity); // Explicit full/secular dephasing Hamiltonian selection
+		bool DephaseStateInEigenbasis(const arma::cx_mat &_state, const arma::cx_mat &_hamiltonian, arma::cx_mat &_out) const; // Keep only populations in a Hamiltonian eigenbasis
 		bool ThermalStateFromHamiltonian(const arma::cx_mat &_hamiltonian, double _Temperature, arma::cx_mat &_mat) const; // Thermal state generated from a specific Hamiltonian
 		bool GetThermalState(SpinAPI::SpinSpace &_space, double _Temperature, std::vector<std::string> thermalhamiltonian_list, arma::cx_mat &_mat) const; // Projection operator onto the thermal equilibrium state (dense matrix)
 
@@ -441,8 +482,10 @@ namespace SpinAPI
 		bool ThermalHamiltonian(std::vector<std::string> thermalhamiltonian_list, arma::sp_cx_mat &_out) const;							// Time-independent part of the Hamiltonian for thermal state (sparse matrix)
 		bool StaticHamiltonianRotatedZYZ(const arma::mat &rotmatrix, arma::sp_cx_mat &_out) const; // All static interactions after a common molecular-to-lab rotation
 		bool StaticHamiltonianRotatedSA(const arma::mat &rotmatrix, arma::sp_cx_mat &_out) const;  // All static interactions in the high-field secular approximation
+		bool DynamicHamiltonianRotatedZYZ(const arma::mat &rotmatrix, arma::sp_cx_mat &_out) const; // Active time-dependent interactions after the same powder rotation
 		bool BaseHamiltonianRotatedZYZ(std::vector<std::string> basehamiltonian_list, arma::mat rotmatrix, arma::sp_cx_mat &_out) const;
 		bool BaseHamiltonianRotated_SA(std::vector<std::string> basehamiltonian_list, arma::mat rotmatrix, arma::sp_cx_mat &_out) const;
+		bool PowderHamiltonianRotated(const std::vector<std::string> &h0list, const std::vector<std::string> &h1list, const arma::mat &rotmatrix, HamiltonianApproximation approximation, HilbertPowderHamiltonian &hamiltonian) const;
 		bool PowderHamiltonianRotatedSA(const std::vector<std::string> &h0list, const std::vector<std::string> &h1list, const arma::mat &rotmatrix, arma::sp_cx_mat &H0, arma::sp_cx_mat &H1, arma::sp_cx_mat &H) const;
 
 		// ------------------------------------------------

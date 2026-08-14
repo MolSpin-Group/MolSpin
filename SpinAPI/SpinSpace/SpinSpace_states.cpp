@@ -12,6 +12,7 @@
 #include "SpinSpace.h"
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace SpinAPI
 {
@@ -359,6 +360,160 @@ namespace SpinAPI
 		return true;
 	}
 
+	bool SpinSpace::BuildTraceSamples(const state_ptr &_state,
+										 arma::uword _sampleCount,
+										 TraceSamplingMethod _method,
+										 std::mt19937 &_generator,
+										 HilbertTraceSampleSet &_samples,
+										 std::string *_error) const
+	{
+		auto fail = [&](const std::string &_message) {
+			_samples = HilbertTraceSampleSet();
+			if (_error != nullptr)
+				*_error = _message;
+			return false;
+		};
+
+		if (_state == nullptr)
+			return fail("thermal initial states cannot be represented by pure-state trace samples");
+		if (_sampleCount == 0)
+			return fail("the trace-sample count must be greater than zero");
+
+		arma::cx_mat supportProjector;
+		if (!this->GetState(_state, supportProjector))
+			return fail("failed to construct the support projector for state \"" + _state->Name() + "\"");
+
+		const arma::uword dimension = this->HilbertSpaceDimensions();
+		if (supportProjector.n_rows != dimension || supportProjector.n_cols != dimension)
+			return fail("the state support does not match the active Hilbert space");
+
+		// GetState() is pure on explicitly mentioned spins and identity on
+		// omitted spins. Its trace is therefore the exact sampled subspace size.
+		const arma::cx_double supportTrace = arma::trace(supportProjector);
+		const double traceTolerance = 1.0e-10 * std::max(1.0, std::abs(supportTrace));
+		if (!std::isfinite(std::real(supportTrace)) || !std::isfinite(std::imag(supportTrace)) ||
+			std::abs(std::imag(supportTrace)) > traceTolerance || std::real(supportTrace) <= 0.0)
+		{
+			return fail("the state support projector has an invalid trace");
+		}
+
+		const double roundedTrace = std::round(std::real(supportTrace));
+		if (std::abs(std::real(supportTrace) - roundedTrace) > traceTolerance)
+			return fail("the state support projector does not have an integer rank");
+
+		_samples.factors.set_size(dimension, _sampleCount);
+		_samples.sampledSubspaceDimension = static_cast<arma::uword>(roundedTrace);
+
+		std::normal_distribution<double> gaussian(0.0, 1.0);
+		std::uniform_real_distribution<double> uniform(0.0, 1.0);
+		const arma::cx_double minusI(0.0, -1.0);
+		const double normTolerance = 64.0 * std::numeric_limits<double>::epsilon();
+
+		for (arma::uword sample = 0; sample < _sampleCount; ++sample)
+		{
+			arma::cx_vec candidate;
+			bool accepted = false;
+			for (unsigned int attempt = 0; attempt < 16 && !accepted; ++attempt)
+			{
+				if (_method == TraceSamplingMethod::SUZ)
+				{
+					candidate.set_size(dimension);
+					for (arma::uword index = 0; index < dimension; ++index)
+						candidate(index) = arma::cx_double(gaussian(_generator), gaussian(_generator));
+				}
+				else
+				{
+					candidate = arma::ones<arma::cx_vec>(1);
+					for (const auto &spin : this->spins)
+					{
+						if (spin == nullptr || spin->Multiplicity() <= 0)
+							return fail("the spin space contains an invalid spin");
+
+						const double theta = std::acos(1.0 - 2.0 * uniform(_generator));
+						const double phi = 2.0 * arma::datum::pi * uniform(_generator);
+						arma::cx_vec local = arma::zeros<arma::cx_vec>(static_cast<arma::uword>(spin->Multiplicity()));
+						local(0) = 1.0;
+						const arma::cx_mat Sz(spin->Sz());
+						const arma::cx_mat Sy(spin->Sy());
+						local = arma::expmat(minusI * phi * Sz) *
+								arma::expmat(minusI * theta * Sy) * local;
+						candidate = arma::kron(candidate, local);
+					}
+				}
+
+				candidate = supportProjector * candidate;
+				const double candidateNorm = arma::norm(candidate, 2);
+				if (std::isfinite(candidateNorm) && candidateNorm > normTolerance)
+				{
+					candidate /= candidateNorm;
+					accepted = true;
+				}
+			}
+
+			if (!accepted)
+				return fail("failed to draw a non-zero state from the requested trace-sampling subspace");
+			_samples.factors.col(sample) = candidate;
+		}
+
+		if (_error != nullptr)
+			_error->clear();
+		return true;
+	}
+
+	bool SpinSpace::FactorizeDensityMatrix(const arma::cx_mat &_density,
+										 arma::cx_mat &_factors,
+										 std::string *_error,
+										 double _tolerance) const
+	{
+		auto fail = [&](const std::string &_message) {
+			_factors.reset();
+			if (_error != nullptr)
+				*_error = _message;
+			return false;
+		};
+
+		const arma::uword dimension = this->HilbertSpaceDimensions();
+		if (_density.n_rows != dimension || _density.n_cols != dimension)
+			return fail("the density matrix does not match the active Hilbert space");
+		if (!_density.is_finite())
+			return fail("the density matrix contains non-finite values");
+
+		arma::cx_mat normalized = 0.5 * (_density + _density.t());
+		const arma::cx_double densityTrace = arma::trace(normalized);
+		const double traceScale = std::max(1.0, std::abs(densityTrace));
+		if (std::abs(std::imag(densityTrace)) > _tolerance * traceScale ||
+			!std::isfinite(std::real(densityTrace)) || std::real(densityTrace) <= 0.0)
+		{
+			return fail("the density matrix has an invalid trace");
+		}
+		normalized /= std::real(densityTrace);
+
+		arma::vec eigenvalues;
+		arma::cx_mat eigenvectors;
+		if (!arma::eig_sym(eigenvalues, eigenvectors, normalized))
+			return fail("failed to diagonalize the density matrix");
+
+		const double maxEigenvalue = eigenvalues.is_empty() ? 0.0 : std::abs(eigenvalues.max());
+		const double eigenTolerance = std::max(1.0e-14, _tolerance * std::max(1.0, maxEigenvalue));
+		if (eigenvalues.is_empty() || eigenvalues.min() < -eigenTolerance)
+			return fail("the density matrix is not positive semidefinite");
+
+		const arma::uvec retained = arma::find(eigenvalues > eigenTolerance);
+		if (retained.is_empty())
+			return fail("the density matrix is numerically rank zero");
+
+		_factors.zeros(dimension, retained.n_elem);
+		for (arma::uword column = 0; column < retained.n_elem; ++column)
+		{
+			const arma::uword index = retained(column);
+			_factors.col(column) = std::sqrt(eigenvalues(index)) * eigenvectors.col(index);
+		}
+
+		if (_error != nullptr)
+			_error->clear();
+		return true;
+	}
+
 	// Sets the (dense) matrix to a projection operator onto the state within the given spin space
 	// Returns false if the given state entangles spins within the spin space with spins not contained in the spin space
 	bool SpinSpace::GetState(const state_ptr &_state, arma::cx_mat &_mat) const
@@ -580,6 +735,24 @@ namespace SpinAPI
 			return true;
 		}
 
+		arma::cx_mat propagator;
+		if (!this->CreateStateRotationOperator(_rotation, _cache, propagator))
+			return false;
+
+		_out = propagator * _state * propagator.t();
+		return true;
+	}
+
+	bool SpinSpace::CreateStateRotationOperator(const arma::mat &_rotation, const HilbertStateRotationCache &_cache, arma::cx_mat &_operator) const
+	{
+		const arma::uword dim = this->HilbertSpaceDimensions();
+		if (_cache.Jx.n_rows != dim || _cache.Jx.n_cols != dim ||
+			_cache.Jy.n_rows != dim || _cache.Jy.n_cols != dim ||
+			_cache.Jz.n_rows != dim || _cache.Jz.n_cols != dim)
+		{
+			return false;
+		}
+
 		// Convert the spatial powder rotation into the corresponding spin
 		// rotation using the cached total angular-momentum generators.
 		arma::vec axis;
@@ -589,15 +762,28 @@ namespace SpinAPI
 
 		if (std::abs(angle) < 1.0e-12)
 		{
-			_out = _state;
+			_operator = arma::eye<arma::cx_mat>(dim, dim);
 			return true;
 		}
 
 		const arma::cx_mat generator = axis(0) * _cache.Jx + axis(1) * _cache.Jy + axis(2) * _cache.Jz;
 
 		const arma::cx_double imaginaryUnit(0.0, 1.0);
-		const arma::cx_mat propagator = arma::expmat(-imaginaryUnit * angle * generator);
-		_out = propagator * _state * propagator.t();
+		_operator = arma::expmat(-imaginaryUnit * angle * generator);
+		return true;
+	}
+
+	bool SpinSpace::RotateStateFactors(const arma::cx_mat &_factors, const arma::mat &_rotation, const HilbertStateRotationCache &_cache, arma::cx_mat &_out) const
+	{
+		if (_factors.n_rows != this->HilbertSpaceDimensions() || _factors.n_cols == 0)
+			return false;
+
+		// Do not use rotationInvariant here. Individual Monte-Carlo factors are
+		// orientation dependent even when their ensemble density is isotropic.
+		arma::cx_mat propagator;
+		if (!this->CreateStateRotationOperator(_rotation, _cache, propagator))
+			return false;
+		_out = propagator * _factors;
 		return true;
 	}
 
@@ -606,6 +792,24 @@ namespace SpinAPI
 												   StateFrame _stateFrame,
 												   bool _discardHamiltonianCoherences,
 												   const std::vector<std::string> &_dephasingHamiltonian,
+												   const HilbertStateRotationCache *_rotationCache,
+												   arma::cx_mat &_orientedDensity)
+	{
+		// Preserve the historical high-field dephasing path for every existing
+		// caller. HSGeneral can use the overload below to request full-Hamiltonian
+		// eigenbasis populations explicitly.
+		return this->PrepareInitialDensityForPowder(_referenceDensity,
+			_orientationRotation, _stateFrame, _discardHamiltonianCoherences,
+			_dephasingHamiltonian, HamiltonianApproximation::Secular,
+			_rotationCache, _orientedDensity);
+	}
+
+	bool SpinSpace::PrepareInitialDensityForPowder(const arma::cx_mat &_referenceDensity,
+												   const arma::mat &_orientationRotation,
+												   StateFrame _stateFrame,
+												   bool _discardHamiltonianCoherences,
+												   const std::vector<std::string> &_dephasingHamiltonian,
+												   HamiltonianApproximation _dephasingApproximation,
 												   const HilbertStateRotationCache *_rotationCache,
 												   arma::cx_mat &_orientedDensity)
 	{
@@ -628,7 +832,10 @@ namespace SpinAPI
 		if (_discardHamiltonianCoherences)
 		{
 			arma::sp_cx_mat H0sp;
-			if (!this->BaseHamiltonianRotated_SA(_dephasingHamiltonian, _orientationRotation, H0sp))
+			const bool built = _dephasingApproximation == HamiltonianApproximation::Secular
+				? this->BaseHamiltonianRotated_SA(_dephasingHamiltonian, _orientationRotation, H0sp)
+				: this->BaseHamiltonianRotatedZYZ(_dephasingHamiltonian, _orientationRotation, H0sp);
+			if (!built)
 			{
 				this->useSuperspace = previousSuperspaceSetting;
 				return false;

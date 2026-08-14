@@ -1878,6 +1878,35 @@ namespace SpinAPI
 		return true;
 	}
 
+	// Build the time-dependent Hamiltonian at the current SpinSpace time for one
+	// crystallite. Call SetTime() before this method. Keeping the powder rotation
+	// in SpinSpace guarantees that a dynamic Zeeman drive and every static tensor
+	// use the same molecular-to-lab convention.
+	bool SpinSpace::DynamicHamiltonianRotatedZYZ(const arma::mat &rotmatrix, arma::sp_cx_mat &_out) const
+	{
+		arma::sp_cx_mat result(this->SpaceDimensions(), this->SpaceDimensions());
+		arma::sp_cx_mat tmp;
+		arma::mat rotation = rotmatrix;
+
+		for (const auto &interaction : this->interactions)
+		{
+			if (IsStatic(*interaction) || !interaction->IsActive())
+				continue;
+
+			// A semiclassical field represents an ensemble, not one Hamiltonian
+			// matrix. Mixing it into deterministic powder propagation is undefined.
+			if (interaction->Type() == InteractionType::SemiClassicalField)
+				return false;
+
+			if (!this->InteractionOperatorRotatedZYZ(interaction, rotation, tmp))
+				return false;
+			result += tmp;
+		}
+
+		_out = std::move(result);
+		return true;
+	}
+
 	// Sets the rotated sparse matrix to the named part of the Hamiltonian in the secular approximation
 	bool SpinSpace::BaseHamiltonianRotated_SA(std::vector<std::string> basehamiltonian_list, arma::mat rotmatrix, arma::sp_cx_mat &_out) const
 	{
@@ -1959,6 +1988,30 @@ namespace SpinAPI
 		return true;
 	}
 
+	bool SpinSpace::PowderHamiltonianRotated(const std::vector<std::string> &h0list,
+										 const std::vector<std::string> &h1list,
+										 const arma::mat &rotmatrix,
+										 HamiltonianApproximation approximation,
+										 HilbertPowderHamiltonian &hamiltonian) const
+	{
+		// Powder magnetic-resonance tasks must use one crystallite orientation
+		// for every tensor-aware term. The approximation is therefore selected
+		// here, at Hamiltonian construction, instead of being inferred from a
+		// task name. H1 remains full in both modes so a transverse drive is not
+		// removed by high-field secularization.
+		const bool h0Built = approximation == HamiltonianApproximation::Secular
+			? this->BaseHamiltonianRotated_SA(h0list, rotmatrix, hamiltonian.H0)
+			: this->BaseHamiltonianRotatedZYZ(h0list, rotmatrix, hamiltonian.H0);
+		if (!h0Built)
+			return false;
+
+		if (!this->BaseHamiltonianRotatedZYZ(h1list, rotmatrix, hamiltonian.H1))
+			return false;
+
+		hamiltonian.total = hamiltonian.H0 + hamiltonian.H1;
+		return true;
+	}
+
 	bool SpinSpace::PowderHamiltonianRotatedSA(const std::vector<std::string> &h0list,
 											   const std::vector<std::string> &h1list,
 											   const arma::mat &rotmatrix,
@@ -1966,17 +2019,18 @@ namespace SpinAPI
 											   arma::sp_cx_mat &H1,
 											   arma::sp_cx_mat &H) const
 	{
-		// Powder magnetic-resonance tasks use one crystallite orientation for
-		// all tensor-aware terms. H0 is secularized in the static-field frame;
-		// H1 is then rotated with the same molecular-to-lab orientation so the
-		// microwave interaction does not silently live in a different frame.
-		if (!this->BaseHamiltonianRotated_SA(h0list, rotmatrix, H0))
+		// Compatibility wrapper for existing powder tasks. Their established
+		// high-field behavior remains unchanged while new code can select the
+		// approximation explicitly through PowderHamiltonianRotated.
+		HilbertPowderHamiltonian hamiltonian;
+		if (!this->PowderHamiltonianRotated(h0list, h1list, rotmatrix,
+				HamiltonianApproximation::Secular, hamiltonian))
+		{
 			return false;
-
-		if (!this->BaseHamiltonianRotatedZYZ(h1list, rotmatrix, H1))
-			return false;
-
-		H = H0 + H1;
+		}
+		H0 = std::move(hamiltonian.H0);
+		H1 = std::move(hamiltonian.H1);
+		H = std::move(hamiltonian.total);
 		return true;
 	}
 

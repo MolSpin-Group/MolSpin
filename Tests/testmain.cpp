@@ -36,6 +36,7 @@ using test_case = std::pair<std::string, test_ptr>; // Function pointer and name
 #include "tests_TaskStaticSSSpectra.cpp"
 #include "tests_TaskStaticHSResonanceSpectra.cpp"
 #include "tests_TaskStaticPowderSpectra.cpp"
+#include "tests_HSGeneral.cpp"
 #include "tests_utility.cpp"
 //////////////////////////////////////////////////////////////////////////////
 // CMake and the normal Makefile target run the complete suite. Developers can
@@ -72,6 +73,9 @@ using test_case = std::pair<std::string, test_ptr>; // Function pointer and name
 #endif
 #ifndef UTIL_TEST
 #define UTIL_TEST 1
+#endif
+#ifndef HSGENERAL_TEST
+#define HSGENERAL_TEST 1
 #endif
 //////////////////////////////////////////////////////////////////////////////
 std::string read_captured_stream(std::FILE *file)
@@ -140,6 +144,9 @@ int main(int argc, char **argv)
 #endif
 #if STATICPOWDERSPECTRA_TEST == 1 
 	AddTaskStaticPowderSpectraTests(cases);
+#endif
+#if HSGENERAL_TEST == 1
+	AddHSGeneralTests(cases);
 #endif
 #if UTIL_TEST == 1 
 	AddUtiltiyTests(cases);

@@ -56,6 +56,7 @@
 #include "TaskStaticHSStochTimeEvoSymmUncoupled.h"
 #include "TaskStaticHSDirectSpectra.h"
 #include "TaskStaticHSResonanceSpectra.h"
+#include "HSGeneralConfiguration.h"
 // #include "TaskDynamicHSDirectSpectra.h"
 
 #include "TaskActionSpectrumHistogram.h"
@@ -72,6 +73,48 @@ namespace RunSection
 	{
 		// The task pointer to be assigned and returned
 		std::shared_ptr<BasicTask> task = nullptr;
+
+		// HSGeneral is an additive compatibility layer. It resolves orthogonal
+		// physical choices to a proven task implementation; legacy task names
+		// and their defaults continue to instantiate those classes directly.
+		if (_tasktype.compare("hsgeneral") == 0 ||
+			_tasktype.compare("HSGeneral") == 0 ||
+			_tasktype.compare("hs-general") == 0 ||
+			_tasktype.compare("HS-General") == 0)
+		{
+			HSGeneralConfiguration configuration;
+			std::string error;
+			if (!ResolveHSGeneralConfiguration(_obj, configuration, error))
+			{
+				std::cerr << "ERROR: Invalid HSGeneral configuration for task \"" << _obj.Name()
+						  << "\": " << error << "." << std::endl;
+				return nullptr;
+			}
+
+			switch (configuration.target)
+			{
+			case HSGeneralTarget::StaticDirectTimeEvolution:
+				return std::make_shared<TaskStaticHSDirectTimeEvo>(_obj, *this);
+			case HSGeneralTarget::StaticDirectYields:
+				return std::make_shared<TaskStaticHSDirectYields>(_obj, *this);
+			case HSGeneralTarget::StaticStochasticTimeEvolution:
+				return std::make_shared<TaskStaticHSStochTimeEvo>(_obj, *this);
+			case HSGeneralTarget::StaticStochasticYields:
+				return std::make_shared<TaskStaticHSStochYields>(_obj, *this);
+			case HSGeneralTarget::DynamicDirectTimeEvolution:
+				return std::make_shared<TaskDynamicHSDirectTimeEvo>(_obj, *this);
+			case HSGeneralTarget::DynamicDirectYields:
+				return std::make_shared<TaskDynamicHSDirectYields>(_obj, *this);
+			case HSGeneralTarget::DynamicStochasticTimeEvolution:
+				return std::make_shared<TaskDynamicHSStochTimeEvo>(_obj, *this);
+			case HSGeneralTarget::DynamicStochasticYields:
+				return std::make_shared<TaskDynamicHSStochYields>(_obj, *this);
+			case HSGeneralTarget::StaticDirectSpectra:
+				return std::make_shared<TaskStaticHSDirectSpectra>(_obj, *this);
+			case HSGeneralTarget::StaticResonanceSpectra:
+				return std::make_shared<TaskStaticHSResonanceSpectra>(_obj, *this);
+			}
+		}
 
 		// Create a task of the proper type
 		if (_tasktype.compare("staticss") == 0 || _tasktype.compare("staticivp") == 0)

@@ -2950,19 +2950,36 @@ bool test_spinapi_powder_hamiltonian_helper_matches_explicit_builders()
 	space.UseFullTensorRotation(true);
 
 	arma::mat rotation;
-	SpinAPI::CreateZYZRotationMatrix(0.0, arma::datum::pi / 2.0, 0.0, rotation);
+	SpinAPI::CreateZYZRotationMatrix(0.31, 0.82, 1.17, rotation);
 
 	arma::sp_cx_mat directH0;
+	arma::sp_cx_mat directFullH0;
 	arma::sp_cx_mat directH1;
 	arma::sp_cx_mat helperH0;
 	arma::sp_cx_mat helperH1;
 	arma::sp_cx_mat helperH;
+	SpinAPI::HilbertPowderHamiltonian secularHamiltonian;
+	SpinAPI::HilbertPowderHamiltonian fullHamiltonian;
 
 	bool isCorrect = true;
 	isCorrect &= space.BaseHamiltonianRotated_SA({"B0"}, rotation, directH0);
+	isCorrect &= space.BaseHamiltonianRotatedZYZ({"B0"}, rotation, directFullH0);
 	isCorrect &= space.BaseHamiltonianRotatedZYZ({"mw"}, rotation, directH1);
+	isCorrect &= space.PowderHamiltonianRotated({"B0"}, {"mw"}, rotation,
+		SpinAPI::HamiltonianApproximation::Secular, secularHamiltonian);
+	isCorrect &= space.PowderHamiltonianRotated({"B0"}, {"mw"}, rotation,
+		SpinAPI::HamiltonianApproximation::Full, fullHamiltonian);
 	isCorrect &= space.PowderHamiltonianRotatedSA({"B0"}, {"mw"}, rotation, helperH0, helperH1, helperH);
 
+	isCorrect &= equal_matrices(secularHamiltonian.H0, directH0, 1e-12);
+	isCorrect &= equal_matrices(secularHamiltonian.H1, directH1, 1e-12);
+	isCorrect &= equal_matrices(secularHamiltonian.total, directH0 + directH1, 1e-12);
+	isCorrect &= equal_matrices(fullHamiltonian.H0, directFullH0, 1e-12);
+	isCorrect &= equal_matrices(fullHamiltonian.H1, directH1, 1e-12);
+	isCorrect &= equal_matrices(fullHamiltonian.total, directFullH0 + directH1, 1e-12);
+	isCorrect &= arma::norm(arma::cx_mat(fullHamiltonian.H0 - secularHamiltonian.H0), "fro") > 1e-6;
+
+	// The established helper remains an exact secular compatibility wrapper.
 	isCorrect &= equal_matrices(helperH0, directH0, 1e-12);
 	isCorrect &= equal_matrices(helperH1, directH1, 1e-12);
 	isCorrect &= equal_matrices(helperH, directH0 + directH1, 1e-12);
@@ -3241,6 +3258,254 @@ bool test_spinapi_rotated_static_hamiltonian_includes_all_interactions()
 }
 //////////////////////////////////////////////////////////////////////////////
 
+bool test_spinapi_rotated_dynamic_hamiltonian_matches_interaction_builder()
+{
+	auto electron = std::make_shared<SpinAPI::Spin>(
+		"E", "type=electron;spin=1/2;tensor=matrix(2 0 0;0 2.2 0;0 0 2.5);");
+	auto staticField = std::make_shared<SpinAPI::Interaction>(
+		"B0", "type=zeeman;spins=E;field=0 0 1;ignoretensors=false;commonprefactor=false;");
+	auto dynamicField = std::make_shared<SpinAPI::Interaction>(
+		"B1", "type=zeeman;spins=E;field=0.2 0 0;ignoretensors=false;commonprefactor=false;"
+		"fieldtype=linearpolarized;frequency=1.7;phase=0.3;");
+
+	SpinAPI::SpinSystem system("System");
+	system.Add(electron);
+	system.Add(staticField);
+	system.Add(dynamicField);
+	bool correct = system.ValidateInteractions().empty();
+
+	SpinAPI::SpinSpace space(system);
+	space.UseSuperoperatorSpace(false);
+	space.SetTime(0.41);
+	const arma::mat identity = arma::eye<arma::mat>(3, 3);
+	arma::mat rotation;
+	correct &= SpinAPI::CreateZYZRotationMatrix(0.2, 0.8, 1.1, rotation);
+
+	arma::sp_cx_mat plainDynamic;
+	arma::sp_cx_mat identityDynamic;
+	arma::sp_cx_mat rotatedDynamic;
+	arma::sp_cx_mat expectedRotated;
+	correct &= space.DynamicHamiltonian(plainDynamic);
+	correct &= space.DynamicHamiltonianRotatedZYZ(identity, identityDynamic);
+	correct &= space.DynamicHamiltonianRotatedZYZ(rotation, rotatedDynamic);
+	arma::mat mutableRotation = rotation;
+	correct &= space.InteractionOperatorRotatedZYZ(dynamicField, mutableRotation, expectedRotated);
+	correct &= equal_matrices(plainDynamic, identityDynamic, 1e-12);
+	correct &= equal_matrices(rotatedDynamic, expectedRotated, 1e-12);
+	correct &= arma::norm(arma::cx_mat(rotatedDynamic - identityDynamic), "fro") > 1e-6;
+	return correct;
+}
+//////////////////////////////////////////////////////////////////////////////
+
+bool test_spinapi_trace_sampling_respects_partial_state()
+{
+	auto electron = std::make_shared<SpinAPI::Spin>("E", "type=electron;spin=1/2;");
+	auto nitrogen = std::make_shared<SpinAPI::Spin>("N", "type=nucleus;spin=1;");
+	auto proton = std::make_shared<SpinAPI::Spin>("H", "type=nucleus;spin=1/2;");
+	auto state = std::make_shared<SpinAPI::State>("ElectronUp", "spin(E)=|1/2>;");
+
+	SpinAPI::SpinSystem system("System");
+	system.Add(electron);
+	system.Add(nitrogen);
+	system.Add(proton);
+	system.Add(state);
+	if (!state->ParseFromSystem(system))
+		return false;
+
+	SpinAPI::SpinSpace space(system);
+	std::mt19937 generator(73);
+	SpinAPI::HilbertTraceSampleSet samples;
+	std::string error;
+	if (!space.BuildTraceSamples(state, 12000, SpinAPI::TraceSamplingMethod::SUZ,
+								 generator, samples, &error))
+	{
+		return false;
+	}
+
+	if (samples.factors.n_rows != 12 || samples.factors.n_cols != 12000 ||
+		samples.sampledSubspaceDimension != 6)
+	{
+		return false;
+	}
+
+	arma::cx_mat support;
+	if (!space.GetState(state, support))
+		return false;
+
+	for (arma::uword column = 0; column < samples.factors.n_cols; column += 257)
+	{
+		if (std::abs(arma::norm(samples.factors.col(column), 2) - 1.0) > 1.0e-12 ||
+			arma::norm(support * samples.factors.col(column) - samples.factors.col(column), 2) > 1.0e-12)
+		{
+			return false;
+		}
+	}
+
+	const arma::cx_mat sampledDensity = samples.factors * samples.factors.t() /
+		static_cast<double>(samples.factors.n_cols);
+	const arma::cx_mat expectedDensity = support / static_cast<double>(samples.sampledSubspaceDimension);
+	return arma::norm(sampledDensity - expectedDensity, "fro") < 0.035;
+}
+
+bool test_spinapi_trace_sampling_is_seeded_and_state_general()
+{
+	auto electron = std::make_shared<SpinAPI::Spin>("E", "type=electron;spin=1/2;");
+	auto nucleus = std::make_shared<SpinAPI::Spin>("N", "type=nucleus;spin=1;");
+	auto nuclearState = std::make_shared<SpinAPI::State>("NuclearZero", "spin(N)=|0>;");
+
+	SpinAPI::SpinSystem system("System");
+	system.Add(electron);
+	system.Add(nucleus);
+	system.Add(nuclearState);
+	if (!nuclearState->ParseFromSystem(system))
+		return false;
+
+	SpinAPI::SpinSpace space(system);
+	std::mt19937 firstGenerator(1234);
+	std::mt19937 secondGenerator(1234);
+	SpinAPI::HilbertTraceSampleSet first;
+	SpinAPI::HilbertTraceSampleSet second;
+	if (!space.BuildTraceSamples(nuclearState, 64, SpinAPI::TraceSamplingMethod::SpinCoherent,
+								 firstGenerator, first) ||
+		!space.BuildTraceSamples(nuclearState, 64, SpinAPI::TraceSamplingMethod::SpinCoherent,
+								 secondGenerator, second))
+	{
+		return false;
+	}
+
+	return first.sampledSubspaceDimension == 2 &&
+		first.factors.n_rows == 6 &&
+		arma::norm(first.factors - second.factors, "fro") < 1.0e-14;
+}
+
+bool test_spinapi_trace_sampling_rejects_thermal_state()
+{
+	auto electron = std::make_shared<SpinAPI::Spin>("E", "type=electron;spin=1/2;");
+	SpinAPI::SpinSpace space(electron);
+	std::mt19937 generator(1);
+	SpinAPI::HilbertTraceSampleSet samples;
+	std::string error;
+	return !space.BuildTraceSamples(nullptr, 8, SpinAPI::TraceSamplingMethod::SUZ,
+								 generator, samples, &error) &&
+		!error.empty() && samples.factors.is_empty();
+}
+//////////////////////////////////////////////////////////////////////////////
+
+bool test_spinapi_rotated_state_factors_match_rotated_density()
+{
+	auto spin = std::make_shared<SpinAPI::Spin>("E", "type=electron;spin=1/2;");
+	SpinAPI::SpinSpace space(spin);
+	space.UseSuperoperatorSpace(false);
+
+	const arma::cx_double imaginaryUnit(0.0, 1.0);
+	arma::cx_mat factors = arma::zeros<arma::cx_mat>(2, 2);
+	factors.col(0) = arma::cx_vec({1.0, 0.0});
+	factors.col(1) = arma::cx_vec({1.0, imaginaryUnit}) / std::sqrt(2.0);
+	const arma::cx_mat density = factors * factors.t() / static_cast<double>(factors.n_cols);
+
+	SpinAPI::HilbertStateRotationCache cache;
+	if (!space.CreateStateRotationCache(density, cache) || cache.rotationInvariant)
+		return false;
+
+	arma::mat rotation;
+	if (!SpinAPI::CreateZYZRotationMatrix(0.37, 0.81, 1.24, rotation))
+		return false;
+
+	arma::cx_mat rotatedFactors;
+	arma::cx_mat rotatedDensity;
+	if (!space.RotateStateFactors(factors, rotation, cache, rotatedFactors) ||
+		!space.RotateState(density, rotation, cache, rotatedDensity))
+	{
+		return false;
+	}
+
+	const arma::cx_mat reconstructed = rotatedFactors * rotatedFactors.t() /
+		static_cast<double>(rotatedFactors.n_cols);
+	return arma::norm(reconstructed - rotatedDensity, "fro") < 1e-12;
+}
+//////////////////////////////////////////////////////////////////////////////
+
+bool test_spinapi_powder_initial_dephasing_selects_hamiltonian_approximation()
+{
+	auto triplet = std::make_shared<SpinAPI::Spin>(
+		"T", "type=electron;spin=1;tensor=matrix(2.0 0 0;0 2.1 0;0 0 2.3);");
+	auto zeeman = std::make_shared<SpinAPI::Interaction>(
+		"B0", "type=zeeman;spins=T;field=0 0 0.04;ignoretensors=false;commonprefactor=false;prefactor=1;");
+	auto zfs = std::make_shared<SpinAPI::Interaction>(
+		"ZFS", "type=quadraticspin;group1=T;tensor=matrix(1.7 0.3 0.2;0.3 -0.5 0.4;0.2 0.4 -1.2);"
+			   "orientation=0.2 0.5 0.7;commonprefactor=false;prefactor=1;");
+
+	SpinAPI::SpinSystem system("System");
+	system.Add(triplet);
+	system.Add(zeeman);
+	system.Add(zfs);
+	if (!system.ValidateInteractions().empty())
+		return false;
+
+	SpinAPI::SpinSpace space(system);
+	space.UseSuperoperatorSpace(false);
+
+	arma::mat rotation;
+	if (!SpinAPI::CreateZYZRotationMatrix(0.3, 1.0, 0.8, rotation))
+		return false;
+
+	const arma::cx_vec state = arma::normalise(arma::cx_vec({
+		arma::cx_double(1.0, 0.2),
+		arma::cx_double(-0.4, 0.7),
+		arma::cx_double(0.3, -0.8)}));
+	const arma::cx_mat density = state * state.t();
+	const std::vector<std::string> h0list = {"B0", "ZFS"};
+
+	arma::sp_cx_mat fullH0;
+	arma::sp_cx_mat secularH0;
+	if (!space.BaseHamiltonianRotatedZYZ(h0list, rotation, fullH0) ||
+		!space.BaseHamiltonianRotated_SA(h0list, rotation, secularH0))
+	{
+		return false;
+	}
+
+	arma::cx_mat expectedFull;
+	arma::cx_mat expectedSecular;
+	arma::cx_mat preparedFull;
+	arma::cx_mat preparedSecular;
+	bool isCorrect = space.DephaseStateInEigenbasis(density, arma::cx_mat(fullH0), expectedFull);
+	isCorrect &= space.DephaseStateInEigenbasis(density, arma::cx_mat(secularH0), expectedSecular);
+	isCorrect &= space.PrepareInitialDensityForPowder(
+		density, rotation, SpinAPI::StateFrame::Fixed, true, h0list,
+		SpinAPI::HamiltonianApproximation::Full, nullptr, preparedFull);
+	isCorrect &= space.PrepareInitialDensityForPowder(
+		density, rotation, SpinAPI::StateFrame::Fixed, true, h0list,
+		SpinAPI::HamiltonianApproximation::Secular, nullptr, preparedSecular);
+	isCorrect &= equal_matrices(preparedFull, expectedFull, 1e-12);
+	isCorrect &= equal_matrices(preparedSecular, expectedSecular, 1e-12);
+	isCorrect &= arma::norm(preparedFull - preparedSecular, "fro") > 1e-6;
+	return isCorrect;
+}
+
+bool test_spinapi_density_factorization_reconstructs_normalized_density()
+{
+	auto electron = std::make_shared<SpinAPI::Spin>("E", "type=electron;spin=1/2;");
+	auto nucleus = std::make_shared<SpinAPI::Spin>("N", "type=nucleus;spin=1;");
+	SpinAPI::SpinSpace space(std::vector<SpinAPI::spin_ptr>{electron, nucleus});
+
+	const arma::cx_vec a = arma::normalise(arma::cx_vec({
+		arma::cx_double(1.0, 0.0), arma::cx_double(0.0, 1.0), arma::cx_double(0.5, 0.0),
+		arma::cx_double(0.0, 0.0), arma::cx_double(0.2, -0.1), arma::cx_double(0.0, 0.0)}));
+	const arma::cx_vec b = arma::normalise(arma::cx_vec({
+		arma::cx_double(0.0, 0.0), arma::cx_double(0.2, 0.0), arma::cx_double(0.0, 0.0),
+		arma::cx_double(1.0, 0.0), arma::cx_double(0.0, -0.5), arma::cx_double(0.3, 0.0)}));
+	const arma::cx_mat density = 2.0 * (0.35 * a * a.t() + 0.65 * b * b.t());
+
+	arma::cx_mat factors;
+	std::string error;
+	if (!space.FactorizeDensityMatrix(density, factors, &error))
+		return false;
+	const arma::cx_mat expected = density / arma::trace(density);
+	return factors.n_rows == 6 && factors.n_cols == 2 &&
+		equal_matrices(factors * factors.t(), expected, 1e-12);
+}
+//////////////////////////////////////////////////////////////////////////////
+
 // Add all the SpinAPI test cases
 void AddSpinAPITests(std::vector<test_case> &_cases)
 {
@@ -3322,6 +3587,13 @@ void AddSpinAPITests(std::vector<test_case> &_cases)
 	_cases.push_back(test_case("SpinSpace::Krylov happy breakdown converges", test_spinapi_krylov_happy_breakdown_returns_exact_result));
 	_cases.push_back(test_case("SpinSpace::Block Krylov is bounded and orthonormal", test_spinapi_block_krylov_is_bounded_and_orthonormal));
 	_cases.push_back(test_case("SpinSpace::Rotated static Hamiltonian includes every interaction", test_spinapi_rotated_static_hamiltonian_includes_all_interactions));
+	_cases.push_back(test_case("SpinSpace::Rotated dynamic Hamiltonian follows powder orientation", test_spinapi_rotated_dynamic_hamiltonian_matches_interaction_builder));
+	_cases.push_back(test_case("SpinSpace::Trace sampling respects partial states", test_spinapi_trace_sampling_respects_partial_state));
+	_cases.push_back(test_case("SpinSpace::Trace sampling supports seeded arbitrary states", test_spinapi_trace_sampling_is_seeded_and_state_general));
+	_cases.push_back(test_case("SpinSpace::Trace sampling rejects thermal states", test_spinapi_trace_sampling_rejects_thermal_state));
+	_cases.push_back(test_case("SpinSpace::Rotated state factors match rotated density", test_spinapi_rotated_state_factors_match_rotated_density));
+	_cases.push_back(test_case("SpinSpace::Powder initial dephasing selects Hamiltonian approximation", test_spinapi_powder_initial_dephasing_selects_hamiltonian_approximation));
+	_cases.push_back(test_case("SpinSpace::Density factorization reconstructs normalized density", test_spinapi_density_factorization_reconstructs_normalized_density));
 	_cases.push_back(test_case("SpinAPI::Operator copy preserves relaxation configuration", test_spinapi_operator_copy_preserves_relaxation_configuration));
 }
 //////////////////////////////////////////////////////////////////////////////

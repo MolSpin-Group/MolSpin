@@ -17,10 +17,14 @@
 #include "Spin.h"
 #include "Interaction.h"
 #include "Pulse.h"
+#include "HSGeneralConfiguration.h"
+#include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <iomanip> // std::setprecision
 #include <limits>
 #include <numeric>
+#include <random>
 #include <sstream>
 #ifdef _OPENMP
 #include <omp.h>
@@ -49,6 +53,26 @@ namespace RunSection
 	bool TaskStaticHSDirectSpectra::RunLocal()
 	{
 		this->Log() << "Running task StaticHS-Direct-Spectra." << std::endl;
+		const bool hsGeneral = IsHSGeneralTask(*this->Properties());
+		HSGeneralConfiguration hsGeneralConfiguration;
+		if (hsGeneral)
+		{
+			std::string error;
+			if (!ResolveHSGeneralConfiguration(*this->Properties(), hsGeneralConfiguration, error))
+			{
+				this->Log() << "ERROR: Invalid HSGeneral configuration: " << error << "." << std::endl;
+				return false;
+			}
+		}
+		const SpinAPI::HamiltonianApproximation hsGeneralApproximation =
+			hsGeneral && hsGeneralConfiguration.approximation == "full"
+				? SpinAPI::HamiltonianApproximation::Full
+				: SpinAPI::HamiltonianApproximation::Secular;
+		const bool hsGeneralDynamicPowder = hsGeneral &&
+			hsGeneralConfiguration.powderAveraging &&
+			hsGeneralConfiguration.dynamics == "dynamic";
+		const bool hsGeneralFiniteTimeYields = hsGeneralDynamicPowder &&
+			hsGeneralConfiguration.calculation == "yields";
 
 		// Workflow:
 		// 1. Build the Hilbert-space initial density matrix and output projectors.
@@ -77,7 +101,19 @@ namespace RunSection
 			space.SetReactionOperatorType(this->reactionOperators);
 
 			arma::cx_mat rho0;
-			if (!this->BuildInitialDensityMatrix(*i, space, rho0, this->Log()))
+			bool initialDensityBuilt = false;
+			if (hsGeneral)
+			{
+				std::string error;
+				initialDensityBuilt = BuildHSGeneralInitialDensityMatrix(*i, space, rho0, error);
+				if (!initialDensityBuilt)
+					this->Log() << "ERROR: " << error << "." << std::endl;
+			}
+			else
+			{
+				initialDensityBuilt = this->BuildInitialDensityMatrix(*i, space, rho0, this->Log());
+			}
+			if (!initialDensityBuilt)
 			{
 				this->Log() << "Skipping SpinSystem \"" << (*i)->Name() << "\" as no valid initial state could be constructed." << std::endl;
 				continue;
@@ -86,6 +122,42 @@ namespace RunSection
 			const int dim = static_cast<int>(rho0.n_rows);
 			this->Log() << "Hilbert Space Size " << dim << " x " << dim << std::endl;
 
+			std::string sampling;
+			this->Properties()->Get("sampling", sampling);
+			std::transform(sampling.begin(), sampling.end(), sampling.begin(),
+				[](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+			const bool useTraceSampling = hsGeneral && hsGeneralConfiguration.sampling == "stochastic";
+			arma::cx_mat traceSampleFactors;
+			if (useTraceSampling)
+			{
+				int sampleCount = 1000;
+				if (this->Properties()->Get("montecarlosamples", sampleCount) && sampleCount <= 0)
+				{
+					this->Log() << "ERROR: montecarlosamples must be greater than zero." << std::endl;
+					return false;
+				}
+
+				std::random_device randomDevice;
+				std::mt19937 generator(randomDevice());
+				SeedHSGeneralRandomGenerator(*this->Properties(), generator, this->Log());
+				SpinAPI::HilbertTraceSampleSet samples;
+				std::string error;
+				if (!BuildHSGeneralTraceSamples(*this->Properties(), *i, space,
+						static_cast<arma::uword>(sampleCount), generator, samples,
+						this->Log(), error))
+				{
+					this->Log() << "ERROR: " << error << "." << std::endl;
+					return false;
+				}
+
+				// The factor propagator evaluates Tr(O B B^dagger). Scale once so
+				// B B^dagger is the Monte Carlo average rather than the sample sum.
+				traceSampleFactors = std::move(samples.factors);
+				traceSampleFactors /= std::sqrt(static_cast<double>(sampleCount));
+				this->Log() << "HSGeneral stochastic spectra use " << sampleCount
+							<< " normalized trace samples in the shared powder propagation engine." << std::endl;
+			}
+
 			// Get Information about the polarization of choice
 			bool CIDSP = false;
 			if (!this->Properties()->Get("cidsp", CIDSP))
@@ -93,9 +165,9 @@ namespace RunSection
 				this->Log() << "Failed to obtain input for CIDSP. Using default false." << std::endl;
 			}
 
-			// Output observables are independent of powder orientation. Build
-			// them once in Hilbert space, then reuse the same sparse, dense, and
-			// vectorized contractions throughout the powder/time loops.
+			// Build reference observables once. HSGeneral state-population
+			// projectors carry rotation caches so molecular-frame observables can
+			// be oriented beside the Hamiltonian inside the powder loop.
 			DetectionOperatorSet detectionOperators;
 			if (!this->BuildDetectionOperators(*i, space, CIDSP, static_cast<arma::uword>(dim), detectionOperators, this->Log()))
 			{
@@ -105,6 +177,10 @@ namespace RunSection
 			if (detectionOperators.useSparse && projection_counter > 0)
 			{
 				this->Log() << "Using sparse operators for expectation values." << std::endl;
+			}
+			if (detectionOperators.rotateWithPowder)
+			{
+				this->Log() << "Orientation-dependent molecular-frame state observables are rotated for every powder orientation." << std::endl;
 			}
 
 			// Get the Hamiltonian
@@ -336,7 +412,17 @@ namespace RunSection
 
 			// Powder averaging options (shared keywords with superspace powder task)
 			std::string Method = "timeevo";
-			if (!this->Properties()->Get("method", Method))
+			if (hsGeneral && hsGeneralConfiguration.calculation != "spectra")
+			{
+				Method = hsGeneralFiniteTimeYields
+					? "timeevo"
+					: (hsGeneralConfiguration.calculation == "yields" ? "timeinf" : "timeevo");
+				this->Log() << "HSGeneral calculation=" << hsGeneralConfiguration.calculation
+							<< " selects method=" << Method
+							<< (hsGeneralFiniteTimeYields ? " with finite-time yield integration." : ".")
+							<< std::endl;
+			}
+			else if (!this->Properties()->Get("method", Method))
 			{
 				this->Log() << "Failed to obtain an input for a Method. Please specify method = timeinf or method = timeevo. Using timeevo by default." << std::endl;
 				Method = "timeevo";
@@ -361,10 +447,10 @@ namespace RunSection
 			// separately and do not reuse this free-evolution planner.
 			const DensityPropagationPlan densityPropagationPlan =
 				this->EvaluateDensityPropagationPlan(static_cast<arma::uword>(dim),
-													 num_steps,
-													 method_timeevo,
-													 relax_use_split_expm,
-													 true);
+											 num_steps,
+											 method_timeevo,
+											 relax_use_split_expm,
+											 !hsGeneralDynamicPowder);
 			if (use_density_matrix && method_timeevo)
 			{
 				this->Log() << "Density propagation planner: " << densityPropagationPlan.reason << std::endl;
@@ -511,13 +597,26 @@ namespace RunSection
 			const bool initialDensityOrientationInvariant =
 				initialStateFrame != SpinAPI::StateFrame::Molecular ||
 				initialStateRotationCache.rotationInvariant;
-			const bool reuseInitialFactor = !use_density_matrix &&
-											initialDensityOrientationInvariant &&
-											!dephaseInitialState;
+			const bool reuseInitialFactor = useTraceSampling
+				? initialStateFrame != SpinAPI::StateFrame::Molecular
+				: (!use_density_matrix && initialDensityOrientationInvariant && !dephaseInitialState);
 			arma::cx_mat orientationInvariantInitialFactor;
 			if (reuseInitialFactor)
 			{
-				orientationInvariantInitialFactor = this->FactorizeDensityMatrix(rho0, this->Log());
+				if (useTraceSampling)
+				{
+					orientationInvariantInitialFactor = traceSampleFactors;
+				}
+				else
+				{
+					std::string factorizationError;
+					if (!space.FactorizeDensityMatrix(rho0, orientationInvariantInitialFactor,
+							&factorizationError))
+					{
+						this->Log() << "Failed to factorize the initial density matrix: "
+									<< factorizationError << "." << std::endl;
+					}
+				}
 				if (orientationInvariantInitialFactor.is_empty())
 				{
 					this->Log() << "Skipping SpinSystem \"" << (*i)->Name()
@@ -714,6 +813,19 @@ namespace RunSection
 					this->Log() << "Failed to obtain rotation matrix for powder orientation." << std::endl;
 				}
 
+				DetectionOperatorSet orientedDetectionOperators;
+				const DetectionOperatorSet *activeDetectionOperators = &detectionOperators;
+				if (detectionOperators.rotateWithPowder)
+				{
+					if (!this->RotateDetectionOperatorsForPowder(space_thread, Rot_mat,
+							detectionOperators, orientedDetectionOperators, this->Log()))
+					{
+						this->Log() << "Failed to orient state-population observables for powder orientation." << std::endl;
+						continue;
+					}
+					activeDetectionOperators = &orientedDetectionOperators;
+				}
+
 				arma::sp_cx_mat H;
 				arma::sp_cx_mat relaxation_basis_hamiltonian;
 				if (hasH0list)
@@ -729,12 +841,34 @@ namespace RunSection
 					arma::sp_cx_mat H1;
 					arma::sp_cx_mat Htotal;
 					const std::vector<std::string> emptyH1list;
-					if (!space_thread.PowderHamiltonianRotatedSA(HamiltonianH0list,
-																 hasH1list ? HamiltonianH1list : emptyH1list,
-																 Rot_mat,
-																 H0,
-																 H1,
-																 Htotal))
+					bool hamiltonianBuilt = false;
+					if (hsGeneral)
+					{
+						SpinAPI::HilbertPowderHamiltonian powderHamiltonian;
+						hamiltonianBuilt = space_thread.PowderHamiltonianRotated(
+							HamiltonianH0list,
+							hasH1list ? HamiltonianH1list : emptyH1list,
+							Rot_mat,
+							hsGeneralApproximation,
+							powderHamiltonian);
+						if (hamiltonianBuilt)
+						{
+							H0 = std::move(powderHamiltonian.H0);
+							H1 = std::move(powderHamiltonian.H1);
+							Htotal = std::move(powderHamiltonian.total);
+						}
+					}
+					else
+					{
+						hamiltonianBuilt = space_thread.PowderHamiltonianRotatedSA(
+							HamiltonianH0list,
+							hasH1list ? HamiltonianH1list : emptyH1list,
+							Rot_mat,
+							H0,
+							H1,
+							Htotal);
+					}
+					if (!hamiltonianBuilt)
 					{
 						this->Log() << "Failed to obtain orientation-specific powder Hamiltonians for SpinSystem \"" << (*i)->Name() << "\"." << std::endl;
 						continue;
@@ -742,19 +876,45 @@ namespace RunSection
 					H = Htotal;
 					relaxation_basis_hamiltonian = H0;
 				}
-				else
-				{
-					if (!space_thread.Hamiltonian(H))
+					else
+					{
+						if (!space_thread.Hamiltonian(H))
 					{
 						this->Log() << "Failed to obtain the Hamiltonian in Hilbert Space." << std::endl;
 						continue;
 					}
-					relaxation_basis_hamiltonian = H;
-				}
+						relaxation_basis_hamiltonian = H;
+					}
+
+					auto buildDynamicHamiltonian = [&](double currentTime, arma::sp_cx_mat &dynamicHamiltonian)
+					{
+						bool built = false;
+						// SpinSpace copies currently share Interaction objects. SetTime mutates
+						// those objects, so time selection and matrix assembly must be atomic
+						// across powder workers. Propagation itself remains parallel.
+#pragma omp critical(hsgeneral_dynamic_hamiltonian)
+						{
+							space_thread.SetTime(currentTime);
+							built = space_thread.DynamicHamiltonianRotatedZYZ(Rot_mat, dynamicHamiltonian);
+						}
+						return built;
+					};
 
 				arma::cx_mat rho_initial;
-				if (!reuseInitialFactor &&
-					!space_thread.PrepareInitialDensityForPowder(rho0, Rot_mat, initialStateFrame, dephaseInitialState, initialStateHamiltonianList, initialStateRotationCachePtr, rho_initial))
+				bool initialDensityPrepared = true;
+				if (!reuseInitialFactor && !useTraceSampling)
+				{
+					initialDensityPrepared = hsGeneral
+						? space_thread.PrepareInitialDensityForPowder(
+							rho0, Rot_mat, initialStateFrame, dephaseInitialState,
+							initialStateHamiltonianList, hsGeneralApproximation,
+							initialStateRotationCachePtr, rho_initial)
+						: space_thread.PrepareInitialDensityForPowder(
+							rho0, Rot_mat, initialStateFrame, dephaseInitialState,
+							initialStateHamiltonianList, initialStateRotationCachePtr,
+							rho_initial);
+				}
+				if (!initialDensityPrepared)
 				{
 					this->Log() << "Failed to prepare initial density matrix for powder orientation." << std::endl;
 					continue;
@@ -858,9 +1018,9 @@ namespace RunSection
 						operatorsPhenomenologicalBasisVector.resize(projection_counter);
 						for (int idx = 0; idx < projection_counter; ++idx)
 						{
-							const arma::cx_mat operatorLab = detectionOperators.useSparse
-																 ? arma::cx_mat(detectionOperators.sparse[idx])
-																 : detectionOperators.dense[idx];
+							const arma::cx_mat operatorLab = activeDetectionOperators->useSparse
+															 ? arma::cx_mat(activeDetectionOperators->sparse[idx])
+															 : activeDetectionOperators->dense[idx];
 							operatorsPhenomenologicalBasis[idx] =
 								phenomenological_basis_eigenvectors.t() * operatorLab * phenomenological_basis_eigenvectors;
 							operatorsPhenomenologicalBasisVector[idx].zeros(dim * dim);
@@ -883,8 +1043,8 @@ namespace RunSection
 						{
 							double val = propagateInPhenomenologicalBasis
 											 ? this->TraceDenseDense(operatorsPhenomenologicalBasis[idx], state)
-											 : (detectionOperators.useSparse ? this->TraceSparseDense(detectionOperators.sparse[idx], state)
-															   : this->TraceDenseDense(detectionOperators.dense[idx], state));
+										 : (activeDetectionOperators->useSparse ? this->TraceSparseDense(activeDetectionOperators->sparse[idx], state)
+														   : this->TraceDenseDense(activeDetectionOperators->dense[idx], state));
 							target(row_index, idx) = val;
 						}
 					};
@@ -894,8 +1054,8 @@ namespace RunSection
 						for (int idx = 0; idx < projection_counter; ++idx)
 						{
 							const arma::cx_vec &operatorVector = propagateInPhenomenologicalBasis
-																	 ? operatorsPhenomenologicalBasisVector[idx]
-																	 : detectionOperators.vectorized[idx];
+													 ? operatorsPhenomenologicalBasisVector[idx]
+													 : activeDetectionOperators->vectorized[idx];
 							target(row_index, idx) = std::real(arma::accu(operatorVector % state));
 						}
 					};
@@ -1264,12 +1424,44 @@ namespace RunSection
 						}
 					}
 
-					arma::mat ExptValuesOrientation;
-					if (method_timeevo)
-					{
-						ExptValuesOrientation.zeros(num_steps, projection_counter);
-						if (relax_use_split_expm)
+						arma::mat ExptValuesOrientation;
+						if (method_timeevo)
 						{
+							ExptValuesOrientation.zeros(num_steps, projection_counter);
+							if (hsGeneralDynamicPowder)
+							{
+								for (int k = 0; k < num_steps; ++k)
+								{
+									record_expectation_rho(ExptValuesOrientation, k, rho);
+									arma::sp_cx_mat dynamicHamiltonian;
+									if (!buildDynamicHamiltonian(k * dt, dynamicHamiltonian))
+									{
+										this->Log() << "Failed to obtain the orientation-specific dynamic Hamiltonian." << std::endl;
+										break;
+									}
+
+									arma::cx_mat dynamicStepHamiltonian = arma::cx_mat(H + dynamicHamiltonian);
+									if (propagateInPhenomenologicalBasis)
+									{
+										dynamicStepHamiltonian = phenomenological_basis_eigenvectors.t() *
+											dynamicStepHamiltonian * phenomenological_basis_eigenvectors;
+									}
+
+									if (relax_use_split_expm)
+									{
+										arma::cx_mat U_half;
+										arma::cx_mat U_half_st;
+										build_unitary_half(dynamicStepHamiltonian, dt, U_half, U_half_st);
+										split_step(rho, U_half, U_half_st, timeevo_relaxation_map_ptr, dt);
+									}
+									else
+									{
+										rk4_step(rho, H, &dynamicStepHamiltonian, dt);
+									}
+								}
+							}
+							else if (relax_use_split_expm)
+							{
 							arma::cx_mat U_half;
 							arma::cx_mat U_half_st;
 							build_unitary_half(H_dense, dt, U_half, U_half_st);
@@ -1392,9 +1584,33 @@ namespace RunSection
 					continue;
 				}
 
-				arma::cx_mat B = reuseInitialFactor
-									 ? orientationInvariantInitialFactor
-									 : this->FactorizeDensityMatrix(rho_initial, this->Log());
+				arma::cx_mat B;
+				if (useTraceSampling && initialStateFrame == SpinAPI::StateFrame::Molecular)
+				{
+					if (initialStateRotationCachePtr == nullptr ||
+						!space_thread.RotateStateFactors(traceSampleFactors, Rot_mat,
+							*initialStateRotationCachePtr, B))
+					{
+						this->Log() << "Failed to rotate trace-sampling factors for powder orientation." << std::endl;
+						continue;
+					}
+				}
+				else
+				{
+					if (reuseInitialFactor)
+					{
+						B = orientationInvariantInitialFactor;
+					}
+					else
+					{
+						std::string factorizationError;
+						if (!space_thread.FactorizeDensityMatrix(rho_initial, B, &factorizationError))
+						{
+							this->Log() << "Failed to factorize the powder-oriented initial density matrix: "
+										<< factorizationError << "." << std::endl;
+						}
+					}
+				}
 				if (B.is_empty())
 				{
 					this->Log() << "Skipping powder orientation because the prepared initial density matrix could not be factorized." << std::endl;
@@ -1407,13 +1623,13 @@ namespace RunSection
 					for (int idx = 0; idx < projection_counter; ++idx)
 					{
 						arma::cx_mat OB;
-						if (detectionOperators.useSparse)
+						if (activeDetectionOperators->useSparse)
 						{
-							OB = detectionOperators.sparse[idx] * state;
+							OB = activeDetectionOperators->sparse[idx] * state;
 						}
 						else
 						{
-							OB = detectionOperators.dense[idx] * state;
+							OB = activeDetectionOperators->dense[idx] * state;
 						}
 						double abs_trace = std::real(arma::accu(state_conj % OB));
 						target(row_index, idx) = abs_trace;
@@ -1574,12 +1790,50 @@ namespace RunSection
 					}
 				}
 
-				arma::mat ExptValuesOrientation;
-				if (method_timeevo)
-					ExptValuesOrientation.zeros(num_steps, projection_counter);
+					arma::mat ExptValuesOrientation;
+					if (method_timeevo)
+					{
+						ExptValuesOrientation.zeros(num_steps, projection_counter);
+					}
 
-				// Propagate the system in time using the specified method
-				if (method_timeevo && propmethod == "autoexpm")
+					// Propagate the system in time using the specified method
+					if (method_timeevo && hsGeneralDynamicPowder)
+					{
+						arma::mat M;
+						for (int k = 0; k < num_steps; ++k)
+						{
+							record_expectation(ExptValuesOrientation, k, B);
+
+							arma::sp_cx_mat dynamicHamiltonian;
+							if (!buildDynamicHamiltonian(k * dt, dynamicHamiltonian))
+							{
+								this->Log() << "Failed to obtain the orientation-specific dynamic Hamiltonian." << std::endl;
+								break;
+							}
+							arma::sp_cx_mat H_prop = H + dynamicHamiltonian - arma::cx_double(0.0, 1.0) * K;
+
+							if (propmethod == "autoexpm")
+							{
+								B = space_thread.HighamProp(H_prop, B, -arma::cx_double(0.0, 1.0) * dt, precision, M);
+							}
+							else if (propmethod == "krylov")
+							{
+								for (arma::uword column = 0; column < B.n_cols; ++column)
+								{
+									B.col(column) = space_thread.KrylovExpmGeneral(
+										H_prop, B.col(column), -arma::cx_double(0.0, 1.0) * dt,
+										krylovsize, dim).result;
+								}
+							}
+							else
+							{
+								const arma::cx_mat propagator = arma::expmat(
+									arma::cx_mat(arma::cx_double(0.0, -1.0) * (H + dynamicHamiltonian) - K) * dt);
+								B = propagator * B;
+							}
+						}
+						}
+					else if (method_timeevo && propmethod == "autoexpm")
 				{
 					arma::mat M; // used for variable estimation
 					arma::sp_cx_mat H_prop = H - arma::cx_double(0.0, 1.0) * K;
@@ -1591,13 +1845,13 @@ namespace RunSection
 						for (int idx = 0; idx < projection_counter; idx++)
 						{
 							arma::cx_mat OB;
-							if (detectionOperators.useSparse)
+							if (activeDetectionOperators->useSparse)
 							{
-								OB = detectionOperators.sparse[idx] * B;
+								OB = activeDetectionOperators->sparse[idx] * B;
 							}
 							else
 							{
-								OB = detectionOperators.dense[idx] * B;
+								OB = activeDetectionOperators->dense[idx] * B;
 							}
 							double abs_trace = std::real(arma::accu(Bconj % OB));
 							double expected_value = abs_trace;
@@ -1619,7 +1873,12 @@ namespace RunSection
 						// Calculate the expected values for each transition operator
 						for (int idx = 0; idx < projection_counter; idx++)
 						{
-							double result = std::real(arma::cdot(prop_state, detectionOperators.sparse[idx] * prop_state));
+							arma::cx_vec projected;
+							if (activeDetectionOperators->useSparse)
+								projected = activeDetectionOperators->sparse[idx] * prop_state;
+							else
+								projected = activeDetectionOperators->dense[idx] * prop_state;
+							double result = std::real(arma::cdot(prop_state, projected));
 							ExptValuesOrientation(0, idx) += result;
 						}
 						prop_state = space_thread.KrylovExpmGeneral(H_prop, prop_state, dt, krylovsize, dim);
@@ -1631,7 +1890,12 @@ namespace RunSection
 							// Calculate the expected values for each transition operator
 							for (int idx = 0; idx < projection_counter; idx++)
 							{
-								double result = std::real(arma::cdot(prop_state, detectionOperators.sparse[idx] * prop_state));
+								arma::cx_vec projected;
+								if (activeDetectionOperators->useSparse)
+									projected = activeDetectionOperators->sparse[idx] * prop_state;
+								else
+									projected = activeDetectionOperators->dense[idx] * prop_state;
+								double result = std::real(arma::cdot(prop_state, projected));
 								ExptValuesOrientation(k, idx) += result;
 							}
 							// Update the state using the shared Krylov propagator.
@@ -1661,13 +1925,13 @@ namespace RunSection
 						for (int idx = 0; idx < projection_counter; ++idx)
 						{
 							arma::cx_mat OB;
-							if (detectionOperators.useSparse)
+							if (activeDetectionOperators->useSparse)
 							{
-								OB = detectionOperators.sparse[idx] * B;
+								OB = activeDetectionOperators->sparse[idx] * B;
 							}
 							else
 							{
-								OB = detectionOperators.dense[idx] * B;
+								OB = activeDetectionOperators->dense[idx] * B;
 							}
 							double abs_trace = std::real(arma::accu(Bconj % OB));
 							double expected_value = abs_trace;
@@ -1807,7 +2071,26 @@ namespace RunSection
 					this->Data() << std::endl;
 				}
 			}
-			else if (method_timeevo && print_freeevo)
+				else if (method_timeevo && hsGeneralFiniteTimeYields && print_freeevo)
+				{
+					this->Log() << "Writing finite-time integrated transition yields for the dynamic Hamiltonian." << std::endl;
+					this->Data() << this->RunSettings()->CurrentStep() << " ";
+					const double finalTime = num_steps > 0 ? time(num_steps - 1) : 0.0;
+					this->Data() << std::setprecision(12) << finalTime << " ";
+					this->WriteStandardOutput(this->Data());
+
+					for (int idx = 0; idx < projection_counter; ++idx)
+					{
+						double integratedYield = 0.0;
+						for (int k = 1; k < num_steps; ++k)
+						{
+							integratedYield += dt * (ExptValues(k - 1, idx) + ExptValues(k, idx)) / 2.0;
+						}
+						this->Data() << " " << std::setprecision(12) << integratedYield;
+					}
+					this->Data() << std::endl;
+				}
+				else if (method_timeevo && print_freeevo)
 			{
 				if (integrate_freeevo)
 				{
@@ -1881,6 +2164,25 @@ namespace RunSection
 		auto systems = this->SpinSystems();
 		for (auto i = systems.cbegin(); i != systems.cend(); i++)
 		{
+			if (IsHSGeneralTask(*this->Properties()))
+			{
+				HSGeneralConfiguration configuration;
+				std::string error;
+				if (ResolveHSGeneralConfiguration(*this->Properties(), configuration, error))
+				{
+					if (configuration.calculation == "timeevolution")
+					{
+						this->WriteStatePopulationHeader(*i, _stream);
+						continue;
+					}
+					if (configuration.calculation == "yields")
+					{
+						this->WriteTransitionYieldHeader(*i, _stream);
+						continue;
+					}
+				}
+			}
+
 			bool transitionYields = false;
 			if (this->Properties()->Get("transitionyields", transitionYields) && transitionYields)
 			{
@@ -1929,6 +2231,117 @@ namespace RunSection
 	// Validation
 	bool TaskStaticHSDirectSpectra::Validate()
 	{
+		if (IsHSGeneralTask(*this->Properties()))
+		{
+			HSGeneralConfiguration configuration;
+			std::string configurationError;
+			if (!ResolveHSGeneralConfiguration(*this->Properties(), configuration, configurationError))
+			{
+				this->Log() << "ERROR: Invalid HSGeneral configuration: " << configurationError << "." << std::endl;
+				return false;
+			}
+
+			std::vector<std::string> h0list;
+			if (!this->Properties()->GetList("hamiltonianh0list", h0list, ',') || h0list.empty())
+			{
+				this->Log() << "ERROR: HSGeneral powder propagation requires hamiltonianh0list so the orientation-specific H0 is explicit." << std::endl;
+				return false;
+			}
+			this->Log() << "HSGeneral powder Hamiltonian approximation = "
+						<< configuration.approximation << "." << std::endl;
+
+				if (configuration.powderAveraging)
+				{
+					if (configuration.dynamics == "dynamic")
+					{
+						for (const auto &system : this->SpinSystems())
+						{
+							SpinAPI::SpinSpace validationSpace(*system);
+							if (!validationSpace.HasTimedependentInteractions())
+							{
+								this->Log() << "ERROR: HSGeneral dynamics=dynamic powder propagation requires at least one time-dependent Interaction." << std::endl;
+								return false;
+							}
+							if (validationSpace.HasTimedependentTransitions())
+							{
+								this->Log() << "ERROR: HSGeneral dynamic powder propagation does not yet support time-dependent transition rates." << std::endl;
+								return false;
+							}
+							if (!system->Pulses().empty())
+							{
+								this->Log() << "ERROR: HSGeneral dynamic powder propagation represents the drive as a time-dependent Interaction and cannot also use Pulse objects." << std::endl;
+								return false;
+							}
+						}
+					}
+
+					// Reaction operators enter the propagator for every output mode. Until
+				// transition-state frames are represented in the shared powder API,
+				// accepting a non-scalar source projector here would silently leave K
+				// fixed while rotating H and the molecular initial state.
+				for (const auto &system : this->SpinSystems())
+				{
+					SpinAPI::SpinSpace validationSpace(*system);
+					validationSpace.UseSuperoperatorSpace(false);
+					for (const auto &transition : system->Transitions())
+					{
+						if (transition->SourceState() == nullptr)
+							continue;
+						arma::cx_mat sourceProjector;
+						SpinAPI::HilbertStateRotationCache sourceRotationCache;
+						if (!validationSpace.GetState(transition->SourceState(), sourceProjector) ||
+							!validationSpace.CreateStateRotationCache(sourceProjector, sourceRotationCache))
+						{
+							this->Log() << "ERROR: Failed to validate the source State of transition \""
+										<< transition->Name() << "\" for powder averaging." << std::endl;
+							return false;
+						}
+						if (!sourceRotationCache.rotationInvariant)
+						{
+							this->Log() << "ERROR: HSGeneral powder propagation currently requires rotationally invariant transition source states; transition \""
+										<< transition->Name() << "\" uses State \""
+										<< transition->SourceState()->Name() << "\"." << std::endl;
+							return false;
+						}
+					}
+				}
+			}
+
+			if (configuration.calculation == "yields")
+			{
+				bool hasYieldTransition = false;
+				for (const auto &system : this->SpinSystems())
+				{
+					for (const auto &transition : system->Transitions())
+					{
+						if (transition->SourceState() == nullptr)
+							continue;
+						hasYieldTransition = true;
+					}
+				}
+				if (!hasYieldTransition)
+				{
+					this->Log() << "ERROR: HSGeneral calculation=yields requires at least one transition with a source state." << std::endl;
+					return false;
+				}
+			}
+
+			std::string sampling;
+			this->Properties()->Get("sampling", sampling);
+			std::transform(sampling.begin(), sampling.end(), sampling.begin(),
+				[](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+			if (sampling == "stochastic" || sampling == "trace" || sampling == "montecarlo" ||
+				sampling == "monte-carlo" || sampling == "mc")
+			{
+				std::string error;
+				if (!ValidateHSGeneralTraceSamplingSystems(this->SpinSystems(), error))
+				{
+					this->Log() << "ERROR: " << error << "." << std::endl;
+					return false;
+				}
+			}
+		}
+
 		// Get the reacton operator type
 		std::string str;
 		if (this->Properties()->Get("reactionoperators", str))
@@ -2020,6 +2433,12 @@ namespace RunSection
 		}
 	}
 
+	void TaskStaticHSDirectSpectra::WriteStatePopulationHeader(const SpinAPI::system_ptr &_system, std::ostream &_stream)
+	{
+		for (const auto &state : _system->States())
+			_stream << _system->Name() << "." << state->Name() << " ";
+	}
+
 	bool TaskStaticHSDirectSpectra::BuildDetectionOperators(const SpinAPI::system_ptr &_system,
 															SpinAPI::SpinSpace &_space,
 															bool _cidsp,
@@ -2032,10 +2451,54 @@ namespace RunSection
 			return false;
 
 		const auto transitions = _system->Transitions();
+		bool statePopulations = false;
+		bool hsGeneralYields = false;
+		bool powderStatePopulations = false;
+		if (IsHSGeneralTask(*this->Properties()))
+		{
+			HSGeneralConfiguration configuration;
+			std::string error;
+			if (!ResolveHSGeneralConfiguration(*this->Properties(), configuration, error))
+			{
+				_logstream << "ERROR: Invalid HSGeneral configuration: " << error << "." << std::endl;
+				return false;
+			}
+			statePopulations = configuration.calculation == "timeevolution";
+			hsGeneralYields = configuration.calculation == "yields";
+			powderStatePopulations = statePopulations && configuration.powderAveraging;
+		}
 
 		bool transitionYields = false;
 		this->Properties()->Get("transitionyields", transitionYields);
-		if (transitionYields)
+		if (statePopulations)
+		{
+			for (const auto &state : _system->States())
+			{
+				arma::sp_cx_mat stateProjector;
+				if (!_space.GetState(state, stateProjector))
+				{
+					_logstream << "Failed to obtain projection matrix onto State \""
+							   << state->Name() << "\" of SpinSystem \""
+							   << _system->Name() << "\"." << std::endl;
+					return false;
+				}
+				if (powderStatePopulations)
+				{
+					SpinAPI::HilbertStateRotationCache rotationCache;
+					if (!_space.CreateStateRotationCache(arma::cx_mat(stateProjector), rotationCache))
+					{
+						_logstream << "Failed to prepare the powder rotation of observable State \""
+								   << state->Name() << "\" of SpinSystem \""
+								   << _system->Name() << "\"." << std::endl;
+						return false;
+					}
+					_operators.rotateWithPowder = _operators.rotateWithPowder || !rotationCache.rotationInvariant;
+					_operators.powderRotationCaches.push_back(std::move(rotationCache));
+				}
+				_operators.sparse.push_back(std::move(stateProjector));
+			}
+		}
+		else if (hsGeneralYields || transitionYields)
 		{
 			// Quantum-yield mode: each transition contributes rate * P_source.
 			// This matches the StaticSS powder helper and keeps the output
@@ -2151,6 +2614,49 @@ namespace RunSection
 		return true;
 	}
 
+	bool TaskStaticHSDirectSpectra::RotateDetectionOperatorsForPowder(
+		SpinAPI::SpinSpace &_space,
+		const arma::mat &_rotation,
+		const DetectionOperatorSet &_reference,
+		DetectionOperatorSet &_oriented,
+		std::ostream &_logstream) const
+	{
+		if (!_reference.rotateWithPowder ||
+			_reference.powderRotationCaches.size() != _reference.sparse.size())
+		{
+			_logstream << "Invalid powder-observable rotation cache." << std::endl;
+			return false;
+		}
+
+		_oriented = DetectionOperatorSet();
+		// A non-trivial spin rotation generally makes a projector dense even
+		// when its molecular-frame representation is diagonal. Keeping that
+		// matrix in sparse storage is slower and can use more memory.
+		_oriented.useSparse = false;
+		_oriented.sparse.resize(_reference.sparse.size());
+		_oriented.dense.resize(_reference.sparse.size());
+		_oriented.vectorized.resize(_reference.sparse.size());
+
+		for (size_t idx = 0; idx < _reference.sparse.size(); ++idx)
+		{
+			arma::cx_mat referenceOperator = _reference.useSparse
+				? arma::cx_mat(_reference.sparse[idx])
+				: _reference.dense[idx];
+			arma::cx_mat orientedOperator;
+			if (!_space.RotateState(referenceOperator, _rotation,
+					_reference.powderRotationCaches[idx], orientedOperator))
+			{
+				_logstream << "Failed to rotate powder observable " << idx << "." << std::endl;
+				return false;
+			}
+
+			_oriented.dense[idx] = orientedOperator;
+			_oriented.vectorized[idx] = arma::vectorise(orientedOperator);
+		}
+
+		return true;
+	}
+
 	bool TaskStaticHSDirectSpectra::BuildInitialDensityMatrix(const SpinAPI::system_ptr &_system,
 															  SpinAPI::SpinSpace &_space,
 															  arma::cx_mat &_rho0,
@@ -2230,43 +2736,6 @@ namespace RunSection
 
 		_rho0 /= rho_trace;
 		return true;
-	}
-
-	arma::cx_mat TaskStaticHSDirectSpectra::FactorizeDensityMatrix(const arma::cx_mat &_rho0, std::ostream &_logstream)
-	{
-		const arma::cx_mat hermitian_rho0 = 0.5 * (_rho0 + _rho0.t());
-		arma::vec eigenvalues;
-		arma::cx_mat eigenvectors;
-		if (!arma::eig_sym(eigenvalues, eigenvectors, hermitian_rho0))
-		{
-			_logstream << "Failed to diagonalize the initial density matrix in Hilbert space." << std::endl;
-			return arma::cx_mat();
-		}
-
-		const double max_eigenvalue = eigenvalues.is_empty() ? 0.0 : std::abs(eigenvalues.max());
-		const double tolerance = std::max(1.0e-12, 1.0e-10 * max_eigenvalue);
-		if (eigenvalues.min() < -tolerance)
-		{
-			_logstream << "Initial density matrix has significantly negative eigenvalues (" << eigenvalues.min()
-					   << "). Cannot construct Hilbert-space factorization." << std::endl;
-			return arma::cx_mat();
-		}
-
-		arma::uvec keep = arma::find(eigenvalues > tolerance);
-		if (keep.is_empty())
-		{
-			_logstream << "Initial density matrix is numerically rank-zero after factorization." << std::endl;
-			return arma::cx_mat();
-		}
-
-		arma::cx_mat B(_rho0.n_rows, keep.n_elem, arma::fill::zeros);
-		for (arma::uword col = 0; col < keep.n_elem; ++col)
-		{
-			const arma::uword idx = keep(col);
-			B.col(col) = std::sqrt(eigenvalues(idx)) * eigenvectors.col(idx);
-		}
-
-		return B;
 	}
 
 	bool TaskStaticHSDirectSpectra::AddPhenomenologicalTerm(const SpinAPI::operator_ptr &_relaxationOperator,

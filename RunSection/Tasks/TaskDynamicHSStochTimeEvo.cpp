@@ -16,6 +16,7 @@
 #include "ObjectParser.h"
 #include "Spin.h"
 #include "Interaction.h"
+#include "HSGeneralConfiguration.h"
 #include "ObjectParser.h"
 #include <iomanip> // std::setprecision
 #include <chrono>
@@ -49,6 +50,7 @@ namespace RunSection
 		auto systems = this->SpinSystems();
 		for (auto i = systems.cbegin(); i != systems.cend(); i++) // iteration through all spin systems, in this case (or usually), this is one
 		{
+			const bool hsGeneral = IsHSGeneralTask(*this->Properties());
 			// Gyromagnetic constant
 			double gamma_e = 176.0859644; // gyromagnetic ratio of free electron spin in rad mT^-1 mus^-1
 
@@ -63,7 +65,7 @@ namespace RunSection
 				{
 					nucspins += 1;
 				}
-				if (spintype == "electron")
+				if (!hsGeneral && spintype == "electron")
 				{
 					// Throws an error if the spins are not spin 1/2
 					if ((*l)->Multiplicity() != 2)
@@ -77,7 +79,7 @@ namespace RunSection
 			}
 
 			// Check if there are any nuclear spins
-			if (nucspins == 0)
+			if (!hsGeneral && nucspins == 0)
 			{
 				this->Log() << "Skipping SpinSystem \"" << (*i)->Name() << "\" as no nuclear spins were specified." << std::endl;
 				std::cout << "# ERROR: no nuclear spins were specified, skipping the system" << std::endl;
@@ -93,7 +95,11 @@ namespace RunSection
 
 			std::string InitialState;
 			arma::cx_mat InitialStateVector;
-			if (this->Properties()->Get("initialstate", InitialState))
+			if (hsGeneral)
+			{
+				InitialStateVector.ones(space.SpaceDimensions(), 1);
+			}
+			else if (this->Properties()->Get("initialstate", InitialState))
 			{
 				// Set up states for time-propagation
 				arma::cx_mat TaskInitialStateVector(4, 1);
@@ -188,29 +194,35 @@ namespace RunSection
 			// Random Number Generator Preparation
 			std::random_device rand_dev;		// random number generator
 			std::mt19937 generator(rand_dev()); // random number generator
-			bool autoseed;
-			this->Properties()->Get("autoseed", autoseed);
-
-			if (!autoseed)
+			if (hsGeneral)
 			{
-				this->Log() << "Autoseed is off." << std::endl;
-				double seednumber;
-				this->Properties()->Get("seed", seednumber);
-				if (seednumber != 0)
-				{
-					generator.seed(seednumber);
-					this->Log() << "Seed number is " << seednumber << "." << std::endl;
-				}
-				else
-				{
-					this->Log() << "Undefined seed number! Setting to default of 1." << std::endl;
-					std::cout << "# ERROR: undefined seed number! Setting to default of 1." << std::endl;
-					seednumber = 1;
-				}
+				SeedHSGeneralRandomGenerator(*this->Properties(), generator, this->Log());
 			}
 			else
 			{
-				this->Log() << "Autoseed is on." << std::endl;
+				bool autoseed;
+				this->Properties()->Get("autoseed", autoseed);
+				if (!autoseed)
+				{
+					this->Log() << "Autoseed is off." << std::endl;
+					double seednumber;
+					this->Properties()->Get("seed", seednumber);
+					if (seednumber != 0)
+					{
+						generator.seed(seednumber);
+						this->Log() << "Seed number is " << seednumber << "." << std::endl;
+					}
+					else
+					{
+						this->Log() << "Undefined seed number! Setting to default of 1." << std::endl;
+						std::cout << "# ERROR: undefined seed number! Setting to default of 1." << std::endl;
+						seednumber = 1;
+					}
+				}
+				else
+				{
+					this->Log() << "Autoseed is on." << std::endl;
+				}
 			}
 
 			// Defining the number of Monte Carlo samples
@@ -235,7 +247,20 @@ namespace RunSection
 			this->Properties()->Get("samplingmethod", samplingmethod);
 			std::string samplingmethod_lower(samplingmethod);
 			std::transform(samplingmethod_lower.begin(), samplingmethod_lower.end(), samplingmethod_lower.begin(), ::tolower);
-			if (samplingmethod == "")
+			if (hsGeneral)
+			{
+				SpinAPI::HilbertTraceSampleSet traceSamples;
+				std::string error;
+				if (!BuildHSGeneralTraceSamples(*this->Properties(), *i, space,
+										 static_cast<arma::uword>(mc_samples), generator,
+										 traceSamples, this->Log(), error))
+				{
+					this->Log() << "ERROR: " << error << "." << std::endl;
+					return false;
+				}
+				B = std::move(traceSamples.factors);
+			}
+			else if (samplingmethod == "")
 			{
 				for (int it = 0; it < mc_samples; it++)
 				{
@@ -946,6 +971,15 @@ namespace RunSection
 
 	bool TaskDynamicHSStochTimeEvo::Validate()
 	{
+		if (IsHSGeneralTask(*this->Properties()))
+		{
+			std::string error;
+			if (!ValidateHSGeneralTraceSamplingSystems(this->SpinSystems(), error))
+			{
+				this->Log() << "ERROR: " << error << "." << std::endl;
+				return false;
+			}
+		}
 		// Get the reaction operator type
 		std::string str;
 		if (this->Properties()->Get("reactionoperators", str))

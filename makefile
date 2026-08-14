@@ -36,7 +36,7 @@ DEP_MSDPARSER = $(PATH_MSDPARSER)/MSDParser.h
 # --------------------------------------------------------------------------
 # RunSection module
 PATH_RUNSECTION = ./RunSection
-OBJS_RUNSECTION = $(PATH_RUNSECTION)/RunSection.o $(PATH_RUNSECTION)/BasicTask.o $(PATH_RUNSECTION)/Action.o $(PATH_RUNSECTION)/Settings.o $(PATH_RUNSECTION)/OutputHandler.o $(PATH_RUNSECTION)/Utility.o $(PATH_RUNSECTION)/CubicSpline.o
+OBJS_RUNSECTION = $(PATH_RUNSECTION)/RunSection.o $(PATH_RUNSECTION)/BasicTask.o $(PATH_RUNSECTION)/Action.o $(PATH_RUNSECTION)/Settings.o $(PATH_RUNSECTION)/OutputHandler.o $(PATH_RUNSECTION)/Utility.o $(PATH_RUNSECTION)/CubicSpline.o $(PATH_RUNSECTION)/HSGeneralConfiguration.o
 DEP_RUNSECTION = $(PATH_RUNSECTION)/RunSection.h
 # ---
 # RunSection custom tasks
@@ -77,7 +77,7 @@ COMPATFLAGS ?=
 WARNFLAGS ?= -Wall
 DEBUGFLAGS ?= -g
 DEFINES ?= -DARMA_DONT_PRINT_FAST_MATH_WARNING -DARMA_NO_DEBUG -DASSERT=1 -DNEGATIVERATES=0
-TESTDEFINES ?= -DSPINAPI_TEST=0 -DMSDPARSER_TEST=0 -DACTION_TEST=0 -DSTATICHSSDECAY_TEST=0 -DSTATICSS_TEST=0 -DSTATICRPONLY_TEST=0 -DSTATICSSSPECTRA_TEST=0 -DSTATICHSRESONANCE_TEST=0 -DSTATICPOWDERSPECTRA_TEST=1 -DUTIL_TEST=0
+TESTDEFINES ?= -DSPINAPI_TEST=0 -DMSDPARSER_TEST=0 -DACTION_TEST=0 -DSTATICHSSDECAY_TEST=0 -DSTATICSS_TEST=0 -DSTATICRPONLY_TEST=0 -DSTATICSSSPECTRA_TEST=0 -DSTATICHSRESONANCE_TEST=0 -DSTATICPOWDERSPECTRA_TEST=1 -DHSGENERAL_TEST=1 -DUTIL_TEST=0
 CC = $(CXX) $(CXXSTD)		# Compiler to use
 LFLAGS = $(WARNFLAGS) $(DEBUGFLAGS) -DARMA_DONT_PRINT_FAST_MATH_WARNING $(OPTFLAGS)	# Linker Flags
 CFLAGS = $(WARNFLAGS) -c $(ARCHFLAGS) $(LOOPFLAGS) $(COMPATFLAGS) $(DEBUGFLAGS) $(OPENMPFLAGS) $(DEFINES) $(OPTFLAGS) # Compile flags to .o
@@ -129,7 +129,7 @@ $(PATH_SPINAPI)/SpinSpace.o: $(PATH_SPINAPI)/SpinSpace.cpp $(PATH_SPINAPI)/SpinS
 # Unit testing module
 # --------------------------------------------------------------------------
 SEARCHDIR_TESTS = $(SEARCHDIR_MAIN) -I$(PATH_TESTS)
-TESTMAIN_DEPS = $(PATH_TESTS)/testmain.cpp $(PATH_TESTS)/assertfunctions.cpp $(PATH_TESTS)/tests_spinapi.cpp $(PATH_TESTS)/tests_msdparser.cpp $(PATH_TESTS)/tests_actions.cpp $(PATH_TESTS)/tests_TaskStaticHSSymmetricDecay.cpp $(PATH_TESTS)/tests_TaskStaticSS.cpp $(PATH_TESTS)/tests_TaskMultiStaticSS.cpp $(PATH_TESTS)/tests_TaskStaticRPOnlyHSSymDec.cpp $(PATH_TESTS)/tests_TaskStaticSSSpectra.cpp $(PATH_TESTS)/tests_TaskStaticHSResonanceSpectra.cpp $(PATH_TESTS)/tests_TaskStaticPowderSpectra.cpp $(PATH_TESTS)/tests_utility.cpp
+TESTMAIN_DEPS = $(PATH_TESTS)/testmain.cpp $(PATH_TESTS)/assertfunctions.cpp $(PATH_TESTS)/tests_spinapi.cpp $(PATH_TESTS)/tests_msdparser.cpp $(PATH_TESTS)/tests_actions.cpp $(PATH_TESTS)/tests_TaskStaticHSSymmetricDecay.cpp $(PATH_TESTS)/tests_TaskStaticSS.cpp $(PATH_TESTS)/tests_TaskMultiStaticSS.cpp $(PATH_TESTS)/tests_TaskStaticRPOnlyHSSymDec.cpp $(PATH_TESTS)/tests_TaskStaticSSSpectra.cpp $(PATH_TESTS)/tests_TaskStaticHSResonanceSpectra.cpp $(PATH_TESTS)/tests_TaskStaticPowderSpectra.cpp $(PATH_TESTS)/tests_HSGeneral.cpp $(PATH_TESTS)/tests_utility.cpp
 
 .PHONY: test test_debug
 # The normal target always runs the complete suite.
