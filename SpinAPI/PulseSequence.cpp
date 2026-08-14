@@ -3,7 +3,7 @@
 // ------------------
 // PulseSequence for a spin system to define how pulses should be 
 // 
-// Molecular Spin Dynamics Software - developed by Luca Gerhards.
+// Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
 // (c) 2024 Quantum Biology and Computational Physics Group.
 // See LICENSE.txt for license information.
 /////////////////////////////////////////////////////////////////////////
