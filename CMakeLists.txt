@@ -94,7 +94,14 @@ set(SOURCES_RUNSECTION
         ${PATH_SOURCE_RUNSECTION}/OutputHandler.cpp
         ${PATH_SOURCE_RUNSECTION}/Utility.cpp
         ${PATH_SOURCE_RUNSECTION}/CubicSpline.cpp
-        ${PATH_SOURCE_RUNSECTION}/HSGeneralConfiguration.cpp
+        ${PATH_SOURCE_RUNSECTION}/General/HS/HSExecutionPlan.cpp
+        ${PATH_SOURCE_RUNSECTION}/General/HS/HSStatePreparation.cpp
+        ${PATH_SOURCE_RUNSECTION}/General/HS/HSOrientationSampler.cpp
+        ${PATH_SOURCE_RUNSECTION}/General/HS/HSHamiltonianBuilder.cpp
+        ${PATH_SOURCE_RUNSECTION}/General/HS/HSReactionRelaxation.cpp
+        ${PATH_SOURCE_RUNSECTION}/General/HS/HSPropagator.cpp
+        ${PATH_SOURCE_RUNSECTION}/General/HS/HSObservableCollector.cpp
+        ${PATH_SOURCE_RUNSECTION}/General/HS/TaskHSGeneral.cpp
 )
 
 # --------------------------------------------------------------------------
@@ -178,6 +185,7 @@ target_include_directories(molspin_core PUBLIC
     ${PATH_SOURCE_MSDPARSER}
     ${PATH_SOURCE_RUNSECTION}
     ${PATH_SOURCE_RUNSECTION}/Tasks
+    ${PATH_SOURCE_RUNSECTION}/General/HS
     ${PATH_SOURCE_RUNSECTION}/Tasks/Custom
     ${PATH_SOURCE_RUNSECTION}/Actions
 )

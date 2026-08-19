@@ -132,6 +132,74 @@ namespace SpinAPI
 		return true;
 	}
 
+
+	// Solve X = int_0^inf rho(t) dt for a static Hilbert-space master equation
+	//
+	//   drho/dt = -i[H,rho] - {K,rho} + R[rho]
+	//
+	// using the same row-major superspace convention as OperatorToSuperspace().
+	// The linear system is solved directly; no explicit inverse is constructed.
+	bool SpinSpace::SolveHilbertTimeIntegral(const arma::sp_cx_mat &_hamiltonian,
+		const arma::sp_cx_mat &_reaction, const arma::cx_mat &_relaxationSuperoperator,
+		const arma::cx_mat &_initialDensity, arma::cx_mat &_integratedDensity,
+		std::string *_error) const
+	{
+		if (_error != nullptr)
+			_error->clear();
+		_integratedDensity.reset();
+
+		const arma::uword dim = _initialDensity.n_rows;
+		if (dim == 0 || _initialDensity.n_cols != dim ||
+			_hamiltonian.n_rows != dim || _hamiltonian.n_cols != dim ||
+			_reaction.n_rows != dim || _reaction.n_cols != dim)
+		{
+			if (_error != nullptr)
+				*_error = "invalid Hilbert-space dimensions for the time-integral solve";
+			return false;
+		}
+
+		const arma::cx_mat generator =
+			-arma::cx_double(0.0, 1.0) * arma::cx_mat(_hamiltonian) - arma::cx_mat(_reaction);
+		const arma::cx_mat identity = arma::eye<arma::cx_mat>(dim, dim);
+		arma::cx_mat liouvillian =
+			arma::kron(generator, identity) + arma::kron(identity, arma::conj(generator));
+
+		if (!_relaxationSuperoperator.is_empty())
+		{
+			if (_relaxationSuperoperator.n_rows != liouvillian.n_rows ||
+				_relaxationSuperoperator.n_cols != liouvillian.n_cols)
+			{
+				if (_error != nullptr)
+					*_error = "relaxation superoperator dimensions do not match the Hilbert time-integral Liouvillian";
+				return false;
+			}
+			liouvillian += _relaxationSuperoperator;
+		}
+
+		arma::cx_vec rhs;
+		if (!this->OperatorToSuperspace(-_initialDensity, rhs))
+		{
+			if (_error != nullptr)
+				*_error = "failed to vectorize the Hilbert time-integral right-hand side";
+			return false;
+		}
+
+		arma::cx_vec integratedVector;
+		if (!arma::solve(integratedVector, liouvillian, rhs, arma::solve_opts::fast))
+		{
+			if (_error != nullptr)
+				*_error = "failed to solve the static Hilbert time-integral equation";
+			return false;
+		}
+		if (!this->OperatorFromSuperspace(integratedVector, _integratedDensity))
+		{
+			if (_error != nullptr)
+				*_error = "failed to reconstruct the time-integrated Hilbert density matrix";
+			return false;
+		}
+		return true;
+	}
+
 	// Sparse version
 	// Implemented in terms of the dense version as it relies on a "dense vector" anyway
 	bool SpinSpace::OperatorFromSuperspace(const arma::cx_vec &_in, arma::sp_cx_mat &_out) const

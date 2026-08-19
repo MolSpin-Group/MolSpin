@@ -158,6 +158,48 @@ namespace SpinAPI
 		return true;
 	}
 
+
+	// Cache the Hilbert-space source projector and total-spin rotation generators
+	// for an orientation-aware Haberkorn sink. The rate remains on the Transition
+	// object so time-dependent rates are evaluated at the current SpinSpace time.
+	bool SpinSpace::CreateHilbertReactionOperatorCache(const transition_ptr &_transition,
+		HilbertReactionOperatorCache &_cache, double _tolerance) const
+	{
+		_cache = HilbertReactionOperatorCache();
+		if (this->useSuperspace || _transition == nullptr || !_transition->IsValid() ||
+			_transition->SourceState() == nullptr)
+			return false;
+
+		if (!this->GetState(_transition->SourceState(), _cache.sourceProjector))
+			return false;
+		if (!this->CreateStateRotationCache(_cache.sourceProjector, _cache.sourceRotation, _tolerance))
+			return false;
+		_cache.transition = _transition;
+		return true;
+	}
+
+	// Construct k/2 R P R^dagger in Hilbert space using the current Transition
+	// rate. Keeping this primitive in SpinAPI ensures that powder reaction loss,
+	// initial-state rotation, and observable rotation all share one convention.
+	bool SpinSpace::ReactionOperatorHilbertRotated(const HilbertReactionOperatorCache &_cache,
+		const arma::mat &_rotation, arma::sp_cx_mat &_out) const
+	{
+		if (this->useSuperspace || _cache.transition == nullptr ||
+			!_cache.transition->IsValid() || _cache.sourceProjector.is_empty())
+			return false;
+
+		arma::cx_mat projector;
+		if (_cache.sourceRotation.rotationInvariant)
+			projector = _cache.sourceProjector;
+		else if (!this->RotateState(_cache.sourceProjector, _rotation,
+			_cache.sourceRotation, projector))
+			return false;
+
+		projector *= _cache.transition->Rate() / 2.0;
+		_out = arma::sp_cx_mat(projector);
+		return true;
+	}
+
 	// Sets the dense matrix to the sum of all the reaction operators
 	bool SpinSpace::TotalReactionOperator(arma::cx_mat &_out, const ReactionOperatorType &_forcedReactionOperatorType) const
 	{

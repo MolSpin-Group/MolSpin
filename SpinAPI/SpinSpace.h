@@ -86,6 +86,16 @@ namespace SpinAPI
 		bool rotationInvariant = false;
 	};
 
+	struct HilbertReactionOperatorCache
+	{
+		// Cached source projector and rotation generators for a Hilbert-space
+		// Haberkorn sink. The transition rate is intentionally not cached because
+		// dynamic Transition objects may change it between propagation steps.
+		transition_ptr transition;
+		arma::cx_mat sourceProjector;
+		HilbertStateRotationCache sourceRotation;
+	};
+
 	enum class HamiltonianApproximation
 	{
 		Full,
@@ -250,6 +260,9 @@ namespace SpinAPI
 		bool CreateOperator(const arma::cx_mat &, const spin_ptr &, arma::cx_mat &) const;				   // Creates an operator in the Hilbert space. The matrix must be square with the multiplicity of the spin as its dimension
 		bool OperatorToSuperspace(const arma::cx_mat &, arma::cx_vec &) const;							   // Converts the operator to a vector in the superspace
 		bool OperatorFromSuperspace(const arma::cx_vec &, arma::cx_mat &) const;						   // Converts a superspace vector back to a Hilbert space operator
+		bool SolveHilbertTimeIntegral(const arma::sp_cx_mat &_hamiltonian, const arma::sp_cx_mat &_reaction,
+			const arma::cx_mat &_relaxationSuperoperator, const arma::cx_mat &_initialDensity,
+			arma::cx_mat &_integratedDensity, std::string *_error = nullptr) const; // Solve int_0^inf rho(t) dt using MolSpin's superspace convention
 		bool SuperoperatorFromOperators(const arma::cx_mat &, const arma::cx_mat &, arma::cx_mat &) const; // Creates a superspace operator from the two given (left-side and right-side) operators
 		bool SuperoperatorFromLeftOperator(const arma::cx_mat &, arma::cx_mat &) const;					   // Assumes right-side operator is identity (more efficient than passing the identity to SuperoperatorFromOperators)
 		bool SuperoperatorFromRightOperator(const arma::cx_mat &, arma::cx_mat &) const;				   // Assumes left-side operator is identity (more efficient than passing the identity to SuperoperatorFromOperators)
@@ -496,6 +509,8 @@ namespace SpinAPI
 		// Provides the anti-commutator operator "k/2 * {P,.}" in superoperator space
 		bool ReactionOperator(const transition_ptr &, arma::cx_mat &, const ReactionOperatorType &_forcedReactionOperatorType = ReactionOperatorType::Unspecified) const;	 // The last parameter can be used to force the use of a specific reaction operator type,
 		bool ReactionOperator(const transition_ptr &, arma::sp_cx_mat &, const ReactionOperatorType &_forcedReactionOperatorType = ReactionOperatorType::Unspecified) const; // but by default the reaction operator type of the transition or the spinspace will be used.
+		bool CreateHilbertReactionOperatorCache(const transition_ptr &, HilbertReactionOperatorCache &, double _tolerance = 1.0e-12) const; // Cache a source projector and its molecular-frame rotation generators
+		bool ReactionOperatorHilbertRotated(const HilbertReactionOperatorCache &, const arma::mat &_rotation, arma::sp_cx_mat &) const; // k/2 R P R^dagger using the current Transition rate
 		bool TotalReactionOperator(arma::cx_mat &, const ReactionOperatorType &_forcedReactionOperatorType = ReactionOperatorType::Unspecified) const;						 // Total reaction operator (dense matrix)
 		bool TotalReactionOperator(arma::sp_cx_mat &, const ReactionOperatorType &_forcedReactionOperatorType = ReactionOperatorType::Unspecified) const;					 // Total reaction operator (sparse matrix)
 		bool StaticTotalReactionOperator(arma::cx_mat &, const ReactionOperatorType &_forcedReactionOperatorType = ReactionOperatorType::Unspecified, bool NoInterSystem = false) const;				 // Time-independent part of the total reaction operator (dense matrix)

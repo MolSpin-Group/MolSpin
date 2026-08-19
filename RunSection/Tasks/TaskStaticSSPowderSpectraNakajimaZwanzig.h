@@ -1,5 +1,5 @@
 /////////////////////////////////////////////////////////////////////////
-// TaskStaticSSPowderSpectraNakajimaZwanzig (RunSection module)  developed by Irina Anisimova.
+// TaskStaticSSPowderSpectraNakajimaZwanzig (RunSection module)  developed by Luca Gerhards.
 // ------------------
 //
 // Simple quantum yield calculation in Liouville space, derived from the

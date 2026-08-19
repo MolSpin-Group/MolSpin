@@ -40,6 +40,13 @@ namespace SpinAPI
 		std::vector<double> weights;
 	};
 
+	enum class PowderGridType
+	{
+		Uniform,
+		Sophe,
+		Octant
+	};
+
 	enum class PowderGridDomain
 	{
 		UpperHemisphere,

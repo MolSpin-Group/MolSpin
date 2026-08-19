@@ -1,0 +1,265 @@
+/////////////////////////////////////////////////////////////////////////
+// HSStatePreparation implementation (RunSection::General::HS)
+// ------------------
+// Initial-state normalization, state-aware trace sampling, molecular-frame
+// powder rotation, and optional orientation-specific eigenbasis dephasing.
+//
+// Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
+// (c) 2026 Quantum Biology and Computational Physics Group.
+// See LICENSE.txt for license information.
+/////////////////////////////////////////////////////////////////////////
+#include "HSStatePreparation.h"
+
+#include "SpinSystem.h"
+#include "State.h"
+
+#include <cmath>
+#include <numeric>
+
+namespace RunSection::General::HS
+{
+	bool HSStatePreparation::ValidateTraceSampling(const SpinAPI::system_ptr &system, std::string &error)
+	{
+		error.clear();
+		if (system == nullptr)
+		{
+			error = "stochastic HSGeneral cannot use a null spin system";
+			return false;
+		}
+
+		const auto initialStates = system->InitialState();
+		if (initialStates.size() != 1)
+		{
+			error = "spin system \"" + system->Name() +
+				"\" must define exactly one initial State object for stochastic trace sampling";
+			return false;
+		}
+		if (initialStates.front() == nullptr)
+		{
+			error = "spin system \"" + system->Name() +
+				"\" uses a thermal initial state, which cannot be combined with stochastic trace sampling";
+			return false;
+		}
+		if (!system->Operators().empty())
+		{
+			error = "spin system \"" + system->Name() +
+				"\" contains explicit relaxation operators; general dissipators require density evolution and are intentionally incompatible with pure-state trace sampling";
+			return false;
+		}
+		if (system->InitialStateCoherences() != SpinAPI::InitialStateCoherenceMode::Keep)
+		{
+			error = "spin system \"" + system->Name() +
+				"\" requests initial-state dephasing, which cannot be represented by pure-state trace samples";
+			return false;
+		}
+		if (system->InitialStateFrame() == SpinAPI::StateFrame::Eigen)
+		{
+			error = "spin system \"" + system->Name() +
+				"\" uses frame=eigen, which cannot be represented by State-object trace samples";
+			return false;
+		}
+		return true;
+	}
+
+	bool HSStatePreparation::BuildInitialDensity(const SpinAPI::system_ptr &system,
+		SpinAPI::SpinSpace &space, arma::cx_mat &density, std::string &error)
+	{
+		error.clear();
+		density.reset();
+		if (system == nullptr)
+		{
+			error = "cannot construct an initial state for a null spin system";
+			return false;
+		}
+
+		const auto initialStates = system->InitialState();
+		if (initialStates.empty())
+		{
+			error = "spin system \"" + system->Name() + "\" does not define an initial state";
+			return false;
+		}
+
+		std::vector<double> weights = system->Weights();
+		if (weights.empty())
+			weights.assign(initialStates.size(), 1.0 / static_cast<double>(initialStates.size()));
+		else if (weights.size() == 1 && initialStates.size() == 1)
+			weights[0] = 1.0;
+		else if (weights.size() != initialStates.size())
+		{
+			error = "the number of initial-state weights does not match the number of initial states";
+			return false;
+		}
+
+		for (double weight : weights)
+		{
+			if (!std::isfinite(weight) || weight < 0.0)
+			{
+				error = "initial-state weights must be finite and non-negative";
+				return false;
+			}
+		}
+		const double weightSum = std::accumulate(weights.begin(), weights.end(), 0.0);
+		if (!(weightSum > 0.0))
+		{
+			error = "initial-state weights must have a positive sum";
+			return false;
+		}
+		for (double &weight : weights)
+			weight /= weightSum;
+
+		density.zeros(space.HilbertSpaceDimensions(), space.HilbertSpaceDimensions());
+		for (size_t index = 0; index < initialStates.size(); ++index)
+		{
+			arma::cx_mat component;
+			if (initialStates[index] == nullptr)
+			{
+				if (!space.GetThermalState(space, system->Temperature(),
+					system->ThermalHamiltonianList(), component))
+				{
+					error = "failed to construct the thermal initial state for spin system \"" +
+						system->Name() + "\"";
+					return false;
+				}
+			}
+			else if (!space.GetState(initialStates[index], component))
+			{
+				error = "failed to construct initial State \"" + initialStates[index]->Name() +
+					"\" for spin system \"" + system->Name() + "\"";
+				return false;
+			}
+
+			const arma::cx_double componentTrace = arma::trace(component);
+			if (!std::isfinite(std::real(componentTrace)) || std::abs(componentTrace) == 0.0)
+			{
+				error = "an initial-state component has an invalid trace";
+				return false;
+			}
+			density += weights[index] * component / componentTrace;
+		}
+		return true;
+	}
+
+	void HSStatePreparation::SeedGenerator(const HSExecutionPlan &plan,
+		std::mt19937 &generator, std::ostream &log)
+	{
+		if (plan.autoSeed)
+		{
+			std::random_device randomDevice;
+			generator.seed(randomDevice());
+			log << "Autoseed is on." << std::endl;
+			return;
+		}
+
+		const double seed = plan.seed == 0.0 ? 1.0 : plan.seed;
+		generator.seed(static_cast<std::mt19937::result_type>(seed));
+		log << "Seed number is " << seed << "." << std::endl;
+	}
+
+	bool HSStatePreparation::Prepare(const HSExecutionPlan &plan,
+		const SpinAPI::system_ptr &system, SpinAPI::SpinSpace &space,
+		HSPreparedState &state, std::mt19937 &generator,
+		std::ostream &log, std::string &error)
+	{
+		state = HSPreparedState();
+		error.clear();
+
+		if (plan.IsStochastic())
+		{
+			if (!ValidateTraceSampling(system, error))
+				return false;
+
+			SpinAPI::TraceSamplingMethod method = SpinAPI::TraceSamplingMethod::SUZ;
+			if (plan.samplingMethod == "coherent")
+				method = SpinAPI::TraceSamplingMethod::SpinCoherent;
+
+			if (!space.BuildTraceSamples(system->InitialState().front(), plan.monteCarloSamples,
+				method, generator, state.traceSamples, &error))
+				return false;
+
+			state.factors = state.traceSamples.factors;
+			state.factors /= std::sqrt(static_cast<double>(plan.monteCarloSamples));
+			if (!BuildInitialDensity(system, space, state.density, error))
+				return false;
+			state.stochastic = true;
+
+			log << "HSGeneral trace sampling keeps state \"" << system->InitialState().front()->Name()
+				<< "\" fixed and samples only omitted spins (subspace dimension "
+				<< state.traceSamples.sampledSubspaceDimension << ")." << std::endl;
+			log << "Using " << state.factors.n_cols
+				<< " normalized trace samples in the shared HSGeneral propagation engine." << std::endl;
+		}
+		else
+		{
+			if (!BuildInitialDensity(system, space, state.density, error))
+				return false;
+			if (!space.FactorizeDensityMatrix(state.density, state.factors, &error))
+				return false;
+			log << "HSGeneral constructed the normalized initial density from "
+				<< system->InitialState().size() << " state component(s) as "
+				<< state.factors.n_cols << " Hilbert-space factor(s)." << std::endl;
+		}
+
+		state.frame = system->InitialStateFrame();
+		state.dephaseInHamiltonianEigenbasis =
+			system->InitialStateCoherences() == SpinAPI::InitialStateCoherenceMode::DephaseEigenbasis;
+		state.dephasingHamiltonian = plan.hasInitialStateHamiltonian
+			? plan.initialStateHamiltonian : plan.h0List;
+		if (state.dephaseInHamiltonianEigenbasis && state.dephasingHamiltonian.empty())
+		{
+			error = "initial-state eigenbasis dephasing requires initialstatehamiltonian or hamiltonianh0list";
+			return false;
+		}
+
+		if (state.frame == SpinAPI::StateFrame::Molecular)
+		{
+			if (!space.CreateStateRotationCache(state.density, state.rotationCache))
+			{
+				error = "failed to prepare molecular-frame initial-state rotations";
+				return false;
+			}
+			state.hasRotationCache = true;
+		}
+		return true;
+	}
+
+	bool HSStatePreparation::PrepareForOrientation(const HSExecutionPlan &plan,
+		SpinAPI::SpinSpace &space, const HSPreparedState &reference,
+		const HSOrientation &orientation, HSOrientedState &state, std::string &error)
+	{
+		state = HSOrientedState();
+		error.clear();
+		const SpinAPI::HilbertStateRotationCache *rotationCache =
+			reference.hasRotationCache ? &reference.rotationCache : nullptr;
+
+		if (reference.stochastic)
+		{
+			state.factors = reference.factors;
+			if (reference.frame == SpinAPI::StateFrame::Molecular &&
+				reference.hasRotationCache && !reference.rotationCache.rotationInvariant)
+			{
+				if (!space.RotateStateFactors(reference.factors, orientation.frameToLab,
+					reference.rotationCache, state.factors))
+				{
+					error = "failed to rotate initial trace-sampling factors for the current orientation";
+					return false;
+				}
+			}
+			state.density = state.factors * state.factors.t();
+			return true;
+		}
+
+		if (!space.PrepareInitialDensityForPowder(reference.density, orientation.frameToLab,
+			reference.frame, reference.dephaseInHamiltonianEigenbasis,
+			reference.dephasingHamiltonian, plan.approximation, rotationCache, state.density))
+		{
+			error = "failed to prepare the initial density for the current HS orientation/eigenbasis";
+			return false;
+		}
+		if (!space.FactorizeDensityMatrix(state.density, state.factors, &error))
+		{
+			error = "failed to factorize the oriented initial density: " + error;
+			return false;
+		}
+		return true;
+	}
+}

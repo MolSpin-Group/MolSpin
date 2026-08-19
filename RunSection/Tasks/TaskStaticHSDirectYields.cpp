@@ -16,7 +16,6 @@
 #include "ObjectParser.h"
 #include "Spin.h"
 #include "Interaction.h"
-#include "HSGeneralConfiguration.h"
 #include <iomanip> // std::setprecision
 
 namespace RunSection
@@ -52,7 +51,6 @@ namespace RunSection
 		auto systems = this->SpinSystems();
 		for (auto i = systems.cbegin(); i != systems.cend(); i++) // iteration through all spin systems, in this case (or usually), this is one
 		{
-			const bool hsGeneral = IsHSGeneralTask(*this->Properties());
 			// Gyromagnetic constant
 			double gamma_e = 176.0859644; // gyromagnetic ratio of free electron spin in rad mT^-1 mus^-1
 
@@ -67,7 +65,7 @@ namespace RunSection
 				{
 					nucspins += 1;
 				}
-				if (!hsGeneral && spintype == "electron")
+				if (spintype == "electron")
 				{
 					// Throws an error if the spins are not spin 1/2
 					if ((*l)->Multiplicity() != 2)
@@ -81,7 +79,7 @@ namespace RunSection
 			}
 
 			// Check if there are any nuclear spins
-			if (!hsGeneral && nucspins == 0)
+			if (nucspins == 0)
 			{
 				this->Log() << "Skipping SpinSystem \"" << (*i)->Name() << "\" as no nuclear spins were specified." << std::endl;
 				std::cout << "# ERROR: no nuclear spins were specified, skipping the system" << std::endl;
@@ -97,18 +95,7 @@ namespace RunSection
 
 			std::string InitialState;
 			arma::cx_mat InitialStateVector;
-			arma::cx_mat hsGeneralFactors;
-			if (hsGeneral)
-			{
-				std::string error;
-				if (!BuildHSGeneralInitialStateFactors(*i, space, hsGeneralFactors, this->Log(), error))
-				{
-					this->Log() << "ERROR: " << error << "." << std::endl;
-					return false;
-				}
-				InitialStateVector.zeros(space.HilbertSpaceDimensions(), 1);
-			}
-			else if (this->Properties()->Get("initialstate", InitialState))
+			if (this->Properties()->Get("initialstate", InitialState))
 			{
 				// Set up states for time-propagation
 				arma::cx_mat TaskInitialStateVector(4, 1);
@@ -195,25 +182,19 @@ namespace RunSection
 				InitialStateVector = arma::reshape(tmp_InitialStateVector, tmp_InitialStateVector.n_elem, 1);
 			}
 
-			int Z = hsGeneral ? 1 : space.SpaceDimensions() / InitialStateVector.n_rows; // Legacy omitted-spin normalization
+			int Z = space.SpaceDimensions() / InitialStateVector.n_rows; // Size of the nuclear spin subspace
 			std::cout << "# Hilbert Space Size " << InitialStateVector.n_rows * Z << " x " << InitialStateVector.n_rows * Z << std::endl;
 			this->Log() << "Hilbert Space Size " << InitialStateVector.n_rows * Z << " x " << InitialStateVector.n_rows * Z << std::endl;
 			this->Log() << "Size of Nuclear Spin Subspace " << Z << std::endl;
 
 			arma::cx_mat B;
-			if (hsGeneral)
+			B.zeros(Z * InitialStateVector.n_rows, Z);
+
+			for (int it = 0; it < Z; it++)
 			{
-				B = std::move(hsGeneralFactors);
-			}
-			else
-			{
-				B.zeros(Z * InitialStateVector.n_rows, Z);
-				for (int it = 0; it < Z; it++)
-				{
-					arma::colvec temp(Z, arma::fill::zeros);
-					temp(it) = 1;
-					B.col(it) = arma::kron(InitialStateVector, temp);
-				}
+				arma::colvec temp(Z);
+				temp(it) = 1;
+				B.col(it) = arma::kron(InitialStateVector, temp);
 			}
 
 			// Get the Hamiltonian
@@ -542,7 +523,7 @@ namespace RunSection
 						}
 
 						// Update B using the Higham propagator
-						arma::cx_mat temp(B.n_rows, B.n_cols);
+						arma::cx_mat temp(InitialStateVector.n_rows * Z, Z);
 						temp = space.HighamProp(H, B, -dt * arma::cx_double(0.0, 1.0), precision, M);
 						B = temp;
 						;
@@ -568,7 +549,7 @@ namespace RunSection
 						}
 
 						// Update B using the Higham propagator
-						arma::cx_mat temp(B.n_rows, B.n_cols);
+						arma::cx_mat temp(InitialStateVector.n_rows * Z, Z);
 						temp = space.HighamProp(H, B, dt, precision, M);
 						B = temp;
 					}
@@ -582,7 +563,7 @@ namespace RunSection
 				if (symmetric)
 				{
 					// #pragma omp parallel for
-					for (arma::uword itr = 0; itr < B.n_cols; itr++)
+					for (int itr = 0; itr < Z; itr++)
 					{
 						arma::cx_vec prop_state = B.col(itr);
 
@@ -670,7 +651,7 @@ namespace RunSection
 					H = -(H * arma::cx_double(0.0, 1.0) + K);
 
 					// #pragma omp parallel for
-					for (arma::uword itr = 0; itr < B.n_cols; itr++)
+					for (int itr = 0; itr < Z; itr++)
 					{
 						arma::cx_vec prop_state = B.col(itr);
 

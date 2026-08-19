@@ -1,5 +1,5 @@
 /////////////////////////////////////////////////////////////////////////
-// TaskStaticSSPowderSpectraNakajimaZwanzig implementation (RunSection module)  developed by Irina Anisimova.
+// TaskStaticSSPowderSpectraNakajimaZwanzig implementation (RunSection module)  developed by Luca Gerhards.
 //
 // Molecular Spin Dynamics Software - developed by Luca Gerhards.
 // (c) 2022 Quantum Biology and Computational Physics Group.
