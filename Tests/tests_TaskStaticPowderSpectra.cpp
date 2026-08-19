@@ -1012,7 +1012,7 @@ bool test_task_staticpowder_timeevo_ss_hs_agree()
 
 	//////////////////////////////////////////////////////////////////////////////
 	// The HS direct task historically sampled the upper hemisphere. For comparison
-	// with EasySpin GridSymmetry='Ci', users need a true full-sphere grid. This
+	// with GridSymmetry='Ci', users need a true full-sphere grid. This
 	// regression uses an anisotropic one-electron microwave Hamiltonian for which
 	// the two grids give different averaged dynamics; it verifies that the
 	// powderfullsphere keyword is wired into the generated grid.

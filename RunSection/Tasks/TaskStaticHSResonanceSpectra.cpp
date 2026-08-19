@@ -214,7 +214,7 @@ namespace RunSection
 						continue;
 					if (arma::norm(f - Bvec) > tol)
 					{
-						this->Log() << "Warning: Zeeman interactions have mismatched fields. Consider enforce_zeeman_sync=true for EasySpin-compatible behavior." << std::endl;
+						this->Log() << "Warning: Zeeman interactions have mismatched fields. Consider enforce_zeeman_sync=true for compatible behavior." << std::endl;
 						break;
 					}
 				}
@@ -598,7 +598,7 @@ namespace RunSection
 					if (!this->CreatePassiveZYZRotationMatrix(phi, theta, gamma, Rot))
 						continue;
 
-					// Rot is a PASSIVE ZYZ rotation (EasySpin convention) from molecular to lab frame.
+					// Rot is a PASSIVE ZYZ rotation from molecular to lab frame.
 					// Use it directly for tensor rotation and magnetic dipole operators.
 					const arma::mat Rpowder = Rot;
 					arma::cx_mat rho_oriented;
@@ -1229,7 +1229,7 @@ namespace RunSection
 
 	bool TaskStaticHSResonanceSpectra::CreatePassiveZYZRotationMatrix(double &_alpha, double &_beta, double &_gamma, arma::mat &_R) const
 	{
-		// EasySpin convention: passive ZYZ Euler rotation (molecular -> lab).
+		// Convention: passive ZYZ Euler rotation (molecular -> lab).
 		const double ca = std::cos(_alpha), sa = std::sin(_alpha);
 		const double cb = std::cos(_beta), sb = std::sin(_beta);
 		const double cg = std::cos(_gamma), sg = std::sin(_gamma);
