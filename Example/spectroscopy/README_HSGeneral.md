@@ -55,14 +55,15 @@ sampling and is rejected. Use `sampling=direct` for density-matrix relaxation.
 ```text
 powdergrid = uniform;
 powdersamplingpoints = 200;
-powderdomain = full;
 powdergammapoints = 16;
 hamiltonianh0list = B0,HFC1,HFC2,HFC3;
 ```
 
-`powderfullsphere=true` remains compatible with `powderdomain=full`. Full SO(3) sampling is required when a
-second lab-frame direction, such as a linearly polarized B1, removes axial
-symmetry about B0.
+For a uniform grid, gamma sampling selects the full-sphere theta/phi domain
+automatically unless a domain was explicitly supplied. `powderfullsphere=true`
+remains compatible with `powderdomain=full`. Full SO(3) sampling is required
+when a second lab-frame direction, such as a linearly polarized B1, removes
+axial symmetry about B0.
 
 ## RWA/high-field versus explicit time-dependent driving
 
@@ -101,7 +102,6 @@ Task RYDMR
 
     powdergrid = uniform;
     powdersamplingpoints = 200;
-    powderdomain = full;
     powdergammapoints = 16;
     hamiltonianh0list = B0,HFC1,HFC2,HFC3;
 
@@ -133,12 +133,18 @@ workflows is not automatically activated by single-system HSGeneral.
 
 ## Polarization, CIDNP/CIDSP and quantum yields
 
-State populations are the default time-evolution observables. To report spin
-polarization:
+State populations are the compatibility default for time evolution without a
+`spinlist`. New inputs can make the output explicit:
 
 ```text
+observables = states;
+```
+
+To report spin polarization:
+
+```text
+observables = spins;
 spinlist = N1,N2;
-cidsp = false;
 ```
 
 which outputs lab-frame Ix/Iy/Iz.
@@ -146,8 +152,8 @@ which outputs lab-frame Ix/Iy/Iz.
 For transition-conditioned product polarization:
 
 ```text
+observables = cidsp;
 spinlist = N1;
-cidnp = true;   # cidsp=true is equivalent
 ```
 
 which outputs `k * I_alpha * P_source`.
@@ -156,8 +162,11 @@ For ordinary product/quantum yields:
 
 ```text
 calculation = yields;
-transitionyields = true;
+observables = transitionyields;
 ```
+
+`observables=auto` preserves the historical `spinlist`, `cidsp`/`cidnp`, and
+`transitionyields` inference for existing inputs.
 
 which outputs `k * P_source`.
 

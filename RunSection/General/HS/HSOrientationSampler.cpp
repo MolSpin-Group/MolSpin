@@ -73,6 +73,8 @@ namespace RunSection::General::HS
 				<< " theta/phi orientations over the "
 				<< (plan.powderDomain == SpinAPI::PowderGridDomain::FullSphere
 					? "full sphere." : "upper hemisphere.") << std::endl;
+			if (plan.powderDomainAutoExpanded)
+				log << "Full-sphere theta/phi sampling was selected automatically because gamma sampling requests a complete SO(3) grid." << std::endl;
 			break;
 
 		case SpinAPI::PowderGridType::Sophe:

@@ -86,6 +86,19 @@ namespace RunSection::General::HS
 				<< " is parsed for compatibility but is not used by SpinAPI::KrylovExpmGeneral; "
 				<< "krylovsize controls the current Krylov branch." << std::endl;
 		}
+		if (plan.IsDynamic() && plan.orientation == OrientationMode::Powder2D)
+		{
+			this->Log() << "Warning: dynamic theta/phi powder sampling assumes axial symmetry about the laboratory field. "
+				<< "A linearly polarized drive or any second fixed laboratory direction requires full SO(3) sampling "
+				<< "with powdergammapoints greater than one." << std::endl;
+		}
+		if (plan.orientation == OrientationMode::PowderSO3 &&
+			plan.powderGridType == SpinAPI::PowderGridType::Uniform &&
+			plan.powderDomain == SpinAPI::PowderGridDomain::UpperHemisphere)
+		{
+			this->Log() << "Warning: powderdomain=upper with gamma sampling is symmetry-reduced, not a generic full SO(3) integral. "
+				<< "Use it only when inversion symmetry has been established; otherwise select powderdomain=full." << std::endl;
+		}
 
 		for (const auto &system : systems)
 		{
@@ -159,6 +172,7 @@ namespace RunSection::General::HS
 			<< ", calculation=" << ToString(plan.calculation)
 			<< ", sampling=" << ToString(plan.sampling)
 			<< ", orientation=" << ToString(plan.orientation)
+			<< ", observables=" << ToString(plan.observableMode)
 			<< ", propagation=" << ToString(plan.propagation);
 		if (plan.calculation == Calculation::Yields)
 		{

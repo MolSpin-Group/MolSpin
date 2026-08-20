@@ -25,6 +25,7 @@ namespace RunSection::General::HS
 	enum class Calculation { TimeEvolution, Yields };
 	enum class Sampling { Direct, Stochastic };
 	enum class OrientationMode { Identity, Powder2D, PowderSO3, Explicit };
+	enum class ObservableMode { Auto, StatePopulations, SpinPolarization, TransitionYields, ProductPolarization };
 	enum class PropagationMethod { Exponential, AutoExpm, Krylov, RK4 };
 	enum class YieldMode { FiniteTime, TimeInfinity };
 	enum class TimelineWindow { Pulse, FreeEvolution, Full };
@@ -44,6 +45,9 @@ namespace RunSection::General::HS
 		// own spatial domain; Octant is the historical symmetry-reduced octant grid.
 		SpinAPI::PowderGridType powderGridType = SpinAPI::PowderGridType::Uniform;
 		SpinAPI::PowderGridDomain powderDomain = SpinAPI::PowderGridDomain::UpperHemisphere;
+		// A uniform gamma-resolved grid is a full SO(3) integral unless the user
+		// explicitly requests a symmetry-reduced hemisphere.
+		bool powderDomainAutoExpanded = false;
 		int powderPoints = 0;
 		int powderGridSize = 4;
 		std::string powderSymmetry = "c1";
@@ -73,6 +77,10 @@ namespace RunSection::General::HS
 		bool hasH1List = false;
 		bool transitionYields = true;
 		bool yieldCorrections = false;
+		// Auto preserves the historical spinlist/transitionyields/cidsp inference.
+		// New callers can select the output physics explicitly and receive conflict
+		// diagnostics instead of relying on keyword precedence.
+		ObservableMode observableMode = ObservableMode::Auto;
 
 		// Observable selection. With an empty spinList, time-evolution output
 		// defaults to configured State populations. A spinList selects Ix/Iy/Iz
@@ -115,6 +123,7 @@ namespace RunSection::General::HS
 	const char *ToString(Calculation _value);
 	const char *ToString(Sampling _value);
 	const char *ToString(OrientationMode _value);
+	const char *ToString(ObservableMode _value);
 	const char *ToString(PropagationMethod _value);
 	const char *ToString(YieldMode _value);
 	const char *ToString(TimelineWindow _value);

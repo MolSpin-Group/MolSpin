@@ -497,7 +497,7 @@ namespace
 
 		SpinAPI::PowderGrid grid;
 		if (!SpinAPI::CreateUniformPowderGrid(
-				pointCount, SpinAPI::PowderGridDomain::UpperHemisphere, grid))
+				pointCount, SpinAPI::PowderGridDomain::FullSphere, grid))
 		{
 			return false;
 		}
@@ -711,7 +711,54 @@ bool test_hsgeneral_defaults_are_explicit_and_compatible()
 		plan.sampling == RunSection::General::HS::Sampling::Direct &&
 		plan.approximation == SpinAPI::HamiltonianApproximation::Full &&
 		plan.orientation == RunSection::General::HS::OrientationMode::Identity &&
+		plan.observableMode == RunSection::General::HS::ObservableMode::Auto &&
 		plan.propagation == RunSection::General::HS::PropagationMethod::Exponential;
+}
+
+bool test_hsgeneral_explicit_observable_modes_are_unambiguous()
+{
+	auto statesFixture = BuildHSGeneralPolarizationYieldSystem();
+	auto spinsFixture = BuildHSGeneralPolarizationYieldSystem();
+	auto yieldsFixture = BuildHSGeneralPolarizationYieldSystem();
+	auto cidspFixture = BuildHSGeneralPolarizationYieldSystem();
+	std::string statesData, spinsData, yieldsData, cidspData, spinsLog;
+	if (!RunHSGeneralSpectraTask(statesFixture, "HSGeneral",
+			"calculation=timeevolution;observables=states;totaltime=0.1;timestep=0.1;",
+			statesData) ||
+		!RunHSGeneralSpectraTask(spinsFixture, "HSGeneral",
+			"calculation=timeevolution;observables=spins;spinlist=E;totaltime=0.1;timestep=0.1;",
+			spinsData, &spinsLog) ||
+		!RunHSGeneralSpectraTask(yieldsFixture, "HSGeneral",
+			"calculation=yields;observables=transitionyields;method=timeinf;",
+			yieldsData) ||
+		!RunHSGeneralSpectraTask(cidspFixture, "HSGeneral",
+			"calculation=yields;observables=cidsp;spinlist=E;method=timeinf;",
+			cidspData))
+	{
+		return false;
+	}
+
+	return statesData.find("System.Up") != std::string::npos &&
+		statesData.find("System.E.Ix") == std::string::npos &&
+		spinsData.find("System.E.Ix") != std::string::npos &&
+		yieldsData.find("System.sink.yield") != std::string::npos &&
+		cidspData.find("System.E.sink.yield.Ix") != std::string::npos &&
+		spinsLog.find("observables=spins") != std::string::npos &&
+		HSGeneralRejects(
+			"calculation=timeevolution;observables=states;spinlist=E;",
+			"cannot be combined with spinlist") &&
+		HSGeneralRejects(
+			"calculation=timeevolution;observables=spins;",
+			"requires spinlist") &&
+		HSGeneralRejects(
+			"calculation=timeevolution;observables=transitionyields;",
+			"requires calculation=yields") &&
+		HSGeneralRejects(
+			"calculation=yields;observables=cidsp;",
+			"requires spinlist") &&
+		HSGeneralRejects(
+			"calculation=timeevolution;observables=unknown;",
+			"observables must be");
 }
 
 bool test_hsgeneral_pulse_preparation_rotates_polarization()
@@ -996,9 +1043,35 @@ bool test_hsgeneral_orientation_sampler_builds_so3_grid()
 		if (!orientation.frameToLab.is_finite() || std::abs(arma::det(orientation.frameToLab) - 1.0) > 1.0e-12) return false;
 		weight += orientation.weight;
 	}
-	// Preserve MolSpin's historical solid-angle quadrature convention.
-	return std::abs(weight - 2.0 * arma::datum::pi) < 1.0e-12 &&
-		log.str().find("35 total SO(3) orientations") != std::string::npos;
+	// Gamma-resolved uniform sampling defaults to a complete full-sphere SO(3)
+	// integral. An explicitly requested upper hemisphere remains available as a
+	// deliberate symmetry reduction.
+	if (plan.powderDomain != SpinAPI::PowderGridDomain::FullSphere ||
+		!plan.powderDomainAutoExpanded ||
+		std::abs(weight - 4.0 * arma::datum::pi) >= 1.0e-12 ||
+		log.str().find("35 total SO(3) orientations") == std::string::npos ||
+		log.str().find("selected automatically") == std::string::npos)
+	{
+		return false;
+	}
+
+	MSDParser::ObjectParser reducedParser("general",
+		"type=HSGeneral;calculation=yields;powdersamplingpoints=7;"
+		"powdergammapoints=5;powderdomain=upper;hamiltonianh0list=H0;");
+	RunSection::General::HS::HSExecutionPlan reducedPlan;
+	if (!RunSection::General::HS::ResolveExecutionPlan(reducedParser, reducedPlan, error) ||
+		reducedPlan.powderDomainAutoExpanded ||
+		reducedPlan.powderDomain != SpinAPI::PowderGridDomain::UpperHemisphere)
+	{
+		return false;
+	}
+	std::vector<RunSection::General::HS::HSOrientation> reduced;
+	std::ostringstream reducedLog;
+	if (!RunSection::General::HS::HSOrientationSampler::Build(
+		reducedPlan, reduced, reducedLog, error)) return false;
+	double reducedWeight = 0.0;
+	for (const auto &orientation : reduced) reducedWeight += orientation.weight;
+	return std::abs(reducedWeight - 2.0 * arma::datum::pi) < 1.0e-12;
 }
 
 bool test_hsgeneral_powdergrid_api_selection()
@@ -1211,6 +1284,7 @@ bool test_hsgeneral_dynamic_powder_internal_external_and_sampling()
 		directTime.find("System.E1Up") != std::string::npos &&
 		directYield.find("System.sink.yield") != std::string::npos &&
 		directTimeLog.find("Orientation-dependent molecular-frame State observables are rotated") != std::string::npos &&
+		directTimeLog.find("assumes axial symmetry") != std::string::npos &&
 		yieldLog.find("yield-mode=finite") != std::string::npos &&
 		yieldLog.find("Writing finite-time integrated HS observables") != std::string::npos;
 }
@@ -1434,6 +1508,7 @@ void AddHSGeneralTests(std::vector<test_case> &_cases)
 	_cases.push_back(test_case("HSGeneral keeps eight core legacy tasks independently constructible", test_hsgeneral_keeps_eight_core_legacy_tasks_independent));
 	_cases.push_back(test_case("HSGeneral static direct modes match frozen legacy reference", test_hsgeneral_static_direct_matches_frozen_legacy_reference));
 	_cases.push_back(test_case("HSGeneral defaults are explicit and compatible", test_hsgeneral_defaults_are_explicit_and_compatible));
+	_cases.push_back(test_case("HSGeneral explicit observable modes are unambiguous", test_hsgeneral_explicit_observable_modes_are_unambiguous));
 	_cases.push_back(test_case("HSGeneral pulse preparation rotates polarization", test_hsgeneral_pulse_preparation_rotates_polarization));
 	_cases.push_back(test_case("HSGeneral pulse timeline matches DirectSpectra", test_hsgeneral_pulse_timeline_matches_directspectra));
 	_cases.push_back(test_case("HSGeneral quantum yields, CIDNP and timeinf polarization are explicit", test_hsgeneral_quantum_yield_cidnp_and_timeinf_polarization));

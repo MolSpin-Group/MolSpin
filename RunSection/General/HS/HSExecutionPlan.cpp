@@ -320,6 +320,16 @@ namespace RunSection::General::HS
 				error = "uniform SO(3) powder sampling requires powdersamplingpoints greater than one";
 				return false;
 			}
+			if (plan.powderGridType == SpinAPI::PowderGridType::Uniform &&
+				plan.powderGammaPoints > 1 && !powderDomainSpecified &&
+				!powderFullSphereSpecified)
+			{
+				// Gamma resolves the third Euler angle. Without an explicit symmetry
+				// reduction, the associated theta/phi directions must cover the full
+				// sphere for a complete SO(3) integral.
+				plan.powderDomain = SpinAPI::PowderGridDomain::FullSphere;
+				plan.powderDomainAutoExpanded = true;
+			}
 
 			if (plan.powderGammaPoints > 1)
 				plan.orientation = OrientationMode::PowderSO3;
@@ -388,16 +398,79 @@ namespace RunSection::General::HS
 		const bool transitionYieldsSpecified = properties.Get("transitionyields", plan.transitionYields);
 		properties.Get("yieldcorrections", plan.yieldCorrections);
 		properties.GetList("spinlist", plan.spinList, ',');
-		// DirectSpectra compatibility and orthogonal observable selection: if a
-		// spinlist is supplied for an integrated/yield calculation and the user
-		// did not explicitly request transition yields, interpret the requested
-		// observables as integrated spin polarization. This lets historical
-		// timeinf polarization inputs migrate without a redundant switch while
-		// preserving transitionyields=true as an explicit override.
-		if (!transitionYieldsSpecified && !plan.spinList.empty()) plan.transitionYields = false;
-		properties.Get("cidsp", plan.cidsp);
+		const bool cidspSpecified = properties.Get("cidsp", plan.cidsp);
 		bool cidnpAlias = false;
-		if (properties.Get("cidnp", cidnpAlias) && cidnpAlias) plan.cidsp = true;
+		const bool cidnpSpecified = properties.Get("cidnp", cidnpAlias);
+		if (cidnpSpecified && cidnpAlias) plan.cidsp = true;
+
+		std::string observableMode;
+		const bool observableModeSpecified = ReadString(properties,
+			{"observables", "observablemode", "observable_mode"}, observableMode);
+		if (observableModeSpecified)
+		{
+			if (OneOf(observableMode, {"states", "state", "populations", "statepopulations", "state-populations"}))
+				plan.observableMode = ObservableMode::StatePopulations;
+			else if (OneOf(observableMode, {"spins", "spin", "polarization", "polarizations", "spinpolarization", "spin-polarization"}))
+				plan.observableMode = ObservableMode::SpinPolarization;
+			else if (OneOf(observableMode, {"transitionyields", "transition-yields", "yields", "quantumyields", "quantum-yields"}))
+				plan.observableMode = ObservableMode::TransitionYields;
+			else if (OneOf(observableMode, {"cidsp", "cidnp", "productpolarization", "product-polarization"}))
+				plan.observableMode = ObservableMode::ProductPolarization;
+			else if (observableMode == "auto")
+				plan.observableMode = ObservableMode::Auto;
+			else
+			{
+				error = "observables must be auto, states, spins, transitionyields, or cidsp";
+				return false;
+			}
+		}
+
+		if (plan.observableMode == ObservableMode::Auto)
+		{
+			// DirectSpectra compatibility: an unqualified spinlist selects spin
+			// polarization unless transitionyields was explicitly requested.
+			if (!transitionYieldsSpecified && !plan.spinList.empty()) plan.transitionYields = false;
+		}
+		else if (plan.observableMode == ObservableMode::StatePopulations)
+		{
+			if (plan.calculation != Calculation::TimeEvolution)
+			{ error = "observables=states requires calculation=timeevolution"; return false; }
+			if (!plan.spinList.empty() || plan.cidsp)
+			{ error = "observables=states cannot be combined with spinlist or cidsp/cidnp"; return false; }
+			if (transitionYieldsSpecified && plan.transitionYields)
+			{ error = "observables=states conflicts with transitionyields=true"; return false; }
+			plan.transitionYields = false;
+		}
+		else if (plan.observableMode == ObservableMode::SpinPolarization)
+		{
+			if (plan.spinList.empty())
+			{ error = "observables=spins requires spinlist"; return false; }
+			if ((cidspSpecified && plan.cidsp) || (cidnpSpecified && cidnpAlias))
+			{ error = "observables=spins conflicts with cidsp/cidnp=true"; return false; }
+			if (transitionYieldsSpecified && plan.transitionYields)
+			{ error = "observables=spins conflicts with transitionyields=true"; return false; }
+			plan.transitionYields = false;
+			plan.cidsp = false;
+		}
+		else if (plan.observableMode == ObservableMode::TransitionYields)
+		{
+			if (plan.calculation != Calculation::Yields)
+			{ error = "observables=transitionyields requires calculation=yields"; return false; }
+			if (!plan.spinList.empty() || plan.cidsp)
+			{ error = "observables=transitionyields cannot be combined with spinlist or cidsp/cidnp"; return false; }
+			if (transitionYieldsSpecified && !plan.transitionYields)
+			{ error = "observables=transitionyields conflicts with transitionyields=false"; return false; }
+			plan.transitionYields = true;
+		}
+		else
+		{
+			if (plan.spinList.empty())
+			{ error = "observables=cidsp requires spinlist"; return false; }
+			if (transitionYieldsSpecified && plan.transitionYields)
+			{ error = "observables=cidsp conflicts with transitionyields=true"; return false; }
+			plan.transitionYields = false;
+			plan.cidsp = true;
+		}
 		plan.hasPulseSequence = properties.GetPulseSequence("pulsesequence", plan.pulseSequence);
 
 		auto readTimelineWindow = [&](const std::string &key, TimelineWindow &window) -> bool
@@ -508,6 +581,18 @@ namespace RunSection::General::HS
 	const char *ToString(OrientationMode value)
 	{
 		switch (value) { case OrientationMode::Identity: return "identity"; case OrientationMode::Powder2D: return "theta/phi"; case OrientationMode::PowderSO3: return "theta/phi/gamma"; case OrientationMode::Explicit: return "explicit"; }
+		return "unknown";
+	}
+	const char *ToString(ObservableMode value)
+	{
+		switch (value)
+		{
+		case ObservableMode::Auto: return "auto";
+		case ObservableMode::StatePopulations: return "states";
+		case ObservableMode::SpinPolarization: return "spins";
+		case ObservableMode::TransitionYields: return "transitionyields";
+		case ObservableMode::ProductPolarization: return "cidsp";
+		}
 		return "unknown";
 	}
 	const char *ToString(PropagationMethod value)

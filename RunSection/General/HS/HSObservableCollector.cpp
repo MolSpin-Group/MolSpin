@@ -34,12 +34,28 @@ namespace RunSection::General::HS
 		error.clear();
 		if (system == nullptr) { error = "cannot construct observables for a null spin system"; return false; }
 
-		// Preserve the established DirectSpectra observable contract:
+		// Preserve the established DirectSpectra observable contract in auto
+		// mode, while allowing General callers to make the output explicit:
 		//   transitionyields=true -> rate * P_source
 		//   spinlist + cidsp=false -> Ix/Iy/Iz
 		//   spinlist + cidsp=true  -> rate * I_alpha * P_source
 		// Otherwise time evolution defaults to configured State populations.
-		if (plan.calculation == Calculation::Yields && plan.transitionYields)
+		const bool transitionYields =
+			plan.observableMode == ObservableMode::TransitionYields ||
+			(plan.observableMode == ObservableMode::Auto &&
+				plan.calculation == Calculation::Yields && plan.transitionYields);
+		const bool productPolarization =
+			plan.observableMode == ObservableMode::ProductPolarization ||
+			(plan.observableMode == ObservableMode::Auto && plan.cidsp && !plan.spinList.empty());
+		const bool spinPolarization =
+			plan.observableMode == ObservableMode::SpinPolarization || productPolarization ||
+			(plan.observableMode == ObservableMode::Auto && !plan.spinList.empty());
+		const bool statePopulations =
+			plan.observableMode == ObservableMode::StatePopulations ||
+			(plan.observableMode == ObservableMode::Auto &&
+				plan.calculation == Calculation::TimeEvolution && plan.spinList.empty());
+
+		if (transitionYields)
 		{
 			for (const auto &transition : system->Transitions())
 			{
@@ -58,11 +74,13 @@ namespace RunSection::General::HS
 				observable.transition = transition;
 				observables.push_back(std::move(observable));
 			}
-			if (observables.empty()) { error = "calculation=yields requires at least one transition with a source State"; return false; }
+			if (observables.empty()) { error = "transition-yield output requires at least one transition with a source State"; return false; }
+			log << "Transition-yield observables selected for " << observables.size()
+				<< " reaction channel(s)." << std::endl;
 			return true;
 		}
 
-		if (!plan.spinList.empty())
+		if (spinPolarization)
 		{
 			std::vector<std::string> found;
 			for (auto spin = system->spins_cbegin(); spin != system->spins_cend(); ++spin)
@@ -109,7 +127,7 @@ namespace RunSection::General::HS
 					return true;
 				};
 
-				if (plan.cidsp)
+				if (productPolarization)
 				{
 					for (const auto &transition : system->Transitions())
 					{
@@ -131,12 +149,12 @@ namespace RunSection::General::HS
 				if (std::find(found.begin(), found.end(), requested) == found.end())
 				{ error = "spinlist contains unknown spin \"" + requested + "\""; return false; }
 			if (observables.empty()) { error = "spinlist did not produce any polarization observables"; return false; }
-			log << (plan.cidsp ? "CIDSP/CIDNP product-polarization" : "spin-polarization")
+			log << (productPolarization ? "CIDSP/CIDNP product-polarization" : "spin-polarization")
 				<< " observables selected for " << found.size() << " spin(s)." << std::endl;
 			return true;
 		}
 
-		if (plan.calculation == Calculation::TimeEvolution)
+		if (statePopulations)
 		{
 			for (const auto &state : system->States())
 			{
@@ -156,6 +174,8 @@ namespace RunSection::General::HS
 			if (plan.IsPowder())
 				log << "Orientation-dependent molecular-frame State observables are rotated with each powder orientation." << std::endl;
 			if (observables.empty()) { error = "time-evolution output requires at least one State or a spinlist"; return false; }
+			log << "State-population observables selected for " << observables.size()
+				<< " configured State object(s)." << std::endl;
 			return true;
 		}
 
