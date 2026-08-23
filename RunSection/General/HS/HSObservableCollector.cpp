@@ -25,6 +25,30 @@ namespace RunSection::General::HS
 		{
 			return std::find(names.begin(), names.end(), name) != names.end();
 		}
+
+		bool PrepareStateRotation(const arma::sp_cx_mat &state, SpinAPI::SpinSpace &space,
+			SpinAPI::HilbertStateRotationCache &cache, bool &rotate, std::string &error)
+		{
+			bool invariant = false;
+			if (!space.IsStateRotationInvariant(state, invariant))
+			{
+				error = "failed to determine powder-rotation symmetry for an HS State/source observable";
+				return false;
+			}
+			if (invariant)
+			{
+				rotate = false;
+				return true;
+			}
+
+			if (!space.CreateStateRotationCache(arma::cx_mat(state), cache))
+			{
+				error = "failed to prepare powder rotation for an orientation-dependent HS State/source observable";
+				return false;
+			}
+			rotate = true;
+			return true;
+		}
 	}
 
 	bool HSObservableCollector::Prepare(const HSExecutionPlan &plan, const SpinAPI::system_ptr &system,
@@ -67,9 +91,8 @@ namespace RunSection::General::HS
 				observable.hasStateOrSource = true;
 				if (plan.IsPowder())
 				{
-					if (!space.CreateStateRotationCache(arma::cx_mat(observable.stateOrSource), observable.stateRotationCache))
-					{ error = "failed to prepare powder rotation for transition source State"; return false; }
-					observable.rotateStateOrSource = !observable.stateRotationCache.rotationInvariant;
+					if (!PrepareStateRotation(observable.stateOrSource, space,
+						observable.stateRotationCache, observable.rotateStateOrSource, error)) return false;
 				}
 				observable.transition = transition;
 				observables.push_back(std::move(observable));
@@ -117,9 +140,8 @@ namespace RunSection::General::HS
 						observable.hasStateOrSource = true;
 						if (plan.IsPowder())
 						{
-							if (!space.CreateStateRotationCache(arma::cx_mat(observable.stateOrSource), observable.stateRotationCache))
-							{ error = "failed to prepare CIDSP source-State powder rotation"; return false; }
-							observable.rotateStateOrSource = !observable.stateRotationCache.rotationInvariant;
+							if (!PrepareStateRotation(observable.stateOrSource, space,
+								observable.stateRotationCache, observable.rotateStateOrSource, error)) return false;
 						}
 						observable.transition = transition;
 					}
@@ -165,9 +187,8 @@ namespace RunSection::General::HS
 				observable.hasStateOrSource = true;
 				if (plan.IsPowder())
 				{
-					if (!space.CreateStateRotationCache(arma::cx_mat(observable.stateOrSource), observable.stateRotationCache))
-					{ error = "failed to prepare powder rotation for observable State \"" + state->Name() + "\""; return false; }
-					observable.rotateStateOrSource = !observable.stateRotationCache.rotationInvariant;
+					if (!PrepareStateRotation(observable.stateOrSource, space,
+						observable.stateRotationCache, observable.rotateStateOrSource, error)) return false;
 				}
 				observables.push_back(std::move(observable));
 			}

@@ -89,13 +89,14 @@ namespace SpinAPI
 	struct HilbertReactionOperatorCache
 	{
 		// Keep the source projector sparse for ordinary Hilbert propagation.
-		// Molecular-frame powder rotations may additionally prepare the dense
-		// rotation cache, but non-powder stochastic calculations must never pay
-		// an O(N^2) memory cost merely to construct a Haberkorn sink.
+		// Powder calculations first test rotational invariance entirely in the
+		// sparse representation. Only genuinely orientation-dependent source
+		// states prepare the dense fallback rotation cache.
 		transition_ptr transition;
 		arma::sp_cx_mat sourceProjector;
 		HilbertStateRotationCache sourceRotation;
 		bool hasSourceRotation = false;
+		bool rotationInvariant = false;
 	};
 
 	enum class HamiltonianApproximation
@@ -245,6 +246,8 @@ namespace SpinAPI
 		bool BuildTraceSamples(const state_ptr &_state, arma::uword _sampleCount, TraceSamplingMethod _method,
 						   std::mt19937 &_generator, HilbertTraceSampleSet &_samples,
 						   std::string *_error = nullptr) const; // Trace sample only spins omitted from a State object
+		bool IsStateRotationInvariant(const arma::sp_cx_mat &_state, bool &_invariant,
+			double _tolerance = 1.0e-12) const; // Sparse global-rotation invariance test; never builds dense total-spin generators
 		bool RotateState(const arma::cx_mat &_state, const arma::mat &_rotation, arma::cx_mat &_out) const; // Rotate a density matrix with the same spatial rotation used for powder averaging
 		bool CreateStateRotationCache(const arma::cx_mat &_state, HilbertStateRotationCache &_cache, double _tolerance = 1.0e-12) const; // Precompute total-spin generators and detect rotationally invariant density matrices
 		bool CreateStateRotationOperator(const arma::mat &_rotation, const HilbertStateRotationCache &_cache, arma::cx_mat &_operator) const; // Spin-space representation of a molecular-to-lab powder rotation

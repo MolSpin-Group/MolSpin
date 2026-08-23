@@ -3384,6 +3384,39 @@ bool test_spinapi_trace_sampling_preserves_legacy_suz_stream_for_leading_state()
 }
 //////////////////////////////////////////////////////////////////////////////
 
+bool test_spinapi_sparse_rotation_invariance_detects_singlet_support()
+{
+	auto e1 = std::make_shared<SpinAPI::Spin>("E1", "type=electron;spin=1/2;");
+	auto e2 = std::make_shared<SpinAPI::Spin>("E2", "type=electron;spin=1/2;");
+	auto n1 = std::make_shared<SpinAPI::Spin>("N1", "type=nucleus;spin=1/2;");
+	auto n2 = std::make_shared<SpinAPI::Spin>("N2", "type=nucleus;spin=1/2;");
+	auto singlet = std::make_shared<SpinAPI::State>("Singlet",
+		"spins(E1,E2)=|1/2,-1/2>-|-1/2,1/2>;");
+	auto e1up = std::make_shared<SpinAPI::State>("E1Up", "spin(E1)=|1/2>;");
+
+	SpinAPI::SpinSystem system("System");
+	system.Add(e1); system.Add(e2); system.Add(n1); system.Add(n2);
+	system.Add(singlet); system.Add(e1up);
+	if (!singlet->ParseFromSystem(system) || !e1up->ParseFromSystem(system))
+		return false;
+
+	SpinAPI::SpinSpace space(system);
+	arma::sp_cx_mat singletSupport;
+	if (!space.GetState(singlet, singletSupport))
+		return false;
+	bool singletInvariant = false;
+	if (!space.IsStateRotationInvariant(singletSupport, singletInvariant) || !singletInvariant)
+		return false;
+
+	arma::sp_cx_mat polarizedSupport;
+	if (!space.GetState(e1up, polarizedSupport))
+		return false;
+	bool polarizedInvariant = true;
+	return space.IsStateRotationInvariant(polarizedSupport, polarizedInvariant) &&
+		!polarizedInvariant;
+}
+//////////////////////////////////////////////////////////////////////////////
+
 bool test_spinapi_trace_sampling_is_seeded_and_state_general()
 {
 	auto electron = std::make_shared<SpinAPI::Spin>("E", "type=electron;spin=1/2;");
@@ -3627,6 +3660,7 @@ void AddSpinAPITests(std::vector<test_case> &_cases)
 	_cases.push_back(test_case("SpinSpace::Rotated dynamic Hamiltonian follows powder orientation", test_spinapi_rotated_dynamic_hamiltonian_matches_interaction_builder));
 	_cases.push_back(test_case("SpinSpace::Trace sampling respects partial states", test_spinapi_trace_sampling_respects_partial_state));
 	_cases.push_back(test_case("SpinSpace::Trace sampling preserves legacy SU(Z) stream for leading states", test_spinapi_trace_sampling_preserves_legacy_suz_stream_for_leading_state));
+	_cases.push_back(test_case("SpinSpace::Sparse rotation invariance detects singlet support", test_spinapi_sparse_rotation_invariance_detects_singlet_support));
 	_cases.push_back(test_case("SpinSpace::Trace sampling supports seeded arbitrary states", test_spinapi_trace_sampling_is_seeded_and_state_general));
 	_cases.push_back(test_case("SpinSpace::Trace sampling rejects thermal states", test_spinapi_trace_sampling_rejects_thermal_state));
 	_cases.push_back(test_case("SpinSpace::Rotated state factors match rotated density", test_spinapi_rotated_state_factors_match_rotated_density));

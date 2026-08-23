@@ -176,10 +176,20 @@ namespace SpinAPI
 			return false;
 		if (_prepareRotation)
 		{
-			const arma::cx_mat denseProjector(_cache.sourceProjector);
-			if (!this->CreateStateRotationCache(denseProjector, _cache.sourceRotation, _tolerance))
+			if (!this->IsStateRotationInvariant(_cache.sourceProjector,
+				_cache.rotationInvariant, _tolerance))
 				return false;
-			_cache.hasSourceRotation = true;
+
+			// Singlet, identity and other rotationally invariant sources require no
+			// rotation machinery at all. Only prepare the historical dense fallback
+			// for a genuinely orientation-dependent molecular-frame source state.
+			if (!_cache.rotationInvariant)
+			{
+				const arma::cx_mat denseProjector(_cache.sourceProjector);
+				if (!this->CreateStateRotationCache(denseProjector, _cache.sourceRotation, _tolerance))
+					return false;
+				_cache.hasSourceRotation = true;
+			}
 		}
 		_cache.transition = _transition;
 		return true;
@@ -199,7 +209,7 @@ namespace SpinAPI
 		const bool identityRotation = _rotation.n_rows == 3 && _rotation.n_cols == 3 &&
 			arma::norm(_rotation - identity, "fro") <= 1.0e-13;
 
-		if (identityRotation || (_cache.hasSourceRotation && _cache.sourceRotation.rotationInvariant))
+		if (identityRotation || _cache.rotationInvariant)
 		{
 			_out = (_cache.transition->Rate() / 2.0) * _cache.sourceProjector;
 			return true;

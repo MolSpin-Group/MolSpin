@@ -1060,6 +1060,74 @@ bool test_hsgeneral_stochastic_preparation_remains_factorized()
 		prepared.traceSamples.sampledSubspaceDimension == 3;
 }
 
+bool test_hsgeneral_stochastic_powder_invariant_support_avoids_dense_rotation_cache()
+{
+	auto e1 = std::make_shared<SpinAPI::Spin>("E1", "type=electron;spin=1/2;");
+	auto e2 = std::make_shared<SpinAPI::Spin>("E2", "type=electron;spin=1/2;");
+	auto system = std::make_shared<SpinAPI::SpinSystem>("System");
+	system->Add(e1); system->Add(e2);
+	for (int i = 0; i < 6; ++i)
+		system->Add(std::make_shared<SpinAPI::Spin>("N" + std::to_string(i), "type=nucleus;spin=1/2;"));
+
+	auto singlet = std::make_shared<SpinAPI::State>("Singlet",
+		"spins(E1,E2)=|1/2,-1/2>-|-1/2,1/2>;");
+	auto sink = std::make_shared<SpinAPI::Transition>(
+		"Product", "type=sink;sourcestate=Singlet;rate=0.01;", system);
+	system->Add(singlet); system->Add(sink);
+	system->SetProperties(std::make_shared<MSDParser::ObjectParser>(
+		"properties", "initialstate=Singlet;frame=molecular;initialstatecoherences=keep;"));
+	if (!singlet->ParseFromSystem(*system) || !system->ValidateTransitions({system}).empty())
+		return false;
+
+	RunSection::General::HS::HSExecutionPlan plan;
+	plan.sampling = RunSection::General::HS::Sampling::Stochastic;
+	plan.calculation = RunSection::General::HS::Calculation::Yields;
+	plan.orientation = RunSection::General::HS::OrientationMode::Powder2D;
+	plan.transitionYields = true;
+	plan.monteCarloSamples = 4;
+	plan.samplingMethod = "suz";
+	plan.autoSeed = false;
+	plan.seed = 23;
+
+	SpinAPI::SpinSpace space(system);
+	space.UseSuperoperatorSpace(false);
+	std::mt19937 generator(23);
+	std::ostringstream log;
+	std::string error;
+	RunSection::General::HS::HSPreparedState prepared;
+	if (!RunSection::General::HS::HSStatePreparation::Prepare(
+		plan, system, space, prepared, generator, log, error))
+		return false;
+	if (!prepared.stochastic || !prepared.rotationInvariant || prepared.hasRotationCache ||
+		!prepared.rotationCache.Jx.is_empty() || !prepared.rotationCache.Jy.is_empty() ||
+		!prepared.rotationCache.Jz.is_empty())
+		return false;
+
+	RunSection::General::HS::HSObservableCollector collector;
+	if (!collector.Prepare(plan, system, space, log, error) || collector.Observables().size() != 1)
+		return false;
+	const auto &observable = collector.Observables().front();
+	if (observable.rotateStateOrSource || !observable.stateRotationCache.Jx.is_empty() ||
+		!observable.stateRotationCache.Jy.is_empty() || !observable.stateRotationCache.Jz.is_empty())
+		return false;
+
+	SpinAPI::HilbertReactionOperatorCache reactionCache;
+	if (!space.CreateHilbertReactionOperatorCache(sink, reactionCache, true) ||
+		!reactionCache.rotationInvariant || reactionCache.hasSourceRotation ||
+		!reactionCache.sourceRotation.Jx.is_empty() || !reactionCache.sourceRotation.Jy.is_empty() ||
+		!reactionCache.sourceRotation.Jz.is_empty())
+		return false;
+
+	// The invariant source must still produce the same sparse reaction operator
+	// for a non-trivial crystallite rotation without constructing a dense cache.
+	arma::mat rotation;
+	if (!SpinAPI::CreateZYZRotationMatrix(0.4, 0.7, 1.1, rotation))
+		return false;
+	arma::sp_cx_mat rotatedReaction;
+	return space.ReactionOperatorHilbertRotated(reactionCache, rotation, rotatedReaction) &&
+		rotatedReaction.n_rows == 256 && rotatedReaction.n_cols == 256;
+}
+
 bool test_hsgeneral_orientation_sampler_builds_so3_grid()
 {
 	MSDParser::ObjectParser parser("general",
@@ -1554,6 +1622,7 @@ void AddHSGeneralTests(std::vector<test_case> &_cases)
 	_cases.push_back(test_case("HSGeneral yield correction matches frozen legacy reference", test_hsgeneral_yield_correction_matches_frozen_legacy_reference));
 	_cases.push_back(test_case("HSGeneral stochastic mode uses state-aware sampling", test_hsgeneral_stochastic_uses_state_aware_sampling));
 	_cases.push_back(test_case("HSGeneral stochastic state preparation remains factorized", test_hsgeneral_stochastic_preparation_remains_factorized));
+	_cases.push_back(test_case("HSGeneral stochastic powder invariant support avoids dense rotation caches", test_hsgeneral_stochastic_powder_invariant_support_avoids_dense_rotation_cache));
 	_cases.push_back(test_case("HSGeneral SO3 orientation sampler is explicit", test_hsgeneral_orientation_sampler_builds_so3_grid));
 	_cases.push_back(test_case("HSGeneral powdergrid selector uses the shared SpinAPI grid API", test_hsgeneral_powdergrid_api_selection));
 	_cases.push_back(test_case("HSGeneral powder propagation requires explicit H0", test_hsgeneral_powder_requires_explicit_h0));

@@ -738,6 +738,73 @@ namespace SpinAPI
 		return this->RotateState(_state, _rotation, cache, _out);
 	}
 
+	bool SpinSpace::IsStateRotationInvariant(const arma::sp_cx_mat &_state,
+		bool &_invariant, double _tolerance) const
+	{
+		_invariant = false;
+		if (_state.n_rows != _state.n_cols ||
+			_state.n_rows != this->HilbertSpaceDimensions() ||
+			!std::isfinite(_tolerance) || _tolerance < 0.0)
+		{
+			return false;
+		}
+
+		// A density/support operator is invariant under every global spatial
+		// rotation iff it commutes with Jx, Jy and Jz. Build one sparse total-spin
+		// generator at a time so this test remains O(nnz) in memory and can be
+		// used before deciding whether the dense rotation fallback is necessary.
+		const arma::uword dim = this->HilbertSpaceDimensions();
+		const double scale = std::max(1.0, arma::norm(_state, "fro"));
+		const double limit = _tolerance * scale;
+
+		bool constructionFailed = false;
+		auto commutesWithGenerator = [&](int component) -> bool
+		{
+			arma::sp_cx_mat total(dim, dim);
+			for (const auto &spin : this->spins)
+			{
+				if (spin == nullptr)
+				{
+					constructionFailed = true;
+					return false;
+				}
+
+				arma::sp_cx_mat local;
+				if (component == 0)
+					local = arma::conv_to<arma::sp_cx_mat>::from(spin->Sx());
+				else if (component == 1)
+					local = arma::conv_to<arma::sp_cx_mat>::from(spin->Sy());
+				else
+					local = arma::conv_to<arma::sp_cx_mat>::from(spin->Sz());
+
+				arma::sp_cx_mat embedded;
+				if (!this->CreateOperator(local, spin, embedded))
+				{
+					constructionFailed = true;
+					return false;
+				}
+				total += embedded;
+			}
+
+			const arma::sp_cx_mat commutator = total * _state - _state * total;
+			return arma::norm(commutator, "fro") <= limit;
+		};
+
+		for (int component = 0; component < 3; ++component)
+		{
+			const bool commutes = commutesWithGenerator(component);
+			if (constructionFailed)
+				return false;
+			if (!commutes)
+			{
+				_invariant = false;
+				return true;
+			}
+		}
+		_invariant = true;
+		return true;
+	}
+
 	bool SpinSpace::CreateStateRotationCache(const arma::cx_mat &_state, HilbertStateRotationCache &_cache, double _tolerance) const
 	{
 		if (_state.n_rows != _state.n_cols ||

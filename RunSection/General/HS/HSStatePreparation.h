@@ -38,6 +38,7 @@ namespace RunSection::General::HS
 		std::vector<std::string> dephasingHamiltonian;
 		bool stochastic = false;
 		bool hasRotationCache = false;
+		bool rotationInvariant = false;
 		bool dephaseInHamiltonianEigenbasis = false;
 	};
 

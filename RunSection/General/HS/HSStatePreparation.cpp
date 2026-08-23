@@ -217,20 +217,27 @@ namespace RunSection::General::HS
 		if (state.frame == SpinAPI::StateFrame::Molecular && plan.IsPowder())
 		{
 			// Direct calculations rotate a density matrix; stochastic calculations
-			// rotate factors. The present SpinAPI rotation cache is dense, so only
-			// prepare it when a non-trivial powder rotation is actually requested.
-			// Non-powder stochastic calculations therefore retain O(N M) memory.
+			// rotate factors only when the represented density is genuinely
+			// orientation dependent. Check stochastic State support sparsely before
+			// deciding whether the dense fallback rotation cache is necessary.
 			if (state.stochastic)
 			{
-				// A sparse support projector provides the correct state symmetry test
-				// without constructing the stochastic density matrix. Convert only in
-				// the powder path where rotation machinery is explicitly required.
 				arma::sp_cx_mat support;
 				if (!space.GetState(system->InitialState().front(), support) ||
-					!space.CreateStateRotationCache(arma::cx_mat(support), state.rotationCache))
+					!space.IsStateRotationInvariant(support, state.rotationInvariant))
 				{
-					error = "failed to prepare molecular-frame trace-sample rotations";
+					error = "failed to determine molecular-frame trace-sample rotation symmetry";
 					return false;
+				}
+
+				if (!state.rotationInvariant)
+				{
+					if (!space.CreateStateRotationCache(arma::cx_mat(support), state.rotationCache))
+					{
+						error = "failed to prepare molecular-frame trace-sample rotations";
+						return false;
+					}
+					state.hasRotationCache = true;
 				}
 			}
 			else if (!space.CreateStateRotationCache(state.density, state.rotationCache))
@@ -238,7 +245,11 @@ namespace RunSection::General::HS
 				error = "failed to prepare molecular-frame initial-state rotations";
 				return false;
 			}
-			state.hasRotationCache = true;
+			else
+			{
+				state.rotationInvariant = state.rotationCache.rotationInvariant;
+				state.hasRotationCache = true;
+			}
 		}
 		return true;
 	}
@@ -255,8 +266,13 @@ namespace RunSection::General::HS
 		if (reference.stochastic)
 		{
 			state.factors = reference.factors;
+			// For a rotationally invariant trace-sampled density (e.g. singlet
+			// electrons times an omitted-spin identity), the random factors are a
+			// stochastic quadrature, not physical ensemble members. Reusing the same
+			// samples for every crystallite is an unbiased common-random-number
+			// estimator and avoids constructing any N x N rotation operator.
 			if (reference.frame == SpinAPI::StateFrame::Molecular &&
-				reference.hasRotationCache && !reference.rotationCache.rotationInvariant)
+				!reference.rotationInvariant && reference.hasRotationCache)
 			{
 				if (!space.RotateStateFactors(reference.factors, orientation.frameToLab,
 					reference.rotationCache, state.factors))

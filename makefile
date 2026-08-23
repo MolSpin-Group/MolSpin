@@ -160,7 +160,7 @@ $(PATH_TESTS)/testmain_debug.o: $(TESTMAIN_DEPS)
 # Clean-up binaries for clean recompilation
 .PHONY: clean
 clean:
-	rm -f *.o $(PATH_MSDPARSER)/*.o $(PATH_SPINAPI)/*.o $(PATH_RUNSECTION)/*.o $(PATH_RUNSECTION_ACTIONS)/*.o $(PATH_RUNSECTION_TASKS)/*.o $(PATH_RUNSECTION_CUSTOMTASKS)/*.o molspin $(PATH_TESTS)/*.o $(PATH_TESTS)/molspintest $(PATH_TESTS)/molspintest-debug
+	rm -f *.o $(PATH_MSDPARSER)/*.o $(PATH_SPINAPI)/*.o $(PATH_RUNSECTION)/*.o $(PATH_RUNSECTION_GENERAL_HS)/*.o $(PATH_RUNSECTION_ACTIONS)/*.o $(PATH_RUNSECTION_TASKS)/*.o $(PATH_RUNSECTION_CUSTOMTASKS)/*.o molspin $(PATH_TESTS)/*.o $(PATH_TESTS)/molspintest $(PATH_TESTS)/molspintest-debug
 #	rm debug/*.o
 
 # Clean-up testing binaries and run the test again
