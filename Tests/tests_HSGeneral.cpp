@@ -1025,6 +1025,41 @@ bool test_hsgeneral_stochastic_uses_state_aware_sampling()
 		data.str().find("System.N0") != std::string::npos;
 }
 
+bool test_hsgeneral_stochastic_preparation_remains_factorized()
+{
+	auto e1 = std::make_shared<SpinAPI::Spin>("E1", "type=electron;spin=1/2;");
+	auto e2 = std::make_shared<SpinAPI::Spin>("E2", "type=electron;spin=1/2;");
+	auto nucleus = std::make_shared<SpinAPI::Spin>("N", "type=nucleus;spin=1;");
+	auto singlet = std::make_shared<SpinAPI::State>("Singlet",
+		"spins(E1,E2)=|1/2,-1/2>-|-1/2,1/2>;");
+	auto system = std::make_shared<SpinAPI::SpinSystem>("System");
+	system->Add(e1); system->Add(e2); system->Add(nucleus); system->Add(singlet);
+	system->SetProperties(std::make_shared<MSDParser::ObjectParser>("properties", "initialstate=Singlet;"));
+	if (!singlet->ParseFromSystem(*system))
+		return false;
+
+	RunSection::General::HS::HSExecutionPlan plan;
+	plan.sampling = RunSection::General::HS::Sampling::Stochastic;
+	plan.monteCarloSamples = 5;
+	plan.samplingMethod = "suz";
+	plan.autoSeed = false;
+	plan.seed = 17;
+
+	SpinAPI::SpinSpace space(system);
+	space.UseSuperoperatorSpace(false);
+	std::mt19937 generator(17);
+	std::ostringstream log;
+	std::string error;
+	RunSection::General::HS::HSPreparedState prepared;
+	if (!RunSection::General::HS::HSStatePreparation::Prepare(
+		plan, system, space, prepared, generator, log, error))
+		return false;
+
+	return prepared.stochastic && prepared.density.is_empty() &&
+		prepared.factors.n_rows == 12 && prepared.factors.n_cols == 5 &&
+		prepared.traceSamples.sampledSubspaceDimension == 3;
+}
+
 bool test_hsgeneral_orientation_sampler_builds_so3_grid()
 {
 	MSDParser::ObjectParser parser("general",
@@ -1284,7 +1319,6 @@ bool test_hsgeneral_dynamic_powder_internal_external_and_sampling()
 		directTime.find("System.E1Up") != std::string::npos &&
 		directYield.find("System.sink.yield") != std::string::npos &&
 		directTimeLog.find("Orientation-dependent molecular-frame State observables are rotated") != std::string::npos &&
-		directTimeLog.find("assumes axial symmetry") != std::string::npos &&
 		yieldLog.find("yield-mode=finite") != std::string::npos &&
 		yieldLog.find("Writing finite-time integrated HS observables") != std::string::npos;
 }
@@ -1410,7 +1444,7 @@ bool test_hsgeneral_spinapi_reaction_rotation_component()
 		return false;
 
 	arma::cx_mat rotatedProjector;
-	if (!space.RotateState(cache.sourceProjector, rotation, cache.sourceRotation, rotatedProjector))
+	if (!space.RotateState(arma::cx_mat(cache.sourceProjector), rotation, cache.sourceRotation, rotatedProjector))
 		return false;
 	return arma::norm(arma::cx_mat(reaction) - 0.5 * sink->Rate() * rotatedProjector, "fro") < 1.0e-12;
 }
@@ -1519,6 +1553,7 @@ void AddHSGeneralTests(std::vector<test_case> &_cases)
 	_cases.push_back(test_case("HSGeneral dynamic direct relaxation matches frozen legacy reference", test_hsgeneral_dynamic_direct_relaxation_matches_frozen_legacy_reference));
 	_cases.push_back(test_case("HSGeneral yield correction matches frozen legacy reference", test_hsgeneral_yield_correction_matches_frozen_legacy_reference));
 	_cases.push_back(test_case("HSGeneral stochastic mode uses state-aware sampling", test_hsgeneral_stochastic_uses_state_aware_sampling));
+	_cases.push_back(test_case("HSGeneral stochastic state preparation remains factorized", test_hsgeneral_stochastic_preparation_remains_factorized));
 	_cases.push_back(test_case("HSGeneral SO3 orientation sampler is explicit", test_hsgeneral_orientation_sampler_builds_so3_grid));
 	_cases.push_back(test_case("HSGeneral powdergrid selector uses the shared SpinAPI grid API", test_hsgeneral_powdergrid_api_selection));
 	_cases.push_back(test_case("HSGeneral powder propagation requires explicit H0", test_hsgeneral_powder_requires_explicit_h0));

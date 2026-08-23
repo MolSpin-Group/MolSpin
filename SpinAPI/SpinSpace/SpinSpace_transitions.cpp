@@ -163,17 +163,24 @@ namespace SpinAPI
 	// for an orientation-aware Haberkorn sink. The rate remains on the Transition
 	// object so time-dependent rates are evaluated at the current SpinSpace time.
 	bool SpinSpace::CreateHilbertReactionOperatorCache(const transition_ptr &_transition,
-		HilbertReactionOperatorCache &_cache, double _tolerance) const
+		HilbertReactionOperatorCache &_cache, bool _prepareRotation, double _tolerance) const
 	{
 		_cache = HilbertReactionOperatorCache();
 		if (this->useSuperspace || _transition == nullptr || !_transition->IsValid() ||
 			_transition->SourceState() == nullptr)
 			return false;
 
+		// Ordinary Hilbert propagation should retain the sparse State projector.
+		// Only powder rotation needs the dense total-spin rotation cache.
 		if (!this->GetState(_transition->SourceState(), _cache.sourceProjector))
 			return false;
-		if (!this->CreateStateRotationCache(_cache.sourceProjector, _cache.sourceRotation, _tolerance))
-			return false;
+		if (_prepareRotation)
+		{
+			const arma::cx_mat denseProjector(_cache.sourceProjector);
+			if (!this->CreateStateRotationCache(denseProjector, _cache.sourceRotation, _tolerance))
+				return false;
+			_cache.hasSourceRotation = true;
+		}
 		_cache.transition = _transition;
 		return true;
 	}
@@ -188,15 +195,26 @@ namespace SpinAPI
 			!_cache.transition->IsValid() || _cache.sourceProjector.is_empty())
 			return false;
 
-		arma::cx_mat projector;
-		if (_cache.sourceRotation.rotationInvariant)
-			projector = _cache.sourceProjector;
-		else if (!this->RotateState(_cache.sourceProjector, _rotation,
-			_cache.sourceRotation, projector))
+		const arma::mat identity = arma::eye<arma::mat>(3, 3);
+		const bool identityRotation = _rotation.n_rows == 3 && _rotation.n_cols == 3 &&
+			arma::norm(_rotation - identity, "fro") <= 1.0e-13;
+
+		if (identityRotation || (_cache.hasSourceRotation && _cache.sourceRotation.rotationInvariant))
+		{
+			_out = (_cache.transition->Rate() / 2.0) * _cache.sourceProjector;
+			return true;
+		}
+
+		if (!_cache.hasSourceRotation)
 			return false;
 
-		projector *= _cache.transition->Rate() / 2.0;
-		_out = arma::sp_cx_mat(projector);
+		const arma::cx_mat denseProjector(_cache.sourceProjector);
+		arma::cx_mat rotatedProjector;
+		if (!this->RotateState(denseProjector, _rotation, _cache.sourceRotation, rotatedProjector))
+			return false;
+
+		rotatedProjector *= _cache.transition->Rate() / 2.0;
+		_out = arma::sp_cx_mat(rotatedProjector);
 		return true;
 	}
 

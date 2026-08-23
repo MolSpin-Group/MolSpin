@@ -378,12 +378,78 @@ namespace SpinAPI
 			return fail("thermal initial states cannot be represented by pure-state trace samples");
 		if (_sampleCount == 0)
 			return fail("the trace-sample count must be greater than zero");
-
-		arma::cx_mat supportProjector;
-		if (!this->GetState(_state, supportProjector))
-			return fail("failed to construct the support projector for state \"" + _state->Name() + "\"");
+		if (!_state->IsComplete(this->spins))
+			return fail("the requested State cannot be represented in the active spin space");
 
 		const arma::uword dimension = this->HilbertSpaceDimensions();
+
+		// Legacy-compatible/state-aware fast path. The historical stochastic HS
+		// tasks fixed a leading electronic State and sampled only the omitted
+		// nuclear complement, B = |psi_fixed> x |chi_Z>. When the State support
+		// has exactly that tensor-product layout, preserve both the O(N M) memory
+		// scaling and the exact SU(Z) RNG stream used by those tasks. More general
+		// State supports fall back to sparse-projector sampling below.
+		bool leadingStateSupport = true;
+		size_t fixedSpinCount = 0;
+		bool reachedOmittedSpin = false;
+		for (size_t index = 0; index < this->spins.size(); ++index)
+		{
+			CompleteState completeState;
+			const bool specified = this->spins[index] != nullptr &&
+				_state->GetCompleteState(this->spins[index], completeState);
+			if (!reachedOmittedSpin && specified)
+				++fixedSpinCount;
+			else if (!specified)
+				reachedOmittedSpin = true;
+			else
+			{
+				leadingStateSupport = false;
+				break;
+			}
+		}
+
+		if (_method == TraceSamplingMethod::SUZ && leadingStateSupport && fixedSpinCount > 0)
+		{
+			arma::cx_vec fixedState;
+			if (!this->GetStateSubSpace(_state, fixedState) || fixedState.is_empty())
+				return fail("failed to construct the fixed State subspace for SU(Z) trace sampling");
+
+			arma::uword sampledDimension = 1;
+			for (size_t index = fixedSpinCount; index < this->spins.size(); ++index)
+			{
+				if (this->spins[index] == nullptr || this->spins[index]->Multiplicity() <= 0)
+					return fail("the spin space contains an invalid omitted spin");
+				sampledDimension *= static_cast<arma::uword>(this->spins[index]->Multiplicity());
+			}
+
+			if (fixedState.n_elem * sampledDimension == dimension)
+			{
+				_samples.factors.set_size(dimension, _sampleCount);
+				_samples.sampledSubspaceDimension = sampledDimension;
+				for (arma::uword sample = 0; sample < _sampleCount; ++sample)
+				{
+					// Match SpinSpace::SUZstate exactly, including one distribution
+					// object per sample, so a fixed seed reproduces the historical
+					// stochastic-HS random stream for this tensor-product layout.
+					std::normal_distribution<double> distribution(0.0, 1.0);
+					arma::cx_vec sampledState(sampledDimension);
+					for (arma::uword index = 0; index < sampledDimension; ++index)
+						sampledState(index) = arma::cx_double(distribution(_generator), distribution(_generator));
+					sampledState = arma::normalise(sampledState);
+					_samples.factors.col(sample) = arma::kron(fixedState, sampledState);
+				}
+				if (_error != nullptr)
+					_error->clear();
+				return true;
+			}
+		}
+
+		// Keep the state support sparse. Trace sampling exists specifically to
+		// avoid O(N^2) density/projector storage for large nuclear spin spaces.
+		arma::sp_cx_mat supportProjector;
+		if (!this->GetState(_state, supportProjector))
+			return fail("failed to construct the sparse support projector for state \"" + _state->Name() + "\"");
+
 		if (supportProjector.n_rows != dimension || supportProjector.n_cols != dimension)
 			return fail("the state support does not match the active Hilbert space");
 

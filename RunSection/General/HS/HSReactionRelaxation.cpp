@@ -42,7 +42,7 @@ namespace RunSection::General::HS
 
 			ReactionChannel channel;
 			channel.isStatic = SpinAPI::IsStatic(*transition);
-			if (!space.CreateHilbertReactionOperatorCache(transition, channel.operatorCache))
+			if (!space.CreateHilbertReactionOperatorCache(transition, channel.operatorCache, plan.IsPowder()))
 			{
 				error = "failed to prepare the Hilbert reaction operator for transition \"" + transition->Name() + "\"";
 				return false;

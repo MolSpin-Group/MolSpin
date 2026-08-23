@@ -178,8 +178,12 @@ namespace RunSection::General::HS
 
 			state.factors = state.traceSamples.factors;
 			state.factors /= std::sqrt(static_cast<double>(plan.monteCarloSamples));
-			if (!BuildInitialDensity(system, space, state.density, error))
-				return false;
+			// Do not materialize rho = B B^dagger here. Trace sampling exists to
+			// keep large nuclear-spin calculations at O(N M), not O(N^2), where
+			// M is the number of Monte-Carlo factors. Density construction is
+			// reserved for algorithms that intrinsically require it (timeinf or
+			// dissipative density propagation; the latter is rejected for stochastic HS).
+			state.density.reset();
 			state.stochastic = true;
 
 			log << "HSGeneral trace sampling keeps state \"" << system->InitialState().front()->Name()
@@ -210,9 +214,26 @@ namespace RunSection::General::HS
 			return false;
 		}
 
-		if (state.frame == SpinAPI::StateFrame::Molecular)
+		if (state.frame == SpinAPI::StateFrame::Molecular && plan.IsPowder())
 		{
-			if (!space.CreateStateRotationCache(state.density, state.rotationCache))
+			// Direct calculations rotate a density matrix; stochastic calculations
+			// rotate factors. The present SpinAPI rotation cache is dense, so only
+			// prepare it when a non-trivial powder rotation is actually requested.
+			// Non-powder stochastic calculations therefore retain O(N M) memory.
+			if (state.stochastic)
+			{
+				// A sparse support projector provides the correct state symmetry test
+				// without constructing the stochastic density matrix. Convert only in
+				// the powder path where rotation machinery is explicitly required.
+				arma::sp_cx_mat support;
+				if (!space.GetState(system->InitialState().front(), support) ||
+					!space.CreateStateRotationCache(arma::cx_mat(support), state.rotationCache))
+				{
+					error = "failed to prepare molecular-frame trace-sample rotations";
+					return false;
+				}
+			}
+			else if (!space.CreateStateRotationCache(state.density, state.rotationCache))
 			{
 				error = "failed to prepare molecular-frame initial-state rotations";
 				return false;
@@ -244,7 +265,9 @@ namespace RunSection::General::HS
 					return false;
 				}
 			}
-			state.density = state.factors * state.factors.t();
+			// Keep stochastic propagation factorized. A dense density matrix is
+			// intentionally not formed for ordinary finite-time propagation.
+			state.density.reset();
 			return true;
 		}
 

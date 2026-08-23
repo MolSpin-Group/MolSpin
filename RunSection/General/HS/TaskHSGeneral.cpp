@@ -272,7 +272,7 @@ namespace RunSection::General::HS
 				if (useDensityPropagation)
 					density = orientedState.density;
 
-				std::vector<arma::cx_mat> operators;
+				std::vector<arma::sp_cx_mat> operators;
 				if (!collector.OperatorsForOrientation(space, orientation, operators, error))
 				{
 					this->Log() << "ERROR: " << error << "." << std::endl;

@@ -41,9 +41,10 @@ namespace RunSection::General::HS
 		bool dephaseInHamiltonianEigenbasis = false;
 	};
 
-	// Orientation-specific state used by the propagation engine. The density is
-	// always available; factors satisfy rho = B B^dagger and are used whenever
-	// the calculation does not require a general density-matrix dissipator.
+	// Orientation-specific state used by the propagation engine. Factors satisfy
+	// rho = B B^dagger. The dense density is populated only when the selected
+	// algorithm requires density propagation; stochastic finite-time propagation
+	// deliberately keeps it empty to preserve O(N M) memory scaling.
 	struct HSOrientedState
 	{
 		arma::cx_mat density;

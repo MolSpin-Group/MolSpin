@@ -184,29 +184,33 @@ namespace RunSection::General::HS
 	}
 
 	bool HSObservableCollector::OperatorsForOrientation(SpinAPI::SpinSpace &space,
-		const HSOrientation &orientation, std::vector<arma::cx_mat> &operators, std::string &error) const
+		const HSOrientation &orientation, std::vector<arma::sp_cx_mat> &operators, std::string &error) const
 	{
 		operators.clear(); error.clear(); operators.reserve(observables.size());
 		for (const auto &observable : observables)
 		{
-			arma::cx_mat source;
+			arma::sp_cx_mat source;
 			if (observable.hasStateOrSource)
 			{
-				source = arma::cx_mat(observable.stateOrSource);
+				source = observable.stateOrSource;
 				if (observable.rotateStateOrSource)
 				{
+					// Spatial rotation currently uses the dense State rotation primitive,
+					// but only for genuinely orientation-dependent powder observables.
+					// Ordinary/non-powder stochastic calculations retain sparse projectors.
 					arma::cx_mat rotated;
-					if (!space.RotateState(source, orientation.frameToLab, observable.stateRotationCache, rotated))
+					if (!space.RotateState(arma::cx_mat(source), orientation.frameToLab,
+						observable.stateRotationCache, rotated))
 					{ error = "failed to rotate an HS State/source observable into the current orientation"; return false; }
-					source = std::move(rotated);
+					source = arma::sp_cx_mat(rotated);
 				}
 			}
 
-			arma::cx_mat op;
+			arma::sp_cx_mat op;
 			if (observable.hasFixedSpinOperator && observable.hasStateOrSource)
-				op = arma::cx_mat(observable.fixedSpinOperator) * source;
+				op = observable.fixedSpinOperator * source;
 			else if (observable.hasFixedSpinOperator)
-				op = arma::cx_mat(observable.fixedSpinOperator);
+				op = observable.fixedSpinOperator;
 			else
 				op = std::move(source);
 			operators.push_back(std::move(op));
@@ -214,7 +218,7 @@ namespace RunSection::General::HS
 		return true;
 	}
 
-	void HSObservableCollector::Evaluate(const std::vector<arma::cx_mat> &operators,
+	void HSObservableCollector::Evaluate(const std::vector<arma::sp_cx_mat> &operators,
 		const arma::cx_mat &factors, arma::rowvec &values) const
 	{
 		values.zeros(operators.size());
@@ -228,7 +232,7 @@ namespace RunSection::General::HS
 		}
 	}
 
-	void HSObservableCollector::EvaluateDensity(const std::vector<arma::cx_mat> &operators,
+	void HSObservableCollector::EvaluateDensity(const std::vector<arma::sp_cx_mat> &operators,
 		const arma::cx_mat &density, arma::rowvec &values) const
 	{
 		values.zeros(operators.size());

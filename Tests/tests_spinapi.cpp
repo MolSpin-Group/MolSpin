@@ -3347,6 +3347,43 @@ bool test_spinapi_trace_sampling_respects_partial_state()
 	return arma::norm(sampledDensity - expectedDensity, "fro") < 0.035;
 }
 
+bool test_spinapi_trace_sampling_preserves_legacy_suz_stream_for_leading_state()
+{
+	auto e1 = std::make_shared<SpinAPI::Spin>("E1", "type=electron;spin=1/2;");
+	auto e2 = std::make_shared<SpinAPI::Spin>("E2", "type=electron;spin=1/2;");
+	auto nucleus = std::make_shared<SpinAPI::Spin>("N", "type=nucleus;spin=1;");
+	auto singlet = std::make_shared<SpinAPI::State>("Singlet",
+		"spins(E1,E2)=|1/2,-1/2>-|-1/2,1/2>;");
+
+	SpinAPI::SpinSystem system("System");
+	system.Add(e1); system.Add(e2); system.Add(nucleus); system.Add(singlet);
+	if (!singlet->ParseFromSystem(system))
+		return false;
+
+	SpinAPI::SpinSpace space(system);
+	std::mt19937 generalGenerator(12345);
+	std::mt19937 legacyGenerator(12345);
+	SpinAPI::HilbertTraceSampleSet samples;
+	std::string error;
+	if (!space.BuildTraceSamples(singlet, 8, SpinAPI::TraceSamplingMethod::SUZ,
+		generalGenerator, samples, &error))
+		return false;
+
+	arma::cx_vec fixedState;
+	if (!space.GetStateSubSpace(singlet, fixedState) || fixedState.n_elem != 4 ||
+		samples.sampledSubspaceDimension != 3)
+		return false;
+
+	for (arma::uword sample = 0; sample < samples.factors.n_cols; ++sample)
+	{
+		const arma::cx_vec expected = arma::kron(fixedState, space.SUZstate(3, legacyGenerator));
+		if (arma::norm(samples.factors.col(sample) - expected, 2) > 1.0e-14)
+			return false;
+	}
+	return true;
+}
+//////////////////////////////////////////////////////////////////////////////
+
 bool test_spinapi_trace_sampling_is_seeded_and_state_general()
 {
 	auto electron = std::make_shared<SpinAPI::Spin>("E", "type=electron;spin=1/2;");
@@ -3589,6 +3626,7 @@ void AddSpinAPITests(std::vector<test_case> &_cases)
 	_cases.push_back(test_case("SpinSpace::Rotated static Hamiltonian includes every interaction", test_spinapi_rotated_static_hamiltonian_includes_all_interactions));
 	_cases.push_back(test_case("SpinSpace::Rotated dynamic Hamiltonian follows powder orientation", test_spinapi_rotated_dynamic_hamiltonian_matches_interaction_builder));
 	_cases.push_back(test_case("SpinSpace::Trace sampling respects partial states", test_spinapi_trace_sampling_respects_partial_state));
+	_cases.push_back(test_case("SpinSpace::Trace sampling preserves legacy SU(Z) stream for leading states", test_spinapi_trace_sampling_preserves_legacy_suz_stream_for_leading_state));
 	_cases.push_back(test_case("SpinSpace::Trace sampling supports seeded arbitrary states", test_spinapi_trace_sampling_is_seeded_and_state_general));
 	_cases.push_back(test_case("SpinSpace::Trace sampling rejects thermal states", test_spinapi_trace_sampling_rejects_thermal_state));
 	_cases.push_back(test_case("SpinSpace::Rotated state factors match rotated density", test_spinapi_rotated_state_factors_match_rotated_density));

@@ -48,10 +48,10 @@ namespace RunSection::General::HS
 		bool Prepare(const HSExecutionPlan &_plan, const SpinAPI::system_ptr &_system,
 			SpinAPI::SpinSpace &_space, std::ostream &_log, std::string &_error);
 		bool OperatorsForOrientation(SpinAPI::SpinSpace &_space, const HSOrientation &_orientation,
-			std::vector<arma::cx_mat> &_operators, std::string &_error) const;
-		void Evaluate(const std::vector<arma::cx_mat> &_operators, const arma::cx_mat &_factors,
+			std::vector<arma::sp_cx_mat> &_operators, std::string &_error) const;
+		void Evaluate(const std::vector<arma::sp_cx_mat> &_operators, const arma::cx_mat &_factors,
 			arma::rowvec &_values) const;
-		void EvaluateDensity(const std::vector<arma::cx_mat> &_operators, const arma::cx_mat &_density,
+		void EvaluateDensity(const std::vector<arma::sp_cx_mat> &_operators, const arma::cx_mat &_density,
 			arma::rowvec &_values) const;
 		bool IntegrateFiniteTime(const arma::mat &_values, double _timeStep,
 			arma::rowvec &_integrated, std::string &_error) const;

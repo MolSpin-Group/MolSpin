@@ -88,12 +88,14 @@ namespace SpinAPI
 
 	struct HilbertReactionOperatorCache
 	{
-		// Cached source projector and rotation generators for a Hilbert-space
-		// Haberkorn sink. The transition rate is intentionally not cached because
-		// dynamic Transition objects may change it between propagation steps.
+		// Keep the source projector sparse for ordinary Hilbert propagation.
+		// Molecular-frame powder rotations may additionally prepare the dense
+		// rotation cache, but non-powder stochastic calculations must never pay
+		// an O(N^2) memory cost merely to construct a Haberkorn sink.
 		transition_ptr transition;
-		arma::cx_mat sourceProjector;
+		arma::sp_cx_mat sourceProjector;
 		HilbertStateRotationCache sourceRotation;
+		bool hasSourceRotation = false;
 	};
 
 	enum class HamiltonianApproximation
@@ -509,7 +511,7 @@ namespace SpinAPI
 		// Provides the anti-commutator operator "k/2 * {P,.}" in superoperator space
 		bool ReactionOperator(const transition_ptr &, arma::cx_mat &, const ReactionOperatorType &_forcedReactionOperatorType = ReactionOperatorType::Unspecified) const;	 // The last parameter can be used to force the use of a specific reaction operator type,
 		bool ReactionOperator(const transition_ptr &, arma::sp_cx_mat &, const ReactionOperatorType &_forcedReactionOperatorType = ReactionOperatorType::Unspecified) const; // but by default the reaction operator type of the transition or the spinspace will be used.
-		bool CreateHilbertReactionOperatorCache(const transition_ptr &, HilbertReactionOperatorCache &, double _tolerance = 1.0e-12) const; // Cache a source projector and its molecular-frame rotation generators
+		bool CreateHilbertReactionOperatorCache(const transition_ptr &, HilbertReactionOperatorCache &, bool _prepareRotation = true, double _tolerance = 1.0e-12) const; // Cache a sparse source projector; prepare dense rotation generators only when powder rotation is required
 		bool ReactionOperatorHilbertRotated(const HilbertReactionOperatorCache &, const arma::mat &_rotation, arma::sp_cx_mat &) const; // k/2 R P R^dagger using the current Transition rate
 		bool TotalReactionOperator(arma::cx_mat &, const ReactionOperatorType &_forcedReactionOperatorType = ReactionOperatorType::Unspecified) const;						 // Total reaction operator (dense matrix)
 		bool TotalReactionOperator(arma::sp_cx_mat &, const ReactionOperatorType &_forcedReactionOperatorType = ReactionOperatorType::Unspecified) const;					 // Total reaction operator (sparse matrix)
