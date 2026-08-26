@@ -196,14 +196,13 @@ namespace RunSection
 
 			this->Log() << "Time step is chosen as " << dt << " ns." << std::endl;
 
-			// Number of time propagation steps
-			int num_steps = std::ceil(totaltime / dt);
-			this->Log() << "Number of time propagation steps: " << num_steps << "." << std::endl;
-			if (num_steps == 0)
-			{
-				num_steps = 1;
-				this->Log() << "Changing number of propagation steps to: " << num_steps << " in order to propagate one step." << std::endl;
-			}
+			// Store the initial state internally followed by every completed
+			// free-evolution timestep. The initial boundary is needed for the
+			// propagators and trapezoidal integration, but is not an output point.
+			const double completeStepTolerance = 1.0e-12;
+			const int propagation_steps = static_cast<int>(std::floor(totaltime / dt + completeStepTolerance));
+			const int num_steps = propagation_steps + 1;
+			this->Log() << "Number of completed time propagation steps: " << propagation_steps << "." << std::endl;
 
 			// Choose Propagation Method and other parameters
 			std::string propmethod;
@@ -1809,6 +1808,9 @@ namespace RunSection
 			}
 			else if (method_timeevo && print_freeevo)
 			{
+				// The sample at k = 0 is the free-evolution boundary. Pulse output
+				// already owns that boundary, and without a pulse no interval has
+				// elapsed yet, so only completed timestep endpoints are written.
 				if (integrate_freeevo)
 				{
 					this->Log() << "Writing integrated polarisation over time." << std::endl;
@@ -1829,7 +1831,7 @@ namespace RunSection
 						integrated.row(0) = ExptValues.row(0);
 					}
 
-					for (int k = 0; k < num_steps; k++)
+					for (int k = 1; k < num_steps; k++)
 					{
 						this->Data() << this->RunSettings()->CurrentStep() << " ";
 						this->Data() << std::setprecision(12) << time_offset + time(k) << " ";
@@ -1844,7 +1846,7 @@ namespace RunSection
 				}
 				else
 				{
-					for (int k = 0; k < num_steps; k++)
+					for (int k = 1; k < num_steps; k++)
 					{
 						// Write results
 						this->Data() << this->RunSettings()->CurrentStep() << " ";

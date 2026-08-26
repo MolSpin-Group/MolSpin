@@ -1045,8 +1045,12 @@ namespace RunSection
 					else
 						firststep = 1;
 
-					// Create a holder vector for an averaged density
-					unsigned int time_steps = static_cast<unsigned int>(std::abs(this->totaltime / this->timestep));
+					// Count only complete timesteps. The small tolerance prevents a
+					// decimal input such as 0.3/0.1 from losing its final endpoint to
+					// binary floating-point roundoff.
+					const double completeStepTolerance = 1.0e-12;
+					const unsigned int time_steps = static_cast<unsigned int>(
+						std::floor(std::abs(this->totaltime / this->timestep) + completeStepTolerance));
 					std::vector<arma::cx_vec> rho_avg(time_steps + 1);
 					for (auto &v : rho_avg)
 						v.zeros(size(rho0vec));
@@ -1119,8 +1123,7 @@ namespace RunSection
 							arma::cx_vec tmp_rho = rhovec[grid_num];
 
 							// Use Krylov propagation
-							unsigned int steps = static_cast<unsigned int>(std::abs(this->totaltime / this->timestep));
-							for (unsigned int n = firststep; n <= steps; n++)
+							for (unsigned int n = firststep; n <= time_steps; n++)
 							{
 								if (n == 0)
 								{
@@ -1152,7 +1155,12 @@ namespace RunSection
 
 					if (Timewindow.compare("pulse") != 0)
 					{
-						for (unsigned int n = firststep; n <= time_steps; n++)
+						// rho_avg[0] is the initial free-evolution boundary. It is
+						// retained for propagation and integration, but output starts
+						// after one completed timestep so a pulse/free-evolution boundary
+						// is never duplicated and totaltime = 0 produces no data row.
+						const unsigned int output_first_step = std::max(1U, static_cast<unsigned int>(firststep));
+						for (unsigned int n = output_first_step; n <= time_steps; n++)
 						{
 							if (!this->ProjectAndPrintOutputLine(i, space, rho_avg[n], Printedtime, this->timestep, n, CIDSP, this->Data(), this->Log()))
 								this->Log() << "Could not project the state vector and print the result into a file" << std::endl;

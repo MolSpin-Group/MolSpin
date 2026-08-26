@@ -829,7 +829,9 @@ namespace RunSection
 					this->Log() << "Method = " << Method << std::endl;
 
 					int firststep = (Printedtime == 0.0) ? 0 : 1;
-					unsigned int time_steps = static_cast<unsigned int>(std::abs(this->totaltime / this->timestep));
+					const double completeStepTolerance = 1.0e-12;
+					const unsigned int time_steps = static_cast<unsigned int>(
+						std::floor(std::abs(this->totaltime / this->timestep) + completeStepTolerance));
 					std::vector<arma::cx_vec> rho_avg(time_steps + 1);
 					for (auto &v : rho_avg)
 					{
@@ -904,7 +906,11 @@ namespace RunSection
 
 					if (Timewindow.compare("pulse") != 0)
 					{
-						for (unsigned int n = static_cast<unsigned int>(firststep); n <= time_steps; n++)
+						// Keep rho_avg[0] for propagation and integration, but expose
+						// only completed free-evolution timestep endpoints.
+						const unsigned int output_first_step = std::max(
+							1U, static_cast<unsigned int>(firststep));
+						for (unsigned int n = output_first_step; n <= time_steps; n++)
 						{
 							if (!this->ProjectAndPrintOutputLine(i, space, rho_avg[n], Printedtime, this->timestep, n, CIDSP, this->Data(), this->Log()))
 							{
