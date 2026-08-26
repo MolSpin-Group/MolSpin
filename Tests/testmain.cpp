@@ -37,6 +37,13 @@ using test_case = std::pair<std::string, test_ptr>; // Function pointer and name
 #include "tests_TaskStaticHSResonanceSpectra.cpp"
 #include "tests_TaskStaticPowderSpectra.cpp"
 #include "tests_HSGeneral.cpp"
+#include "tests_SSGeneral.cpp"
+#include "tests_MultiSSGeneral.cpp"
+#include "tests_GeneralLog.cpp"
+#include "tests_GeneralOrientation.cpp"
+#include "tests_GeneralPhysicsEquivalence.cpp"
+#include "tests_GeneralSpectroscopyQualification.cpp"
+#include "tests_GeneralResonanceCore.cpp"
 #include "tests_utility.cpp"
 //////////////////////////////////////////////////////////////////////////////
 // CMake and the normal Makefile target run the complete suite. Developers can
@@ -76,6 +83,24 @@ using test_case = std::pair<std::string, test_ptr>; // Function pointer and name
 #endif
 #ifndef HSGENERAL_TEST
 #define HSGENERAL_TEST 1
+#endif
+#ifndef SSGENERAL_TEST
+#define SSGENERAL_TEST 1
+#endif
+#ifndef MULTISSGENERAL_TEST
+#define MULTISSGENERAL_TEST 1
+#endif
+#ifndef GENERALLOG_TEST
+#define GENERALLOG_TEST 1
+#endif
+#ifndef GENERALORIENTATION_TEST
+#define GENERALORIENTATION_TEST 1
+#endif
+#ifndef GENERALPHYSICS_TEST
+#define GENERALPHYSICS_TEST 1
+#endif
+#ifndef GENERALSPECTROSCOPY_TEST
+#define GENERALSPECTROSCOPY_TEST 1
 #endif
 //////////////////////////////////////////////////////////////////////////////
 std::string read_captured_stream(std::FILE *file)
@@ -147,6 +172,25 @@ int main(int argc, char **argv)
 #endif
 #if HSGENERAL_TEST == 1
 	AddHSGeneralTests(cases);
+#endif
+#if SSGENERAL_TEST == 1
+	AddSSGeneralTests(cases);
+#endif
+#if MULTISSGENERAL_TEST == 1
+	AddMultiSSGeneralTests(cases);
+#endif
+#if GENERALLOG_TEST == 1
+	AddGeneralLogTests(cases);
+#endif
+#if GENERALORIENTATION_TEST == 1
+	AddGeneralOrientationTests(cases);
+#endif
+#if GENERALPHYSICS_TEST == 1
+	AddGeneralPhysicsEquivalenceTests(cases);
+#endif
+#if GENERALSPECTROSCOPY_TEST == 1
+	AddGeneralSpectroscopyQualificationTests(cases);
+	AddGeneralResonanceCoreTests(cases);
 #endif
 #if UTIL_TEST == 1 
 	AddUtiltiyTests(cases);

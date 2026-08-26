@@ -62,6 +62,7 @@ namespace RunSection::General::HS
 		{
 			SpinAPI::HilbertReactionOperatorCache operatorCache;
 			bool isStatic = true;
+			bool rotateSource = false;
 		};
 
 		bool PrepareReactionChannels(std::string &_error);

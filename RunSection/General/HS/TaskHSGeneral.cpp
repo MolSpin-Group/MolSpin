@@ -17,6 +17,7 @@
 #include "HSPropagator.h"
 #include "HSReactionRelaxation.h"
 #include "HSStatePreparation.h"
+#include "../GeneralLog.h"
 
 #include "ObjectParser.h"
 #include "Pulse.h"
@@ -168,7 +169,8 @@ namespace RunSection::General::HS
 			}
 		}
 
-		this->Log() << "HSGeneral execution plan: dynamics=" << ToString(plan.dynamics)
+		this->Log() << "\n--- HSGeneral resolved calculation ---" << std::endl;
+		this->Log() << "Task mode: dynamics=" << ToString(plan.dynamics)
 			<< ", calculation=" << ToString(plan.calculation)
 			<< ", sampling=" << ToString(plan.sampling)
 			<< ", orientation=" << ToString(plan.orientation)
@@ -181,12 +183,16 @@ namespace RunSection::General::HS
 		}
 		this->Log() << "." << std::endl;
 
-		if (plan.hasH0List)
+		this->Log() << "Hamiltonian approximation: "
+			<< (plan.approximation == SpinAPI::HamiltonianApproximation::Full
+				? "full" : "high-field secular") << "." << std::endl;
+		if (plan.approximation != SpinAPI::HamiltonianApproximation::Full)
 		{
-			this->Log() << "HSGeneral H0/H1 Hamiltonian approximation = "
-				<< (plan.approximation == SpinAPI::HamiltonianApproximation::Full
-					? "full" : "secular/RWA") << "." << std::endl;
+			this->Log() << "    Note: static high-field secularization is not a rotating-wave approximation. "
+				<< "RWA/frequency/selective-spin handling remains defined by the relevant time-dependent Interaction/Pulse."
+				<< std::endl;
 		}
+		::RunSection::General::Log::PrintSystemInventory(this->Log(), systems, "HSGeneral physics objects");
 		return true;
 	}
 
@@ -210,6 +216,10 @@ namespace RunSection::General::HS
 			this->Log() << "ERROR: " << error << "." << std::endl;
 			return false;
 		}
+		double orientationWeightSum = 0.0;
+		for (const auto &orientation : orientations) orientationWeightSum += orientation.weight;
+		::RunSection::General::Log::PrintPowderSummary(this->Log(), ToString(plan.orientation),
+			orientations.size(), orientationWeightSum);
 
 		std::random_device randomDevice;
 		std::mt19937 generator(randomDevice());
@@ -258,8 +268,10 @@ namespace RunSection::General::HS
 			bool havePulseTimeline = false;
 			arma::rowvec averagedYield(collector.Size(), arma::fill::zeros);
 
-			for (const auto &orientation : orientations)
+			for (size_t orientationIndex = 0; orientationIndex < orientations.size(); ++orientationIndex)
 			{
+				const auto &orientation = orientations[orientationIndex];
+				::RunSection::General::Log::PrintOrientationProgress(this->Log(), orientationIndex, orientations.size());
 				HSOrientedState orientedState;
 				if (!HSStatePreparation::PrepareForOrientation(plan, space, prepared,
 					orientation, orientedState, error))

@@ -235,6 +235,26 @@ namespace
 		return !_rows.empty();
 	}
 
+	size_t CountDataRows(const std::string &_data)
+	{
+		std::istringstream stream(_data);
+		std::string line;
+		bool header_skipped = false;
+		size_t rows = 0;
+		while (std::getline(stream, line))
+		{
+			if (line.empty())
+				continue;
+			if (!header_skipped)
+			{
+				header_skipped = true;
+				continue;
+			}
+			++rows;
+		}
+		return rows;
+	}
+
 	bool CheckTripletStructure(const std::vector<double> &_row, double _tol_zero, double _tol_equal)
 	{
 		if (_row.size() < 6)
@@ -519,6 +539,49 @@ bool test_task_staticpowder_timeevo_constant_no_drift()
 	ok &= RowsConstant(ss_rows, 1e-8);
 	ok &= RowsConstant(hs_rows, 1e-8);
 	ok &= RowsClose(ss_rows, hs_rows, 1e-6);
+
+	return ok;
+}
+
+//////////////////////////////////////////////////////////////////////////////
+// Time-evo output represents completed propagation intervals, not the
+// unpropagated t = 0 boundary.
+bool test_task_staticpowder_timeevo_endpoint_timestamps()
+{
+	auto system = BuildTwoElectronSystem(0.0, 0.0, 0.0, false, 0.0);
+	bool ok = PrepareSystem(system);
+
+	for (const std::string &task_type : {std::string("staticss-powderspectra"), std::string("statichs-direct-spectra")})
+	{
+		const std::string hs_method = task_type == "statichs-direct-spectra" ? "propagationmethod=normal;" : "";
+		const std::string common = "method=timeevo;integration=false;cidsp=false;spinlist=electron1,electron2;"
+							   "powdersamplingpoints=1;hamiltonianh0list=zeeman;hamiltonianh1list=zeeman;"
+							   "timestep=0.2;" + hs_method;
+
+		std::string zero_time_data;
+		ok &= RunPowderTask(system.spinsys, task_type, common + "totaltime=0.0;", zero_time_data);
+		ok &= (CountDataRows(zero_time_data) == 0);
+
+		std::string one_step_data;
+		std::vector<std::vector<double>> rows;
+		std::vector<double> times;
+		ok &= RunPowderTask(system.spinsys, task_type, common + "totaltime=0.2;", one_step_data);
+		ok &= ParseDataRows(one_step_data, rows, &times);
+		ok &= (rows.size() == 1 && times.size() == 1);
+		if (times.size() == 1)
+			ok &= (std::abs(times.front() - 0.2) < 1.0e-12);
+
+		std::string decimal_grid_data;
+		rows.clear();
+		times.clear();
+		const std::string decimal_grid = common.substr(0, common.find("timestep=0.2;")) +
+			"timestep=0.1;" + hs_method + "totaltime=0.3;";
+		ok &= RunPowderTask(system.spinsys, task_type, decimal_grid, decimal_grid_data);
+		ok &= ParseDataRows(decimal_grid_data, rows, &times);
+		ok &= (rows.size() == 3 && times.size() == 3);
+		if (times.size() == 3)
+			ok &= (std::abs(times.back() - 0.3) < 1.0e-12);
+	}
 
 	return ok;
 }
@@ -1012,7 +1075,7 @@ bool test_task_staticpowder_timeevo_ss_hs_agree()
 
 	//////////////////////////////////////////////////////////////////////////////
 	// The HS direct task historically sampled the upper hemisphere. For comparison
-	// with GridSymmetry='Ci', users need a true full-sphere grid. This
+	// with EasySpin GridSymmetry='Ci', users need a true full-sphere grid. This
 	// regression uses an anisotropic one-electron microwave Hamiltonian for which
 	// the two grids give different averaged dynamics; it verifies that the
 	// powderfullsphere keyword is wired into the generated grid.
@@ -1240,6 +1303,7 @@ void AddTaskStaticPowderSpectraTests(std::vector<test_case> &_cases)
 {
 	_cases.push_back(test_case("Task StaticPowderSpectra timeinf triplet", test_task_staticpowder_timeinf_triplet_expected));
 	_cases.push_back(test_case("Task StaticPowderSpectra timeevo constancy", test_task_staticpowder_timeevo_constant_no_drift));
+	_cases.push_back(test_case("Task StaticPowderSpectra timeevo endpoint timestamps", test_task_staticpowder_timeevo_endpoint_timestamps));
 	_cases.push_back(test_case("Task StaticPowderSpectra timeevo integration", test_task_staticpowder_timeevo_integration_linear));
 	_cases.push_back(test_case("Task StaticPowderSpectra timeevo SS/HS agree", test_task_staticpowder_timeevo_ss_hs_agree));
 	_cases.push_back(test_case("Task StaticPowderSpectra timeevo relaxation HS/SS agree", test_task_staticpowder_timeevo_relaxation_hs_ss_agree));

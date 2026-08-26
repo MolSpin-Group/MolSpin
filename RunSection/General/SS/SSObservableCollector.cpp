@@ -1,0 +1,131 @@
+#include "SSObservableCollector.h"
+#include "../GeneralStateFrame.h"
+#include "SpinSpace.h"
+#include "SpinSystem.h"
+#include "State.h"
+#include "Transition.h"
+#include <cmath>
+
+namespace RunSection::General::SS
+{
+    namespace
+    {
+        bool Real(const arma::cx_double &z,double &value,std::string &error,
+            const std::string &label)
+        {
+            const double scale=std::max(1.0,std::abs(z.real()));
+            if(!std::isfinite(z.real())||!std::isfinite(z.imag())||
+                std::abs(z.imag())>1e-8*scale)
+            {
+                error="observable \""+label+"\" has a non-real value";
+                return false;
+            }
+            value=std::abs(z.real())<1e-14?0.0:z.real();
+            return true;
+        }
+    }
+
+    bool SSObservableCollector::Prepare(const SSExecutionPlan &plan,
+        const SSPreparedCalculation &prepared,const SSOrientation &orientation,
+        std::string &error)
+    {
+        observables.clear();
+        labels.clear();
+        error.clear();
+        const auto system=prepared.local.system;
+
+        if(plan.observables==SSObservableMode::States||
+            plan.observables==SSObservableMode::Both)
+        {
+            for(const auto &state:system->States())
+            {
+                if(!state)
+                    continue;
+                arma::cx_mat projector;
+                if(!prepared.local.space->GetState(state,projector))
+                {
+                    error="failed to construct observable State \""+state->Name()+"\"";
+                    return false;
+                }
+                if(::RunSection::General::ObservableStateFrame(system,state)==SpinAPI::StateFrame::Molecular&&
+                    plan.hamiltonianMode!=SSHamiltonianMode::FixedFull)
+                {
+                    arma::cx_mat rotated;
+                    if(!prepared.local.space->RotateState(projector,orientation.frameToLab,rotated))
+                    {
+                        error="failed to rotate observable State \""+state->Name()+"\"";
+                        return false;
+                    }
+                    projector=std::move(rotated);
+                }
+                SSObservable observable;
+                observable.label=system->Name()+"."+state->Name()+".population";
+                observable.op=std::move(projector);
+                labels.push_back(observable.label);
+                observables.push_back(std::move(observable));
+            }
+        }
+
+        if(plan.observables==SSObservableMode::TransitionYields||
+            plan.observables==SSObservableMode::Both)
+        {
+            for(const auto &transition:system->Transitions())
+            {
+                if(!transition||!transition->SourceState())
+                    continue;
+                arma::cx_mat projector;
+                if(!prepared.local.space->GetState(transition->SourceState(),projector))
+                {
+                    error="failed to construct Transition observable \""+transition->Name()+"\"";
+                    return false;
+                }
+
+                // Reaction/source-frame rotation was already validated in preparation.
+                const bool molecular =
+                    ::RunSection::General::TransitionSourceStateFrame(system,transition) == SpinAPI::StateFrame::Molecular;
+
+                if(molecular&&plan.hamiltonianMode!=SSHamiltonianMode::FixedFull)
+                {
+                    arma::cx_mat rotated;
+                    if(!prepared.local.space->RotateState(projector,orientation.frameToLab,rotated))
+                    {
+                        error="failed to rotate Transition observable \""+transition->Name()+"\"";
+                        return false;
+                    }
+                    projector=std::move(rotated);
+                }
+
+                SSObservable observable;
+                observable.label=system->Name()+"."+transition->Name()+
+                    (plan.calculation==SSCalculation::TimeEvolution?".flux":".yield");
+                observable.op=std::move(projector);
+                observable.scale=transition->Rate();
+                labels.push_back(observable.label);
+                observables.push_back(std::move(observable));
+            }
+        }
+        return true;
+    }
+
+    bool SSObservableCollector::Evaluate(const SSPreparedCalculation &prepared,
+        const arma::cx_vec &state,arma::rowvec &values,std::string &error)const
+    {
+        error.clear();
+        arma::cx_mat rho;
+        prepared.local.space->UseSuperoperatorSpace(true);
+        if(!prepared.local.space->OperatorFromSuperspace(state,rho))
+        {
+            error="failed to decode SSGeneral density";
+            return false;
+        }
+        values.zeros(observables.size());
+        for(size_t i=0;i<observables.size();++i)
+        {
+            double value=0.0;
+            if(!Real(arma::trace(observables[i].op*rho),value,error,observables[i].label))
+                return false;
+            values(i)=observables[i].scale*value;
+        }
+        return true;
+    }
+}

@@ -1,4 +1,4 @@
-﻿# Set cmake version requirement
+# Set cmake version requirement
 cmake_minimum_required(VERSION 3.14)
 
 project(MolSpin LANGUAGES CXX)
@@ -72,6 +72,10 @@ set(SOURCES_SPINAPI
         ${PATH_SOURCE_SPINAPI}/Function.cpp
         ${PATH_SOURCE_SPINAPI}/PulseSequence.cpp
         ${PATH_SOURCE_SPINAPI}/PowderGrid.cpp
+        ${PATH_SOURCE_SPINAPI}/TimeProfile.cpp
+        ${PATH_SOURCE_SPINAPI}/TransferChannel.cpp
+        ${PATH_SOURCE_SPINAPI}/QuantumMap.cpp
+        ${PATH_SOURCE_SPINAPI}/NakajimaZwanzig.cpp
 )
 
 # --------------------------------------------------------------------------
@@ -94,6 +98,13 @@ set(SOURCES_RUNSECTION
         ${PATH_SOURCE_RUNSECTION}/OutputHandler.cpp
         ${PATH_SOURCE_RUNSECTION}/Utility.cpp
         ${PATH_SOURCE_RUNSECTION}/CubicSpline.cpp
+        ${PATH_SOURCE_RUNSECTION}/General/GeneralOrientationSampler.cpp
+        ${PATH_SOURCE_RUNSECTION}/General/Resonance/ResonanceLineshape.cpp
+        ${PATH_SOURCE_RUNSECTION}/General/Resonance/ResonanceFieldJacobian.cpp
+        ${PATH_SOURCE_RUNSECTION}/General/Resonance/ResonanceTransitionDetector.cpp
+        ${PATH_SOURCE_RUNSECTION}/General/Resonance/ResonanceTransitionMoments.cpp
+        ${PATH_SOURCE_RUNSECTION}/General/Resonance/GeneralResonanceHamiltonian.cpp
+        ${PATH_SOURCE_RUNSECTION}/General/Resonance/ResonanceSpectrumEvaluator.cpp
         ${PATH_SOURCE_RUNSECTION}/General/HS/HSExecutionPlan.cpp
         ${PATH_SOURCE_RUNSECTION}/General/HS/HSStatePreparation.cpp
         ${PATH_SOURCE_RUNSECTION}/General/HS/HSOrientationSampler.cpp
@@ -102,6 +113,22 @@ set(SOURCES_RUNSECTION
         ${PATH_SOURCE_RUNSECTION}/General/HS/HSPropagator.cpp
         ${PATH_SOURCE_RUNSECTION}/General/HS/HSObservableCollector.cpp
         ${PATH_SOURCE_RUNSECTION}/General/HS/TaskHSGeneral.cpp
+        ${PATH_SOURCE_RUNSECTION}/General/SS/SSLiouvillianBuilder.cpp
+        ${PATH_SOURCE_RUNSECTION}/General/SS/SSNakajimaZwanzigBuilder.cpp
+        ${PATH_SOURCE_RUNSECTION}/General/SS/SSExecutionPlan.cpp
+        ${PATH_SOURCE_RUNSECTION}/General/SS/SSOrientationSampler.cpp
+        ${PATH_SOURCE_RUNSECTION}/General/SS/SSSystemPreparation.cpp
+        ${PATH_SOURCE_RUNSECTION}/General/SS/SSPropagator.cpp
+        ${PATH_SOURCE_RUNSECTION}/General/SS/SSObservableCollector.cpp
+        ${PATH_SOURCE_RUNSECTION}/General/SS/TaskSSGeneral.cpp
+        ${PATH_SOURCE_RUNSECTION}/General/MultiSS/MultiSSExecutionPlan.cpp
+        ${PATH_SOURCE_RUNSECTION}/General/MultiSS/MultiSSOrientationSampler.cpp
+        ${PATH_SOURCE_RUNSECTION}/General/MultiSS/MultiSSSystemPreparation.cpp
+        ${PATH_SOURCE_RUNSECTION}/General/MultiSS/MultiSSNetworkBuilder.cpp
+        ${PATH_SOURCE_RUNSECTION}/General/MultiSS/MultiSSEventController.cpp
+        ${PATH_SOURCE_RUNSECTION}/General/MultiSS/MultiSSPropagator.cpp
+        ${PATH_SOURCE_RUNSECTION}/General/MultiSS/MultiSSObservableCollector.cpp
+        ${PATH_SOURCE_RUNSECTION}/General/MultiSS/TaskMultiSSGeneral.cpp
 )
 
 # --------------------------------------------------------------------------
@@ -185,7 +212,10 @@ target_include_directories(molspin_core PUBLIC
     ${PATH_SOURCE_MSDPARSER}
     ${PATH_SOURCE_RUNSECTION}
     ${PATH_SOURCE_RUNSECTION}/Tasks
+    ${PATH_SOURCE_RUNSECTION}/General/Resonance
     ${PATH_SOURCE_RUNSECTION}/General/HS
+    ${PATH_SOURCE_RUNSECTION}/General/SS
+    ${PATH_SOURCE_RUNSECTION}/General/MultiSS
     ${PATH_SOURCE_RUNSECTION}/Tasks/Custom
     ${PATH_SOURCE_RUNSECTION}/Actions
 )

@@ -9,6 +9,7 @@
 // See LICENSE.txt for license information.
 /////////////////////////////////////////////////////////////////////////
 #include "HSObservableCollector.h"
+#include "../GeneralStateFrame.h"
 #include "SpinSystem.h"
 #include "State.h"
 #include "Transition.h"
@@ -89,7 +90,8 @@ namespace RunSection::General::HS
 				if (!space.GetState(transition->SourceState(), observable.stateOrSource))
 				{ error = "failed to obtain transition source State \"" + transition->SourceState()->Name() + "\""; return false; }
 				observable.hasStateOrSource = true;
-				if (plan.IsPowder())
+				if (plan.IsPowder() &&
+					::RunSection::General::TransitionSourceStateFrame(system, transition) == SpinAPI::StateFrame::Molecular)
 				{
 					if (!PrepareStateRotation(observable.stateOrSource, space,
 						observable.stateRotationCache, observable.rotateStateOrSource, error)) return false;
@@ -138,7 +140,8 @@ namespace RunSection::General::HS
 						if (!space.GetState(transition->SourceState(), observable.stateOrSource))
 						{ error = "failed to construct CIDSP source State for transition \"" + transition->Name() + "\""; return false; }
 						observable.hasStateOrSource = true;
-						if (plan.IsPowder())
+						if (plan.IsPowder() &&
+							::RunSection::General::TransitionSourceStateFrame(system, transition) == SpinAPI::StateFrame::Molecular)
 						{
 							if (!PrepareStateRotation(observable.stateOrSource, space,
 								observable.stateRotationCache, observable.rotateStateOrSource, error)) return false;
@@ -178,6 +181,7 @@ namespace RunSection::General::HS
 
 		if (statePopulations)
 		{
+			bool hasMolecularFrameObservable = false;
 			for (const auto &state : system->States())
 			{
 				HSObservable observable;
@@ -185,15 +189,18 @@ namespace RunSection::General::HS
 				if (!space.GetState(state, observable.stateOrSource))
 				{ error = "failed to obtain State projector \"" + state->Name() + "\""; return false; }
 				observable.hasStateOrSource = true;
-				if (plan.IsPowder())
+				const bool molecular =
+					::RunSection::General::ObservableStateFrame(system, state) == SpinAPI::StateFrame::Molecular;
+				hasMolecularFrameObservable = hasMolecularFrameObservable || molecular;
+				if (plan.IsPowder() && molecular)
 				{
 					if (!PrepareStateRotation(observable.stateOrSource, space,
 						observable.stateRotationCache, observable.rotateStateOrSource, error)) return false;
 				}
 				observables.push_back(std::move(observable));
 			}
-			if (plan.IsPowder())
-				log << "Orientation-dependent molecular-frame State observables are rotated with each powder orientation." << std::endl;
+			if (plan.IsPowder() && hasMolecularFrameObservable)
+				log << "Molecular-frame State observables follow each General orientation; fixed/laboratory State observables remain unchanged." << std::endl;
 			if (observables.empty()) { error = "time-evolution output requires at least one State or a spinlist"; return false; }
 			log << "State-population observables selected for " << observables.size()
 				<< " configured State object(s)." << std::endl;

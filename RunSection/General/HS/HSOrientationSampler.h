@@ -2,9 +2,9 @@
 // HSOrientationSampler (RunSection::General::HS)
 // ------------------
 // Builds molecular-to-lab orientation samples from the shared SpinAPI PowderGrid
-// constructors. Rotations use the active ZYZ convention
-// R = Rz(alpha) Ry(beta) Rz(gamma). Base-grid weights are preserved exactly;
-// HSGeneral never silently renormalizes them to unit sum.
+// constructors through the shared GeneralOrientationSampler. Rotations use the
+// established active ZYZ convention. Generated powder weights are normalized
+// once to unit ensemble weight; explicit user-supplied weights are preserved.
 //
 // Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
 // (c) 2026 Quantum Biology and Computational Physics Group.

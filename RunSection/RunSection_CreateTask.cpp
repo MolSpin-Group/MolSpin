@@ -57,6 +57,8 @@
 #include "TaskStaticHSDirectSpectra.h"
 #include "TaskStaticHSResonanceSpectra.h"
 #include "General/HS/TaskHSGeneral.h"
+#include "General/SS/TaskSSGeneral.h"
+#include "General/MultiSS/TaskMultiSSGeneral.h"
 // #include "TaskDynamicHSDirectSpectra.h"
 
 #include "TaskActionSpectrumHistogram.h"
@@ -82,6 +84,28 @@ namespace RunSection
 			_tasktype.compare("HS-General") == 0)
 		{
 			return std::make_shared<General::HS::TaskHSGeneral>(_obj, *this);
+		}
+
+		// SSGeneral is the production one-SpinSystem Liouville/superspace task.
+		// Historical StaticSS/StaticSSTimeEvo tasks remain independent references.
+		if (_tasktype.compare("ssgeneral") == 0 ||
+			_tasktype.compare("SSGeneral") == 0 ||
+			_tasktype.compare("ss-general") == 0 ||
+			_tasktype.compare("SS-General") == 0)
+		{
+			return std::make_shared<General::SS::TaskSSGeneral>(_obj, *this);
+		}
+
+		// MultiSSGeneral is the production direct-sum superspace network task.
+		// It is deliberately registered alongside, not instead of, historical
+		// MultiStaticSS / MultiStaticSSTimeEvo / NZ / Redfield tasks so their
+		// behavior remains available as a numerical reference during migration.
+		if (_tasktype.compare("multissgeneral") == 0 ||
+			_tasktype.compare("MultiSSGeneral") == 0 ||
+			_tasktype.compare("multiss-general") == 0 ||
+			_tasktype.compare("MultiSS-General") == 0)
+		{
+			return std::make_shared<General::MultiSS::TaskMultiSSGeneral>(_obj, *this);
 		}
 
 		// Create a task of the proper type

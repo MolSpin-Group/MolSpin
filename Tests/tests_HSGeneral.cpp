@@ -220,7 +220,7 @@ namespace
 		system->ValidateInteractions();
 		electron1Up->ParseFromSystem(*system);
 		system->SetProperties(std::make_shared<MSDParser::ObjectParser>(
-			"properties", "initialstate=Singlet;frame=molecular;initialstatecoherences=keep;"));
+			"properties", "initialstate=Singlet;frame=molecular;initialstatecoherences=keep;observablestateframe=molecular;"));
 		return {system, singlet};
 	}
 
@@ -378,6 +378,60 @@ namespace
 		return !_rows.empty();
 	}
 
+	bool SpectraDataEqualOnSharedTimeline(const std::string &_legacy,
+		const std::string &_general, double _legacyObservableScale,
+		double _tolerance)
+	{
+		std::string legacyHeader;
+		std::string generalHeader;
+		std::vector<std::vector<double>> legacyRows;
+		std::vector<std::vector<double>> generalRows;
+		if (!ParseNumericData(_legacy, legacyHeader, legacyRows) ||
+			!ParseNumericData(_general, generalHeader, generalRows))
+			return false;
+
+		size_t legacyRow = 0;
+		size_t generalRow = 0;
+		size_t matchedRows = 0;
+		while (legacyRow < legacyRows.size() && generalRow < generalRows.size())
+		{
+			if (legacyRows[legacyRow].size() != generalRows[generalRow].size() ||
+				legacyRows[legacyRow].size() < 2)
+				return false;
+
+			const double timeDifference = legacyRows[legacyRow][1] - generalRows[generalRow][1];
+			if (std::abs(timeDifference) <= 1.0e-12)
+			{
+				for (size_t column = 0; column < legacyRows[legacyRow].size(); ++column)
+				{
+					const double legacyValue = column < 2
+						? legacyRows[legacyRow][column]
+						: legacyRows[legacyRow][column] / _legacyObservableScale;
+					const double generalValue = generalRows[generalRow][column];
+					const double scale = std::max({1.0, std::abs(legacyValue), std::abs(generalValue)});
+					if (std::abs(legacyValue - generalValue) > _tolerance * scale)
+						return false;
+				}
+				++matchedRows;
+				++legacyRow;
+				++generalRow;
+			}
+			else if (timeDifference < 0.0)
+			{
+				++legacyRow;
+			}
+			else
+			{
+				++generalRow;
+			}
+		}
+
+		// The corrected spectroscopy task omits its initial boundary and includes
+		// the final endpoint. The still-independent legacy HSGeneral timeline does
+		// the converse, so all but one row must overlap physically.
+		return matchedRows + 1 >= std::min(legacyRows.size(), generalRows.size());
+	}
+
 	bool DynamicPowderMatchesExplicitOrientations(const std::string &_calculation,
 										 const std::string &_sampling,
 										 std::string *_internalData = nullptr,
@@ -421,7 +475,7 @@ namespace
 			std::ostringstream orientationProperty;
 			orientationProperty << std::setprecision(17)
 				<< "powderorientation=" << orientation.theta << " "
-				<< orientation.phi << " " << orientation.weight << ";";
+				<< orientation.phi << " " << orientation.weight / (2.0 * arma::datum::pi) << ";";
 			std::string external;
 			if (!RunHSGeneralSpectraTask(fixture, "HSGeneral",
 					common + orientationProperty.str(), external))
@@ -513,7 +567,7 @@ namespace
 				std::ostringstream orientationProperty;
 				orientationProperty << std::setprecision(17)
 					<< "powderorientation=" << orientation.theta << " "
-					<< orientation.phi << " " << orientation.weight / static_cast<double>(gammaCount) << ";"
+					<< orientation.phi << " " << orientation.weight / (4.0 * arma::datum::pi * static_cast<double>(gammaCount)) << ";"
 					<< "powdergamma=" << gamma << ";";
 				std::string external;
 				if (!RunHSGeneralSpectraTask(fixture, "HSGeneral",
@@ -552,7 +606,7 @@ namespace
 			}
 		}
 
-		return internalLog.find("Sampling powder gamma with 4 points") != std::string::npos &&
+		return internalLog.find("samples the third Euler angle with 4 points") != std::string::npos &&
 			internalLog.find("12 total SO(3) orientations") != std::string::npos;
 	}
 
@@ -610,10 +664,8 @@ bool test_hsgeneral_matches_ludm_directspectra_relaxation_rwa_regression()
 	std::string legacy, general;
 	if (!RunHSGeneralSpectraTask(legacyFixture, "StaticHS-Direct-Spectra", "method=timeevo;" + common, legacy) ||
 		!RunHSGeneralSpectraTask(generalFixture, "HSGeneral", "dynamics=static;calculation=timeevolution;sampling=direct;approximation=secular;" + common, general)) return false;
-	std::string lh, gh; std::vector<std::vector<double>> lr, gr;
-	if (!ParseNumericData(legacy, lh, lr) || !ParseNumericData(general, gh, gr) || lr.size()!=gr.size()) return false;
-	for (size_t r=0;r<lr.size();++r) { if (lr[r].size()!=5 || gr[r].size()!=5) return false; for (size_t c=2;c<5;++c) if (std::abs(lr[r][c]-gr[r][c]) > 2.0e-12) return false; }
-	return true;
+	return SpectraDataEqualOnSharedTimeline(
+		legacy, general, 2.0 * arma::datum::pi, 2.0e-12);
 }
 
 bool test_hsgeneral_matches_ciss_directspectra_timeinf_polarization_regression()
@@ -631,7 +683,7 @@ bool test_hsgeneral_matches_ciss_directspectra_timeinf_polarization_regression()
 	if (infPos != std::string::npos) legacyNumeric.replace(infPos, infToken.size(), " 0 ");
 	std::string lh, gh; std::vector<std::vector<double>> lr, gr;
 	if (!ParseNumericData(legacyNumeric, lh, lr) || !ParseNumericData(general, gh, gr) || lr.size()!=1 || gr.size()!=1 || lr[0].size()!=8 || gr[0].size()!=7) return false;
-	for (size_t c=0;c<6;++c) if (std::abs(lr[0][c+2]-gr[0][c+1]) > 2.0e-12) return false;
+	for (size_t c=0;c<6;++c) if (std::abs(lr[0][c+2]/(4.0*arma::datum::pi)-gr[0][c+1]) > 2.0e-12) return false;
 	return true;
 }
 
@@ -832,7 +884,7 @@ bool test_hsgeneral_secular_h0_with_explicit_dynamic_drive_supports_so3()
 	std::vector<std::vector<double>> rows;
 	return ParseNumericData(data, header, rows) && rows.size() == 3 &&
 		log.find("orientation=theta/phi/gamma") != std::string::npos &&
-		log.find("secular/RWA") != std::string::npos;
+		log.find("Hamiltonian approximation: high-field secular") != std::string::npos;
 }
 
 bool test_hsgeneral_pulse_timeline_matches_directspectra()
@@ -850,24 +902,8 @@ bool test_hsgeneral_pulse_timeline_matches_directspectra()
 			"dynamics=static;calculation=timeevolution;sampling=direct;approximation=secular;" + common,
 			generalData, &generalLog)) return false;
 
-	auto numericallyEqualIgnoringHeader = [](const std::string &left, const std::string &right, double tolerance)
-	{
-		std::string leftHeader, rightHeader;
-		std::vector<std::vector<double>> leftRows, rightRows;
-		if (!ParseNumericData(left, leftHeader, leftRows) || !ParseNumericData(right, rightHeader, rightRows) ||
-			leftRows.size() != rightRows.size()) return false;
-		for (size_t row = 0; row < leftRows.size(); ++row)
-		{
-			if (leftRows[row].size() != rightRows[row].size()) return false;
-			for (size_t col = 0; col < leftRows[row].size(); ++col)
-			{
-				const double scale = std::max({1.0, std::abs(leftRows[row][col]), std::abs(rightRows[row][col])});
-				if (std::abs(leftRows[row][col] - rightRows[row][col]) > tolerance * scale) return false;
-			}
-		}
-		return true;
-	};
-	if (!numericallyEqualIgnoringHeader(legacyData, generalData, 2.0e-10)) return false;
+	if (!SpectraDataEqualOnSharedTimeline(
+		legacyData, generalData, 2.0 * arma::datum::pi, 2.0e-10)) return false;
 
 	auto legacyIntegrated = BuildHSGeneralSpectraSystem();
 	auto generalIntegrated = BuildHSGeneralSpectraSystem();
@@ -882,7 +918,8 @@ bool test_hsgeneral_pulse_timeline_matches_directspectra()
 			"dynamics=static;calculation=timeevolution;sampling=direct;approximation=secular;" + integratedCommon,
 			generalIntegratedData)) return false;
 
-	if (!numericallyEqualIgnoringHeader(legacyIntegratedData, generalIntegratedData, 2.0e-10)) return false;
+	if (!SpectraDataEqualOnSharedTimeline(
+		legacyIntegratedData, generalIntegratedData, 2.0 * arma::datum::pi, 2.0e-10)) return false;
 	return generalLog.find("Running unified TaskHSGeneral") != std::string::npos;
 }
 
@@ -1151,7 +1188,7 @@ bool test_hsgeneral_orientation_sampler_builds_so3_grid()
 	// deliberate symmetry reduction.
 	if (plan.powderDomain != SpinAPI::PowderGridDomain::FullSphere ||
 		!plan.powderDomainAutoExpanded ||
-		std::abs(weight - 4.0 * arma::datum::pi) >= 1.0e-12 ||
+		std::abs(weight - 1.0) >= 1.0e-12 ||
 		log.str().find("35 total SO(3) orientations") == std::string::npos ||
 		log.str().find("selected automatically") == std::string::npos)
 	{
@@ -1174,7 +1211,7 @@ bool test_hsgeneral_orientation_sampler_builds_so3_grid()
 		reducedPlan, reduced, reducedLog, error)) return false;
 	double reducedWeight = 0.0;
 	for (const auto &orientation : reduced) reducedWeight += orientation.weight;
-	return std::abs(reducedWeight - 2.0 * arma::datum::pi) < 1.0e-12;
+	return std::abs(reducedWeight - 1.0) < 1.0e-12;
 }
 
 bool test_hsgeneral_powdergrid_api_selection()
@@ -1205,7 +1242,7 @@ bool test_hsgeneral_powdergrid_api_selection()
 	{
 		if (std::abs(uniform[i].beta - uniformReference[i].theta) > 1.0e-13 ||
 			std::abs(uniform[i].gamma - uniformReference[i].phi) > 1.0e-13 ||
-			std::abs(uniform[i].weight - uniformReference[i].weight) > 1.0e-13)
+			std::abs(uniform[i].weight - uniformReference[i].weight / (4.0 * arma::datum::pi)) > 1.0e-13)
 			return false;
 	}
 
@@ -1231,7 +1268,7 @@ bool test_hsgeneral_powdergrid_api_selection()
 	for (const auto &orientation : sophe) sopheWeight += orientation.weight;
 	double sopheReferenceWeight = 0.0;
 	for (const auto &orientation : sopheReference) sopheReferenceWeight += orientation.weight;
-	if (std::abs(sopheWeight - sopheReferenceWeight) > 1.0e-12) return false;
+	if (std::abs(sopheWeight - 1.0) > 1.0e-12 || !(sopheReferenceWeight > 0.0)) return false;
 
 	HSExecutionPlan octantPlan;
 	std::vector<HSOrientation> octant;
@@ -1240,7 +1277,7 @@ bool test_hsgeneral_powdergrid_api_selection()
 		return false;
 	double octantWeight = 0.0;
 	for (const auto &orientation : octant) octantWeight += orientation.weight;
-	if (std::abs(octantWeight - arma::datum::pi / 2.0) > 1.0e-12) return false;
+	if (std::abs(octantWeight - 1.0) > 1.0e-12) return false;
 
 	return HSGeneralRejects(
 		"calculation=timeevolution;hamiltonianh0list=H0;powdergrid=sophe;powdersamplingpoints=5;",
@@ -1346,9 +1383,9 @@ bool test_hsgeneral_static_powder_timeevolution_and_yields()
 		stochasticTimeData.find("System.sink.yield") == std::string::npos &&
 		stochasticYieldData.find("System.sink.yield") != std::string::npos &&
 		timeLog.find("orientation=theta/phi") != std::string::npos &&
-		timeLog.find("H0/H1 Hamiltonian approximation = full") != std::string::npos &&
+		timeLog.find("Hamiltonian approximation: full") != std::string::npos &&
 		yieldLog.find("yield-mode=finite") != std::string::npos &&
-		yieldLog.find("H0/H1 Hamiltonian approximation = secular/RWA") != std::string::npos &&
+		yieldLog.find("Hamiltonian approximation: high-field secular") != std::string::npos &&
 		yieldLog.find("samples only omitted spins (subspace dimension 2)") != std::string::npos;
 }
 
@@ -1386,7 +1423,7 @@ bool test_hsgeneral_dynamic_powder_internal_external_and_sampling()
 		directTime.find("System.Singlet") != std::string::npos &&
 		directTime.find("System.E1Up") != std::string::npos &&
 		directYield.find("System.sink.yield") != std::string::npos &&
-		directTimeLog.find("Orientation-dependent molecular-frame State observables are rotated") != std::string::npos &&
+		directTimeLog.find("Molecular-frame State observables follow each General orientation") != std::string::npos &&
 		yieldLog.find("yield-mode=finite") != std::string::npos &&
 		yieldLog.find("Writing finite-time integrated HS observables") != std::string::npos;
 }
@@ -1405,7 +1442,7 @@ bool test_hsgeneral_powder_rotates_orientation_dependent_reaction_state()
 
 	auto internalFixture = BuildHSGeneralDynamicPowderSystem();
 	auto orientedSink = std::make_shared<SpinAPI::Transition>(
-		"oriented_sink", "type=sink;sourcestate=E1Up;rate=0.01;", internalFixture.spinSystem);
+		"oriented_sink", "type=sink;sourcestate=E1Up;sourceframe=molecular;rate=0.01;", internalFixture.spinSystem);
 	internalFixture.spinSystem->Add(orientedSink);
 	std::string internal;
 	if (!RunHSGeneralSpectraTask(internalFixture, "HSGeneral",
@@ -1422,11 +1459,11 @@ bool test_hsgeneral_powder_rotates_orientation_dependent_reaction_state()
 	{
 		auto fixture = BuildHSGeneralDynamicPowderSystem();
 		auto sink = std::make_shared<SpinAPI::Transition>(
-			"oriented_sink", "type=sink;sourcestate=E1Up;rate=0.01;", fixture.spinSystem);
+			"oriented_sink", "type=sink;sourcestate=E1Up;sourceframe=molecular;rate=0.01;", fixture.spinSystem);
 		fixture.spinSystem->Add(sink);
 		std::ostringstream props;
 		props << std::setprecision(17) << common
-			<< "powderorientation=" << orientation.theta << " " << orientation.phi << " " << orientation.weight << ";";
+			<< "powderorientation=" << orientation.theta << " " << orientation.phi << " " << orientation.weight / (2.0 * arma::datum::pi) << ";";
 		std::string external, header;
 		std::vector<std::vector<double>> rows;
 		if (!RunHSGeneralSpectraTask(fixture, "HSGeneral", props.str(), external) ||

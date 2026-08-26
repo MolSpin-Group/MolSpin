@@ -10,6 +10,7 @@
 // See LICENSE.txt for license information.
 /////////////////////////////////////////////////////////////////////////
 #include "HSReactionRelaxation.h"
+#include "../GeneralStateFrame.h"
 #include "SpinSystem.h"
 #include "Operator.h"
 #include "Transition.h"
@@ -42,7 +43,10 @@ namespace RunSection::General::HS
 
 			ReactionChannel channel;
 			channel.isStatic = SpinAPI::IsStatic(*transition);
-			if (!space.CreateHilbertReactionOperatorCache(transition, channel.operatorCache, plan.IsPowder()))
+			channel.rotateSource =
+				::RunSection::General::TransitionSourceStateFrame(system, transition) == SpinAPI::StateFrame::Molecular;
+			if (!space.CreateHilbertReactionOperatorCache(transition, channel.operatorCache,
+				plan.IsPowder() && channel.rotateSource))
 			{
 				error = "failed to prepare the Hilbert reaction operator for transition \"" + transition->Name() + "\"";
 				return false;
@@ -111,8 +115,10 @@ namespace RunSection::General::HS
 				continue;
 
 			arma::sp_cx_mat contribution;
+			const arma::mat reactionRotation = channel.rotateSource
+				? orientation.frameToLab : arma::eye<arma::mat>(3, 3);
 			if (!space.ReactionOperatorHilbertRotated(channel.operatorCache,
-				orientation.frameToLab, contribution))
+				reactionRotation, contribution))
 			{
 				error = "failed to construct the orientation-specific reaction operator for transition \"" +
 					channel.operatorCache.transition->Name() + "\"";
