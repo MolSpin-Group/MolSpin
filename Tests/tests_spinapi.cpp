@@ -3574,6 +3574,35 @@ bool test_spinapi_density_factorization_reconstructs_normalized_density()
 	return factors.n_rows == 6 && factors.n_cols == 2 &&
 		equal_matrices(factors * factors.t(), expected, 1e-12);
 }
+
+bool test_spinapi_transition_copy_preserves_configuration()
+{
+	auto spin = std::make_shared<SpinAPI::Spin>("E", "type=electron;spin=1/2;");
+	auto state = std::make_shared<SpinAPI::State>("Up", "spin(E)=|1/2>;");
+	auto system = std::make_shared<SpinAPI::SpinSystem>("System");
+	system->Add(spin);
+	system->Add(state);
+	if (!state->ParseFromSystem(*system))
+		return false;
+
+	SpinAPI::Transition original("sink",
+		"type=sink;sourcestate=Up;rate=0.125;reactionoperators=lindblad;", system);
+	if (!original.Validate({system}))
+		return false;
+
+	SpinAPI::Transition copied(original);
+	SpinAPI::Transition assigned("other",
+		"type=sink;sourcestate=Up;rate=1;reactionoperators=haberkorn;", system);
+	assigned = original;
+	auto matches = [&](const SpinAPI::Transition &transition)
+	{
+		return transition.Name() == "sink" && transition.IsValid() &&
+			transition.SourceState() == state &&
+			std::abs(transition.Rate() - 0.125) < 1.0e-15 &&
+			transition.GetReactionOperatorType() == SpinAPI::ReactionOperatorType::Lindblad;
+	};
+	return matches(copied) && matches(assigned);
+}
 //////////////////////////////////////////////////////////////////////////////
 
 // Add all the SpinAPI test cases
@@ -3666,6 +3695,7 @@ void AddSpinAPITests(std::vector<test_case> &_cases)
 	_cases.push_back(test_case("SpinSpace::Rotated state factors match rotated density", test_spinapi_rotated_state_factors_match_rotated_density));
 	_cases.push_back(test_case("SpinSpace::Powder initial dephasing selects Hamiltonian approximation", test_spinapi_powder_initial_dephasing_selects_hamiltonian_approximation));
 	_cases.push_back(test_case("SpinSpace::Density factorization reconstructs normalized density", test_spinapi_density_factorization_reconstructs_normalized_density));
+	_cases.push_back(test_case("SpinAPI::Transition copy preserves reaction configuration", test_spinapi_transition_copy_preserves_configuration));
 	_cases.push_back(test_case("SpinAPI::Operator copy preserves relaxation configuration", test_spinapi_operator_copy_preserves_relaxation_configuration));
 }
 //////////////////////////////////////////////////////////////////////////////

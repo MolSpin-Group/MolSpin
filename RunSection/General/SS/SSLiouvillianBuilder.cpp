@@ -134,11 +134,47 @@ namespace RunSection::General::SS
             arma::cx_mat component;
             if (initialStates[i] == nullptr)
             {
-                // frame=eigen/thermal preparation must be evaluated against the
-                // same orientation-specific Hamiltonian used for propagation.
-                if (!space.ThermalStateFromHamiltonian(arma::cx_mat(hamiltonian),
-                    system->Temperature(), component))
-                { error = "failed to construct thermal initial density for \"" + system->Name() + "\""; return false; }
+                const SpinAPI::StateFrame frame = system->InitialStateFrame();
+                const std::vector<std::string> thermalList = system->ThermalHamiltonianList();
+                if (frame == SpinAPI::StateFrame::Eigen)
+                {
+                    // The canonical density is defined by the interactions in
+                    // `thermalhamiltonian`, not by every term retained in the
+                    // propagation generator.  Rebuild that selected Hamiltonian
+                    // with the full crystallite rotation.  In particular, a
+                    // high-field/secular propagation approximation must not
+                    // silently change rho_eq = exp(-hbar H_th/k_B T)/Z.
+                    arma::sp_cx_mat thermalHamiltonian;
+                    if (!space.BaseHamiltonianRotatedZYZ(thermalList, rotation,
+                            thermalHamiltonian) ||
+                        !space.ThermalStateFromHamiltonian(arma::cx_mat(thermalHamiltonian),
+                            system->Temperature(), component))
+                    {
+                        error = "failed to construct orientation-specific thermal initial density for \"" +
+                            system->Name() + "\"";
+                        return false;
+                    }
+                }
+                else
+                {
+                    if (!space.GetThermalState(space, system->Temperature(), thermalList, component))
+                    {
+                        error = "failed to construct thermal initial density for \"" +
+                            system->Name() + "\"";
+                        return false;
+                    }
+                    if (frame == SpinAPI::StateFrame::Molecular && !IsIdentityRotation(rotation))
+                    {
+                        arma::cx_mat rotated;
+                        if (!space.RotateState(component, rotation, rotated))
+                        {
+                            error = "failed to rotate molecular-frame thermal initial density for \"" +
+                                system->Name() + "\"";
+                            return false;
+                        }
+                        component = std::move(rotated);
+                    }
+                }
             }
             else
             {

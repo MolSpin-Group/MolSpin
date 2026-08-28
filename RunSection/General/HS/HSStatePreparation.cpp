@@ -162,6 +162,27 @@ namespace RunSection::General::HS
 	{
 		state = HSPreparedState();
 		error.clear();
+		state.frame = system != nullptr
+			? system->InitialStateFrame() : SpinAPI::StateFrame::Fixed;
+
+		// `frame=eigen` has a precise meaning only for a canonical thermal
+		// density.  It is rebuilt for every crystallite from the user-selected
+		// thermal Hamiltonian, rather than rotating one already diagonalized
+		// density.  In general U exp(-beta H) U^dagger equals exp(-beta UHU^dagger),
+		// but rebuilding is required when the propagation Hamiltonian is
+		// secularized while the physical thermal Hamiltonian remains full.
+		if (state.frame == SpinAPI::StateFrame::Eigen)
+		{
+			const auto initialStates = system->InitialState();
+			if (initialStates.size() != 1 || initialStates.front() != nullptr)
+			{
+				error = "initial-state frame=eigen requires exactly one Thermal initial state";
+				return false;
+			}
+			state.orientationSpecificThermal = true;
+			state.thermalHamiltonian = system->ThermalHamiltonianList();
+			state.thermalTemperature = system->Temperature();
+		}
 
 		if (plan.IsStochastic())
 		{
@@ -194,16 +215,23 @@ namespace RunSection::General::HS
 		}
 		else
 		{
-			if (!BuildInitialDensity(system, space, state.density, error))
-				return false;
-			if (!space.FactorizeDensityMatrix(state.density, state.factors, &error))
-				return false;
-			log << "HSGeneral constructed the normalized initial density from "
-				<< system->InitialState().size() << " state component(s) as "
-				<< state.factors.n_cols << " Hilbert-space factor(s)." << std::endl;
+			if (state.orientationSpecificThermal)
+			{
+				log << "HSGeneral will construct the Thermal initial density in the "
+					<< "orientation-specific eigen frame of thermalhamiltonian." << std::endl;
+			}
+			else
+			{
+				if (!BuildInitialDensity(system, space, state.density, error))
+					return false;
+				if (!space.FactorizeDensityMatrix(state.density, state.factors, &error))
+					return false;
+				log << "HSGeneral constructed the normalized initial density from "
+					<< system->InitialState().size() << " state component(s) as "
+					<< state.factors.n_cols << " Hilbert-space factor(s)." << std::endl;
+			}
 		}
 
-		state.frame = system->InitialStateFrame();
 		state.dephaseInHamiltonianEigenbasis =
 			system->InitialStateCoherences() == SpinAPI::InitialStateCoherenceMode::DephaseEigenbasis;
 		state.dephasingHamiltonian = plan.hasInitialStateHamiltonian
@@ -287,8 +315,28 @@ namespace RunSection::General::HS
 			return true;
 		}
 
-		if (!space.PrepareInitialDensityForPowder(reference.density, orientation.frameToLab,
-			reference.frame, reference.dephaseInHamiltonianEigenbasis,
+		arma::cx_mat referenceDensity = reference.density;
+		SpinAPI::StateFrame preparationFrame = reference.frame;
+		if (reference.orientationSpecificThermal)
+		{
+			// The canonical density is rho_eq = exp(-hbar H_th/k_B T)/Z.
+			// Build H_th with the full molecular-to-laboratory tensor rotation;
+			// high-field/secular propagation is a separate approximation and must
+			// not silently redefine thermal equilibrium.
+			arma::sp_cx_mat thermalHamiltonian;
+			if (!space.BaseHamiltonianRotatedZYZ(reference.thermalHamiltonian,
+				orientation.frameToLab, thermalHamiltonian) ||
+				!space.ThermalStateFromHamiltonian(arma::cx_mat(thermalHamiltonian),
+					reference.thermalTemperature, referenceDensity))
+			{
+				error = "failed to construct the orientation-specific Thermal initial density";
+				return false;
+			}
+			preparationFrame = SpinAPI::StateFrame::Fixed;
+		}
+
+		if (!space.PrepareInitialDensityForPowder(referenceDensity, orientation.frameToLab,
+			preparationFrame, reference.dephaseInHamiltonianEigenbasis,
 			reference.dephasingHamiltonian, plan.approximation, rotationCache, state.density))
 		{
 			error = "failed to prepare the initial density for the current HS orientation/eigenbasis";

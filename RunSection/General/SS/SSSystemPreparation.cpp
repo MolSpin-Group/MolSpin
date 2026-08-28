@@ -63,7 +63,11 @@ namespace RunSection::General::SS
             arma::cx_mat P;
             if(!prepared.local.space->GetState(t->SourceState(),P))
             {error="failed to construct reaction source State \""+t->SourceState()->Name()+"\"";return false;}
-            if(::RunSection::General::TransitionSourceStateFrame(system,t)==SpinAPI::StateFrame::Molecular&&!IsIdentity(orientation.frameToLab))
+            const SpinAPI::StateFrame sourceFrame=
+                ::RunSection::General::TransitionSourceStateFrame(system,t);
+            if(!::RunSection::General::ValidateProjectorStateFrame(sourceFrame,
+                "transition source State \""+t->Name()+"\"",error))return false;
+            if(sourceFrame==SpinAPI::StateFrame::Molecular&&!IsIdentity(orientation.frameToLab))
             {
                 arma::cx_mat rotated;
                 if(!prepared.local.space->RotateState(P,orientation.frameToLab,rotated))

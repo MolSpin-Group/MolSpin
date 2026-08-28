@@ -60,7 +60,9 @@ namespace RunSection::General::MultiSS
             const auto &context=network.systems.contexts[ci];
             if(plan.observables==MultiSSObservableMode::Populations||plan.observables==MultiSSObservableMode::Both)
             {
-                MultiSSObservable o;o.context=ci;o.label=context.local.system->Name()+".population";
+                MultiSSObservable o;o.context=ci;o.label=context.local.system->Name()+
+                    (plan.calculation==MultiSSCalculation::TimeIntegrated?
+                        ".integrated_population_ns":".population");
                 o.operatorMatrix=arma::eye<arma::cx_mat>(context.hilbertDimension,context.hilbertDimension);
                 labels.push_back(o.label);observables.push_back(std::move(o));
             }
@@ -72,7 +74,11 @@ namespace RunSection::General::MultiSS
                     arma::cx_mat P;
                     if(!context.local.space->GetState(state,P))
                     {error="failed to construct observable State \""+state->Name()+"\"";return false;}
-                    if(::RunSection::General::ObservableStateFrame(context.local.system,state)==SpinAPI::StateFrame::Molecular &&
+                    const SpinAPI::StateFrame observableFrame=
+                        ::RunSection::General::ObservableStateFrame(context.local.system,state);
+                    if(!::RunSection::General::ValidateProjectorStateFrame(observableFrame,
+                        "observable State \""+state->Name()+"\"",error))return false;
+                    if(observableFrame==SpinAPI::StateFrame::Molecular &&
                         input.orientation!=MultiSSOrientationMode::Identity)
                     {
                         arma::cx_mat rotated;
@@ -80,7 +86,9 @@ namespace RunSection::General::MultiSS
                         {error="failed to rotate State observable \""+state->Name()+"\"";return false;}
                         P=std::move(rotated);
                     }
-                    MultiSSObservable o;o.context=ci;o.label=context.local.system->Name()+"."+state->Name()+".population";o.operatorMatrix=std::move(P);
+                    MultiSSObservable o;o.context=ci;o.label=context.local.system->Name()+"."+state->Name()+
+                        (plan.calculation==MultiSSCalculation::TimeIntegrated?
+                            ".integrated_population_ns":".population");o.operatorMatrix=std::move(P);
                     labels.push_back(o.label);observables.push_back(std::move(o));
                 }
             }
@@ -89,7 +97,13 @@ namespace RunSection::General::MultiSS
         {
             for(const auto &c:network.continuousChannels)
             {
-                labels.push_back(c.physical.SourceSystem()->Name()+"."+c.physical.TransitionObject()->Name()+".flux");
+                // An internal channel may be traversed repeatedly, so its time
+                // integral is an integrated event flux rather than an
+                // independent terminal-product probability.
+                labels.push_back(c.physical.SourceSystem()->Name()+"."+
+                    c.physical.TransitionObject()->Name()+
+                    (plan.calculation==MultiSSCalculation::TimeIntegrated?
+                        ".integrated_flux":".flux"));
             }
         }
         return true;
@@ -119,7 +133,10 @@ namespace RunSection::General::MultiSS
             for(const auto &c:network.continuousChannels)
             {
                 double population=0.0;
-                const auto label=c.physical.SourceSystem()->Name()+"."+c.physical.TransitionObject()->Name()+".flux";
+                const auto label=c.physical.SourceSystem()->Name()+"."+
+                    c.physical.TransitionObject()->Name()+
+                    (plan.calculation==MultiSSCalculation::TimeIntegrated?
+                        ".integrated_flux":".flux");
                 if(!RealValue(arma::trace(arma::cx_mat(c.orientedSourceEffect)*densities[c.sourceContext]),population,error,label))return false;
                 values(column++)=c.physical.Rate(time)*population;
             }

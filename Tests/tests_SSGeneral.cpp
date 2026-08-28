@@ -284,22 +284,35 @@ bool test_ssgeneral_explicit_orientation_rotates_full_hamiltonian_and_initial_st
 
 bool test_ssgeneral_eigen_frame_is_orientation_specific_thermal_state()
 {
-    auto electron=std::make_shared<SpinAPI::Spin>("E","type=electron;spin=1/2;");
+    auto electron=std::make_shared<SpinAPI::Spin>("E",
+        "type=electron;spin=1/2;tensor=matrix(\"2.0 0 0;0 2.2 0;0 0 2.6\");");
+    auto thermal=std::make_shared<SpinAPI::Interaction>("thermal",
+        "type=zeeman;spins=E;field=0 0 3.4;ignoretensors=false;"
+        "commonprefactor=true;prefactor=1;");
     auto thermalSystem=std::make_shared<SpinAPI::SpinSystem>("ThermalSystem");
     thermalSystem->Add(electron);
+    thermalSystem->Add(thermal);
+    if(!thermalSystem->ValidateInteractions().empty())return false;
     thermalSystem->SetProperties(std::make_shared<MSDParser::ObjectParser>("properties",
-        "initialstate=Thermal;initialstateframe=eigen;temperature=250;"));
+        "initialstate=Thermal;initialstateframe=eigen;temperature=250;"
+        "thermalhamiltonian=thermal;"));
 
     SpinAPI::SpinSpace thermalSpace(thermalSystem);
+    arma::mat rotation;
+    if(!SpinAPI::CreateZYZRotationMatrix(0.37,0.82,-0.21,rotation))return false;
+    // Deliberately pass a different propagation Hamiltonian. The thermal
+    // density must depend only on `thermalhamiltonian`.
     arma::sp_cx_mat hamiltonian(2,2);
-    hamiltonian(0,0)=arma::cx_double(-0.7,0.0);
-    hamiltonian(1,1)=arma::cx_double(1.1,0.0);
+    hamiltonian(0,0)=arma::cx_double(-700.0,0.0);
+    hamiltonian(1,1)=arma::cx_double(1100.0,0.0);
+    arma::sp_cx_mat selected;
     arma::cx_mat expected,prepared;
     std::string error;
-    if(!thermalSpace.ThermalStateFromHamiltonian(
-            arma::cx_mat(hamiltonian),250.0,expected)||
+    if(!thermalSpace.BaseHamiltonianRotatedZYZ({"thermal"},rotation,selected)||
+       !thermalSpace.ThermalStateFromHamiltonian(
+            arma::cx_mat(selected),250.0,expected)||
        !RunSection::General::SS::SSLiouvillianBuilder::BuildInitialDensity(
-            thermalSystem,thermalSpace,hamiltonian,arma::eye<arma::mat>(3,3),prepared,error)||
+            thermalSystem,thermalSpace,hamiltonian,rotation,prepared,error)||
        arma::norm(prepared-expected,"fro")>1.0e-13)return false;
 
     auto up=std::make_shared<SpinAPI::State>("Up","spin(E)=|1/2>;");
@@ -556,7 +569,7 @@ bool test_ssgeneral_task_is_registered_and_runs()
     std::ostringstream log,data;task->SetLogStream(log);task->SetDataStream(data);
     if(!rs.Run(1))return false;
     return log.str().find("--- SSGeneral resolved calculation ---")!=std::string::npos&&
-        data.str().find("System.Up.population")!=std::string::npos;
+        data.str().find("System.Up.integrated_population_ns")!=std::string::npos;
 }
 
 bool test_ssgeneral_rejects_intersystem_transition()

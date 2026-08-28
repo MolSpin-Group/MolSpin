@@ -7,6 +7,7 @@
 #include "HSExecutionPlan.h"
 #include "SSExecutionPlan.h"
 #include "MultiSSExecutionPlan.h"
+#include "../RunSection/General/GeneralStateFrame.h"
 #include "ObjectParser.h"
 #include <cmath>
 #include <sstream>
@@ -157,6 +158,47 @@ bool test_general_orientation_generated_weights_are_normalized()
     return std::abs(rawSum-4.0*arma::datum::pi)<1e-12;
 }
 
+bool test_general_orientation_rejects_ambiguous_or_nonpositive_input()
+{
+    auto rejectHS=[](const std::string &properties)
+    {
+        MSDParser::ObjectParser parser("hs","type=HSGeneral;calculation=timeevolution;"
+            "hamiltonianh0list=H0;"+properties);
+        RunSection::General::HS::HSExecutionPlan plan;std::string error;
+        return !RunSection::General::HS::ResolveExecutionPlan(parser,plan,error);
+    };
+    auto rejectSS=[](const std::string &properties)
+    {
+        MSDParser::ObjectParser parser("ss","type=SSGeneral;"+properties);
+        RunSection::General::SS::SSExecutionPlan plan;std::string error;
+        return !RunSection::General::SS::ResolveSSExecutionPlan(parser,plan,error);
+    };
+    auto rejectMulti=[](const std::string &properties)
+    {
+        MSDParser::ObjectParser parser("multi","type=MultiSSGeneral;"+properties);
+        RunSection::General::MultiSS::MultiSSExecutionPlan plan;std::string error;
+        return !RunSection::General::MultiSS::ResolveMultiSSExecutionPlan(parser,plan,error);
+    };
+    const std::string conflict="powderorientation=0.1 0.2 0.3;powdersamplingpoints=4;";
+    const std::string nonpositive="powderorientation=0.1 0.2 0.3 0;";
+    const std::string orphanGamma="powdergammapoints=3;";
+    return rejectHS(conflict)&&rejectSS(conflict)&&rejectMulti(conflict)&&
+        rejectHS(nonpositive)&&rejectSS(nonpositive)&&rejectMulti(nonpositive)&&
+        rejectHS(orphanGamma)&&rejectSS(orphanGamma)&&rejectMulti(orphanGamma);
+}
+
+bool test_general_named_projectors_reject_eigen_frame()
+{
+    std::string error;
+    return !RunSection::General::ValidateProjectorStateFrame(
+        SpinAPI::StateFrame::Eigen,"test projector",error)&&
+        error.find("defined only for a Thermal initial state")!=std::string::npos&&
+        RunSection::General::ValidateProjectorStateFrame(
+            SpinAPI::StateFrame::Fixed,"fixed projector",error)&&
+        RunSection::General::ValidateProjectorStateFrame(
+            SpinAPI::StateFrame::Molecular,"molecular projector",error);
+}
+
 void AddGeneralOrientationTests(std::vector<test_case>&cases)
 {
     cases.push_back({"General orientation HS/SS/MultiSS 2D equivalence",test_general_orientation_hs_ss_multiss_2d_equivalence});
@@ -164,4 +206,6 @@ void AddGeneralOrientationTests(std::vector<test_case>&cases)
     cases.push_back({"General orientation explicit ZYZ equivalence",test_general_orientation_explicit_zyz_equivalence});
     cases.push_back({"General orientation parser explicit ZYZ equivalence",test_general_orientation_parser_explicit_zyz_equivalence});
     cases.push_back({"General orientation generated grid normalization",test_general_orientation_generated_weights_are_normalized});
+    cases.push_back({"General orientation rejects ambiguous/non-positive input",test_general_orientation_rejects_ambiguous_or_nonpositive_input});
+    cases.push_back({"General named projectors reject eigen frame",test_general_named_projectors_reject_eigen_frame});
 }

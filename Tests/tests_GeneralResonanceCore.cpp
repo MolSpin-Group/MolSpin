@@ -334,6 +334,24 @@ namespace
                std::abs(t.detuningField_mT)<1.0e-9;
     }
 
+    bool GRC_TestDegenerateFieldJacobian()
+    {
+        using RunSection::General::Resonance::ResonanceFieldJacobian;
+        arma::vec energies(2,arma::fill::zeros);
+        arma::cx_mat eigenvectors=arma::eye<arma::cx_mat>(2,2);
+        arma::sp_cx_mat derivative(2,2);
+        derivative(0,1)=2.5;
+        derivative(1,0)=2.5;
+        arma::vec slopes;
+        std::string error;
+        if(!ResonanceFieldJacobian::ResolveDegenerateSubspaces(
+                energies,eigenvectors,derivative,slopes,error)) return false;
+        const arma::cx_mat resolved=eigenvectors.t()*arma::cx_mat(derivative)*eigenvectors;
+        return slopes.n_elem==2 && std::abs(slopes(0)+2.5)<1.0e-12 &&
+               std::abs(slopes(1)-2.5)<1.0e-12 &&
+               arma::norm(resolved-arma::diagmat(arma::conv_to<arma::cx_vec>::from(slopes)),"fro")<1.0e-12;
+    }
+
     bool GRC_TestHamiltonianAdapterPreservesApproximation()
     {
         GRC_Model model{2.0,2.1,2.4,0.0};
@@ -388,6 +406,7 @@ void AddGeneralResonanceCoreTests(std::vector<test_case> &cases)
 {
     cases.push_back(test_case("General resonance core normalized Gaussian/Lorentzian FWHM contract",GRC_TestLineshapeContract));
     cases.push_back(test_case("General resonance core field Jacobian and transition detection",GRC_TestFieldJacobianAndDetector));
+    cases.push_back(test_case("General resonance core resolves degenerate field slopes",GRC_TestDegenerateFieldJacobian));
     cases.push_back(test_case("General resonance Hamiltonian adapter preserves full/secular distinction",GRC_TestHamiltonianAdapterPreservesApproximation));
     cases.push_back(test_case("General resonance core frozen legacy isotropic-g sweep parity",GRC_TestLegacyParityIsotropicG));
     cases.push_back(test_case("General resonance core frozen legacy axial-g sweep parity",GRC_TestLegacyParityAxialG));

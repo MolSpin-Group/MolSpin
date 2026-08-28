@@ -181,8 +181,8 @@ namespace SpinAPI
 		}
 	}
 
-	Transition::Transition(const Transition &_transition) : system(_transition.system), target(_transition.target), properties(std::make_shared<MSDParser::ObjectParser>(*(this->properties))), rate(_transition.rate),
-															type(_transition.type), sourcestate(_transition.sourcestate), targetstate(_transition.targetstate), isValid(_transition.isValid),
+	Transition::Transition(const Transition &_transition) : system(_transition.system), target(_transition.target), properties(std::make_shared<MSDParser::ObjectParser>(*(_transition.properties))), rate(_transition.rate),
+															type(_transition.type), sourcestate(_transition.sourcestate), targetstate(_transition.targetstate), reactionOperators(_transition.reactionOperators), isValid(_transition.isValid),
 															trajectory(_transition.trajectory), trjHasTime(_transition.trjHasTime), trjHasRate(_transition.trjHasRate), trjRateIsLifetime(_transition.trjRateIsLifetime), trjTime(_transition.trjTime), trjRate(_transition.trjRate),
 															Pulsed(_transition.Pulsed), Active(_transition.Active), active_time(_transition.active_time)
 	{
@@ -203,6 +203,7 @@ namespace SpinAPI
 		this->type = _transition.type;
 		this->sourcestate = _transition.sourcestate;
 		this->targetstate = _transition.targetstate;
+		this->reactionOperators = _transition.reactionOperators;
 		this->isValid = _transition.isValid;
 
 		this->trajectory = _transition.trajectory;

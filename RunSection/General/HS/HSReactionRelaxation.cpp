@@ -43,8 +43,12 @@ namespace RunSection::General::HS
 
 			ReactionChannel channel;
 			channel.isStatic = SpinAPI::IsStatic(*transition);
-			channel.rotateSource =
-				::RunSection::General::TransitionSourceStateFrame(system, transition) == SpinAPI::StateFrame::Molecular;
+			const SpinAPI::StateFrame sourceFrame =
+				::RunSection::General::TransitionSourceStateFrame(system, transition);
+			if (!::RunSection::General::ValidateProjectorStateFrame(sourceFrame,
+				"transition source State \"" + transition->Name() + "\"", error))
+				return false;
+			channel.rotateSource = sourceFrame == SpinAPI::StateFrame::Molecular;
 			if (!space.CreateHilbertReactionOperatorCache(transition, channel.operatorCache,
 				plan.IsPowder() && channel.rotateSource))
 			{

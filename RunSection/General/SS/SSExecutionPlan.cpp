@@ -91,40 +91,106 @@ namespace RunSection::General::SS
         else {error="reactionoperators must be haberkorn (Lindblad is currently parity-gated)";return false;}
 
         std::string explicitOrientation;
-        if(p.Get("powderorientation",explicitOrientation)||p.Get("orientation",explicitOrientation))
+        const bool explicitSpecified =
+            p.Get("powderorientation",explicitOrientation)||p.Get("orientation",explicitOrientation);
+        if(explicitSpecified)
         {
             if(!ParseOrientation(explicitOrientation,plan.explicitAlpha,plan.explicitBeta,plan.explicitGamma,plan.explicitWeight))
             {error="powderorientation must contain alpha beta [gamma [weight]]";return false;}
+            if(!(plan.explicitWeight>0.0))
+            {error="explicit powderorientation weight must be positive";return false;}
             plan.orientation=SSOrientationMode::Explicit;
         }
 
         std::string grid; const bool gridSpecified=ReadString(p,{"powdergrid","powder_grid"},grid);
         const bool pointsSpecified=p.Get("powdersamplingpoints",plan.powderPoints);
-        p.Get("powdergridsize",plan.powderGridSize); p.Get("powdersymmetry",plan.powderSymmetry);
-        p.Get("powdergammapoints",plan.powderGammaPoints); p.Get("powdergamma",plan.powderGammaOffset);
+        const bool gridSizeSpecified=p.Get("powdergridsize",plan.powderGridSize);
+        const bool symmetrySpecified=p.Get("powdersymmetry",plan.powderSymmetry);
+        const bool gammaPointsSpecified=p.Get("powdergammapoints",plan.powderGammaPoints);
+        const bool gammaOffsetSpecified=p.Get("powdergamma",plan.powderGammaOffset);
+        if(plan.powderGammaPoints<1){error="powdergammapoints must be at least one";return false;}
+
+        std::string domain;
+        const bool domainSpecified=ReadString(p,{"powderdomain"},domain);
+        if(explicitSpecified&&(gridSpecified||pointsSpecified||gridSizeSpecified||symmetrySpecified||
+            domainSpecified||gammaOffsetSpecified||plan.powderGammaPoints>1))
+        {error="explicit powderorientation cannot be combined with generated powder-grid settings";return false;}
+
+        bool generatedPowderGrid=false;
         if(gridSpecified)
         {
-            if(plan.orientation==SSOrientationMode::Explicit){error="explicit powderorientation cannot be combined with powdergrid";return false;}
             if(grid=="uniform"||grid=="golden"||grid=="fibonacci") plan.powderGridType=SpinAPI::PowderGridType::Uniform;
             else if(grid=="octant") plan.powderGridType=SpinAPI::PowderGridType::Octant;
             else if(grid=="sophe") plan.powderGridType=SpinAPI::PowderGridType::Sophe;
             else {error="powdergrid must be uniform, octant, or sophe";return false;}
-            plan.orientation=plan.powderGammaPoints>1?SSOrientationMode::PowderSO3:SSOrientationMode::Powder2D;
         }
-        else if(pointsSpecified&&plan.powderPoints>1)
-            plan.orientation=plan.powderGammaPoints>1?SSOrientationMode::PowderSO3:SSOrientationMode::Powder2D;
 
-        std::string domain;
-        if(ReadString(p,{"powderdomain"},domain))
+        if(domainSpecified)
         {
             if(domain=="full"||domain=="sphere"||domain=="fullsphere") plan.powderDomain=SpinAPI::PowderGridDomain::FullSphere;
             else if(domain=="upper"||domain=="hemisphere"||domain=="upperhemisphere") plan.powderDomain=SpinAPI::PowderGridDomain::UpperHemisphere;
             else {error="powderdomain must be full or upper";return false;}
         }
-        if(plan.orientation==SSOrientationMode::PowderSO3&&plan.powderGammaPoints<2){error="SO(3) powder sampling requires powdergammapoints >= 2";return false;}
-        if((plan.orientation==SSOrientationMode::Powder2D||plan.orientation==SSOrientationMode::PowderSO3)&&
-            plan.powderGridType!=SpinAPI::PowderGridType::Sophe&&plan.powderPoints<1)
-        {error="generated powder grid requires positive powdersamplingpoints";return false;}
+
+        if(!explicitSpecified)
+        {
+            switch(plan.powderGridType)
+            {
+            case SpinAPI::PowderGridType::Uniform:
+                if(gridSizeSpecified||symmetrySpecified)
+                {error="powdergridsize/powdersymmetry are only valid with powdergrid=sophe";return false;}
+                if(gridSpecified&&!pointsSpecified)
+                {error="powdergrid=uniform requires powdersamplingpoints";return false;}
+                if(pointsSpecified&&plan.powderPoints<1)
+                {error="powdersamplingpoints must be at least one";return false;}
+                generatedPowderGrid=(gridSpecified&&pointsSpecified)||plan.powderPoints>1;
+                break;
+            case SpinAPI::PowderGridType::Sophe:
+                if(pointsSpecified)
+                {error="powdersamplingpoints is not used by powdergrid=sophe; use powdergridsize";return false;}
+                if(domainSpecified)
+                {error="powderdomain does not apply to powdergrid=sophe; powdersymmetry defines its domain";return false;}
+                if(plan.powderGridSize<1)
+                {error="powdergridsize must be at least one for powdergrid=sophe";return false;}
+                {
+                    SpinAPI::SopheGridParameters parameters;
+                    if(!SpinAPI::GetSopheGridParameters(plan.powderSymmetry,parameters))
+                    {error="invalid powdersymmetry for powdergrid=sophe";return false;}
+                }
+                generatedPowderGrid=gridSpecified;
+                break;
+            case SpinAPI::PowderGridType::Octant:
+                if(!gridSpecified)
+                {error="powdergrid=octant must be selected explicitly";return false;}
+                if(!pointsSpecified||plan.powderPoints<1)
+                {error="powdergrid=octant requires positive powdersamplingpoints";return false;}
+                if(gridSizeSpecified||symmetrySpecified)
+                {error="powdergridsize/powdersymmetry are only valid with powdergrid=sophe";return false;}
+                if(domainSpecified)
+                {error="powdergrid=octant has a fixed symmetry-reduced domain";return false;}
+                generatedPowderGrid=true;
+                break;
+            }
+            if(domainSpecified&&!generatedPowderGrid)
+            {error="powderdomain requires a generated powder grid";return false;}
+            if(plan.powderGammaPoints>1&&!generatedPowderGrid)
+            {error="powdergammapoints greater than one requires a generated theta/phi powder grid";return false;}
+            if(gammaOffsetSpecified&&plan.powderGammaPoints<2)
+            {error="powdergamma requires powdergammapoints greater than one";return false;}
+            if(gammaPointsSpecified&&plan.powderGammaPoints>1&&
+                plan.powderGridType==SpinAPI::PowderGridType::Uniform&&plan.powderPoints<=1)
+            {error="uniform SO(3) powder sampling requires powdersamplingpoints greater than one";return false;}
+            if(plan.powderGridType==SpinAPI::PowderGridType::Uniform&&
+                plan.powderGammaPoints>1&&!domainSpecified)
+            {
+                // Sampling the third Euler angle removes the axial reduction.
+                // Unless the user explicitly supplies another symmetry domain,
+                // theta/phi must cover the full sphere for an SO(3) average.
+                plan.powderDomain=SpinAPI::PowderGridDomain::FullSphere;
+            }
+            if(plan.powderGammaPoints>1) plan.orientation=SSOrientationMode::PowderSO3;
+            else if(generatedPowderGrid) plan.orientation=SSOrientationMode::Powder2D;
+        }
 
         // Any non-identity crystallite orientation must rotate a full
         // Hamiltonian. This includes an explicit one-point orientation.

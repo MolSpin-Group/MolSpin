@@ -23,26 +23,11 @@
 #include "QuantumMap.h"
 #include "SpinSpace.h"
 #include <cmath>
-#include <limits>
 
 namespace RunSection::General::MultiSS
 {
     MultiSSEventController::MultiSSEventController(const MultiSSNetwork &network)
         : applied(network.events.size(),false) {}
-
-    double MultiSSEventController::NextEventAfter(double time,double tolerance) const
-    {
-        double next=std::numeric_limits<double>::infinity();
-        // An unapplied event at the current time is deliberately returned as
-        // the current time so the propagation loop cannot step across it.
-        for(size_t i=0;i<applied.size();++i) if(!applied[i])
-        {
-            // event vector is sorted; no network access here by design, so
-            // NextEventAfter is used only through ApplyAt loop in Propagator.
-        }
-        (void)time;(void)tolerance;
-        return next;
-    }
 
     bool MultiSSEventController::ApplyAt(double time,MultiSSNetwork &network,
         arma::cx_vec &state,std::string &error,double tolerance)

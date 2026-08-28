@@ -25,7 +25,6 @@ namespace RunSection::General::MultiSS
     {
     public:
         explicit MultiSSEventController(const MultiSSNetwork &_network);
-        double NextEventAfter(double _time,double _tolerance=1.0e-12) const;
         bool ApplyAt(double _time,MultiSSNetwork &_network,arma::cx_vec &_state,
             std::string &_error,double _tolerance=1.0e-10);
         bool AllApplied() const;

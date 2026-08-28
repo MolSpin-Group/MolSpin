@@ -56,7 +56,11 @@ namespace RunSection::General::SS
                     error="failed to construct observable State \""+state->Name()+"\"";
                     return false;
                 }
-                if(::RunSection::General::ObservableStateFrame(system,state)==SpinAPI::StateFrame::Molecular&&
+                const SpinAPI::StateFrame observableFrame=
+                    ::RunSection::General::ObservableStateFrame(system,state);
+                if(!::RunSection::General::ValidateProjectorStateFrame(observableFrame,
+                    "observable State \""+state->Name()+"\"",error))return false;
+                if(observableFrame==SpinAPI::StateFrame::Molecular&&
                     plan.orientation!=SSOrientationMode::Identity)
                 {
                     arma::cx_mat rotated;
@@ -68,7 +72,11 @@ namespace RunSection::General::SS
                     projector=std::move(rotated);
                 }
                 SSObservable observable;
-                observable.label=system->Name()+"."+state->Name()+".population";
+                // X=int rho(t)dt has units of time.  Its State projection is a
+                // residence-time integral, not an instantaneous population.
+                observable.label=system->Name()+"."+state->Name()+
+                    (plan.calculation==SSCalculation::TimeIntegrated?
+                        ".integrated_population_ns":".population");
                 observable.op=std::move(projector);
                 labels.push_back(observable.label);
                 observables.push_back(std::move(observable));
@@ -90,8 +98,11 @@ namespace RunSection::General::SS
                 }
 
                 // Reaction/source-frame rotation was already validated in preparation.
-                const bool molecular =
-                    ::RunSection::General::TransitionSourceStateFrame(system,transition) == SpinAPI::StateFrame::Molecular;
+                const SpinAPI::StateFrame sourceFrame=
+                    ::RunSection::General::TransitionSourceStateFrame(system,transition);
+                if(!::RunSection::General::ValidateProjectorStateFrame(sourceFrame,
+                    "transition source State \""+transition->Name()+"\"",error))return false;
+                const bool molecular=sourceFrame==SpinAPI::StateFrame::Molecular;
 
                 if(molecular&&plan.orientation!=SSOrientationMode::Identity)
                 {
@@ -106,7 +117,7 @@ namespace RunSection::General::SS
 
                 SSObservable observable;
                 observable.label=system->Name()+"."+transition->Name()+
-                    (plan.calculation==SSCalculation::TimeEvolution?".flux":".yield");
+                    (plan.calculation==SSCalculation::TimeIntegrated?".yield":".flux");
                 observable.op=std::move(projector);
                 observable.scale=transition->Rate();
                 labels.push_back(observable.label);

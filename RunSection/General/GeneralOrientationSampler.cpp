@@ -25,7 +25,7 @@ namespace RunSection::General
             std::vector<GeneralOrientation> &out)
         {
             if (!std::isfinite(alpha) || !std::isfinite(beta) ||
-                !std::isfinite(gamma) || !std::isfinite(weight))
+                !std::isfinite(gamma) || !std::isfinite(weight) || !(weight > 0.0))
                 return false;
             GeneralOrientation item;
             item.alpha = alpha;
@@ -123,7 +123,8 @@ namespace RunSection::General
             if (!Append(request.explicitAlpha, request.explicitBeta,
                 request.explicitGamma, request.explicitWeight, out))
             {
-                error = "failed to construct explicit " + request.owner + " orientation";
+                error = "explicit " + request.owner +
+                    " orientation requires finite Euler angles and a positive weight";
                 return false;
             }
             log << request.owner << " orientation sampling = explicit ZYZ orientation; "

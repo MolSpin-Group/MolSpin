@@ -53,7 +53,7 @@ namespace RunSection::General::HS
 			arma::rowvec &_values) const;
 		void EvaluateDensity(const std::vector<arma::sp_cx_mat> &_operators, const arma::cx_mat &_density,
 			arma::rowvec &_values) const;
-		bool IntegrateFiniteTime(const arma::mat &_values, double _timeStep,
+		bool IntegrateFiniteTime(const arma::mat &_values, const std::vector<double> &_times,
 			arma::rowvec &_integrated, std::string &_error) const;
 		bool IntegrateTimeline(const std::vector<double> &_times, const arma::mat &_values,
 			bool _enabled, arma::mat &_output, std::string &_error) const;

@@ -36,10 +36,13 @@ namespace RunSection::General::HS
 		SpinAPI::StateFrame frame = SpinAPI::StateFrame::Fixed;
 		SpinAPI::HilbertStateRotationCache rotationCache;
 		std::vector<std::string> dephasingHamiltonian;
+		std::vector<std::string> thermalHamiltonian;
+		double thermalTemperature = 300.0;
 		bool stochastic = false;
 		bool hasRotationCache = false;
 		bool rotationInvariant = false;
 		bool dephaseInHamiltonianEigenbasis = false;
+		bool orientationSpecificThermal = false;
 	};
 
 	// Orientation-specific state used by the propagation engine. Factors satisfy

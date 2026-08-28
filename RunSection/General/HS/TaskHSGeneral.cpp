@@ -27,10 +27,53 @@
 #include <algorithm>
 #include <cmath>
 #include <iomanip>
+#include <limits>
 #include <random>
 
 namespace RunSection::General::HS
 {
+	namespace
+	{
+		bool BuildFreeEvolutionTimes(double totalTime, double timeStep,
+			std::vector<double> &times, std::string &error)
+		{
+			times.clear();
+			times.push_back(0.0);
+			if (totalTime == 0.0)
+				return true;
+
+			// Build targets from integer indices and set the final target exactly
+			// to totalTime.  This avoids both cumulative floating-point drift and
+			// the former ceil(total/dt)-row bug that omitted the requested endpoint.
+			const double ratio = totalTime / timeStep;
+			if (!std::isfinite(ratio) ||
+				ratio > static_cast<double>(std::numeric_limits<size_t>::max() - 1))
+			{
+				error = "HSGeneral free evolution requires too many time intervals";
+				return false;
+			}
+			const double nearest = std::round(ratio);
+			const double ratioTolerance = 64.0 * std::numeric_limits<double>::epsilon() *
+				std::max(1.0, std::abs(ratio));
+			const size_t intervals = static_cast<size_t>(
+				nearest >= 1.0 && std::abs(ratio - nearest) <= ratioTolerance
+					? nearest : std::ceil(ratio));
+			times.reserve(intervals + 1);
+			for (size_t step = 1; step <= intervals; ++step)
+			{
+				const double target = step == intervals
+					? totalTime : std::min(totalTime, static_cast<double>(step) * timeStep);
+				if (!(target > times.back()))
+				{
+					error = "HSGeneral produced a non-increasing free-evolution time grid";
+					return false;
+				}
+				times.push_back(target);
+			}
+			return true;
+		}
+	}
+
 	TaskHSGeneral::TaskHSGeneral(const MSDParser::ObjectParser &parser, const RunSection &runsection)
 		: BasicTask(parser, runsection)
 	{
@@ -224,7 +267,13 @@ namespace RunSection::General::HS
 		std::random_device randomDevice;
 		std::mt19937 generator(randomDevice());
 		HSStatePreparation::SeedGenerator(plan, generator, this->Log());
-		const int numSteps = std::max(1, static_cast<int>(std::ceil(plan.totalTime / plan.timeStep)));
+		std::vector<double> freeTimes;
+		if (!BuildFreeEvolutionTimes(plan.totalTime, plan.timeStep, freeTimes, error))
+		{
+			this->Log() << "ERROR: " << error << "." << std::endl;
+			return false;
+		}
+		const size_t numSteps = freeTimes.size();
 
 		for (const auto &system : this->SpinSystems())
 		{
@@ -391,9 +440,9 @@ namespace RunSection::General::HS
 				}
 
 				arma::mat orientationValues(numSteps, collector.Size(), arma::fill::zeros);
-				for (int step = 0; step < numSteps; ++step)
+				for (size_t step = 0; step < numSteps; ++step)
 				{
-					const double currentTime = static_cast<double>(step) * plan.timeStep;
+					const double currentTime = freeTimes[step];
 					if (plan.IsDynamic())
 						space.SetTime(currentTime);
 
@@ -406,8 +455,15 @@ namespace RunSection::General::HS
 					if (step + 1 >= numSteps)
 						continue;
 
-					const double midpoint = currentTime + 0.5 * plan.timeStep;
-					if (useDensityPropagation && plan.IsDynamic())
+					const double nextTime = freeTimes[step + 1];
+					const double interval = nextTime - currentTime;
+					const double midpoint = currentTime + 0.5 * interval;
+					// Density RK4 already needs the true time-dependent stages.  The
+					// same is required for factor propagation when the user explicitly
+					// selects RK4.  Exponential factor propagation continues to use the
+					// second-order midpoint Hamiltonian below.
+					if (plan.IsDynamic() &&
+						(useDensityPropagation || plan.propagation == PropagationMethod::RK4))
 					{
 						arma::sp_cx_mat hamiltonianStart, hamiltonianMid, hamiltonianEnd;
 						arma::sp_cx_mat reactionStart, reactionMid, reactionEnd;
@@ -419,17 +475,22 @@ namespace RunSection::General::HS
 								staticHamiltonian, hamiltonianMid, error) ||
 							!reaction.ReactionAtTime(midpoint, orientation, staticReaction,
 								reactionMid, error) ||
-							!hamiltonianBuilder.BuildAtTime(orientation, currentTime + plan.timeStep,
+							!hamiltonianBuilder.BuildAtTime(orientation, nextTime,
 								staticHamiltonian, hamiltonianEnd, error) ||
-							!reaction.ReactionAtTime(currentTime + plan.timeStep, orientation,
+							!reaction.ReactionAtTime(nextTime, orientation,
 								staticReaction, reactionEnd, error))
 						{
 							this->Log() << "ERROR: " << error << "." << std::endl;
 							return false;
 						}
-						if (!propagator.StepDensityDynamicRK4(hamiltonianStart, reactionStart,
-							hamiltonianMid, reactionMid, hamiltonianEnd, reactionEnd,
-							plan.timeStep, density, reaction, relaxationContext, error))
+						const bool propagated = useDensityPropagation
+							? propagator.StepDensityDynamicRK4(hamiltonianStart, reactionStart,
+								hamiltonianMid, reactionMid, hamiltonianEnd, reactionEnd,
+								interval, density, reaction, relaxationContext, error)
+							: propagator.StepDynamicRK4(hamiltonianStart, reactionStart,
+								hamiltonianMid, reactionMid, hamiltonianEnd, reactionEnd,
+								interval, factors, error);
+						if (!propagated)
 						{
 							this->Log() << "ERROR: " << error << "." << std::endl;
 							return false;
@@ -451,9 +512,9 @@ namespace RunSection::General::HS
 						if (useDensityPropagation)
 						{
 							const bool ok = plan.propagation == PropagationMethod::RK4
-								? propagator.StepDensity(hamiltonian, reactionOperator, plan.timeStep,
+								? propagator.StepDensity(hamiltonian, reactionOperator, interval,
 									density, reaction, relaxationContext, error)
-								: propagator.StepDensitySplit(hamiltonian, reactionOperator, plan.timeStep,
+								: propagator.StepDensitySplit(hamiltonian, reactionOperator, interval,
 									density, reaction, relaxationContext, error);
 							if (!ok)
 							{
@@ -462,7 +523,7 @@ namespace RunSection::General::HS
 							}
 						}
 						else if (!propagator.Step(hamiltonian, reactionOperator,
-							plan.timeStep, factors, error))
+							interval, factors, error))
 						{
 							this->Log() << "ERROR: " << error << "." << std::endl;
 							return false;
@@ -477,7 +538,7 @@ namespace RunSection::General::HS
 				else
 				{
 					arma::rowvec integratedValues;
-					if (!collector.IntegrateFiniteTime(orientationValues, plan.timeStep,
+					if (!collector.IntegrateFiniteTime(orientationValues, freeTimes,
 						integratedValues, error))
 					{
 						this->Log() << "ERROR: " << error << "." << std::endl;
@@ -497,10 +558,6 @@ namespace RunSection::General::HS
 
 			if (plan.calculation == Calculation::TimeEvolution)
 			{
-				std::vector<double> freeTimes(static_cast<size_t>(numSteps), 0.0);
-				for (int step = 0; step < numSteps; ++step)
-					freeTimes[static_cast<size_t>(step)] = step * plan.timeStep;
-
 				const bool integratePulse = plan.integrateTimeEvolution &&
 					(plan.integrationWindow == TimelineWindow::Pulse ||
 						plan.integrationWindow == TimelineWindow::Full);

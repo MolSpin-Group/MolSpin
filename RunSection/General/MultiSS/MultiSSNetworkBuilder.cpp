@@ -73,8 +73,19 @@ namespace RunSection::General::MultiSS
         {
             G=physical.SourceEffect(); kraus=physical.KrausOperators();
             const auto t=physical.TransitionObject();
-            const bool rotateS=::RunSection::General::TransitionSourceStateFrame(source.local.system,t)==SpinAPI::StateFrame::Molecular;
-            const bool rotateT=target && ::RunSection::General::TransitionTargetStateFrame(target->local.system,t)==SpinAPI::StateFrame::Molecular;
+            const SpinAPI::StateFrame sourceFrame=
+                ::RunSection::General::TransitionSourceStateFrame(source.local.system,t);
+            if(!::RunSection::General::ValidateProjectorStateFrame(sourceFrame,
+                "transition source State \""+t->Name()+"\"",error))return false;
+            SpinAPI::StateFrame targetFrame=SpinAPI::StateFrame::Fixed;
+            if(target)
+            {
+                targetFrame=::RunSection::General::TransitionTargetStateFrame(target->local.system,t);
+                if(!::RunSection::General::ValidateProjectorStateFrame(targetFrame,
+                    "transition target State \""+t->Name()+"\"",error))return false;
+            }
+            const bool rotateS=sourceFrame==SpinAPI::StateFrame::Molecular;
+            const bool rotateT=target&&targetFrame==SpinAPI::StateFrame::Molecular;
             if(!rotateS&&!rotateT)return true;
 
             arma::cx_mat Us=arma::eye<arma::cx_mat>(source.hilbertDimension,source.hilbertDimension);
@@ -201,7 +212,11 @@ namespace RunSection::General::MultiSS
                 else network.continuousChannels.push_back(std::move(compiled));
             }
         }
-        std::sort(network.events.begin(),network.events.end(),[](const auto&a,const auto&b){return a.physical.EventTime()<b.physical.EventTime();});
+        // Equal-time maps need deterministic semantics because maps sharing a
+        // source or target need not commute. Preserve Transition declaration
+        // order while sorting distinct event times chronologically.
+        std::stable_sort(network.events.begin(),network.events.end(),
+            [](const auto&a,const auto&b){return a.physical.EventTime()<b.physical.EventTime();});
 
         if(plan.IsStaticSolve()&&!network.IsTimeIndependent())
         {error="timeintegrated/steadystate requires constant continuous transfer rates and no instantaneous events";return false;}

@@ -426,9 +426,10 @@ namespace
 			}
 		}
 
-		// The corrected spectroscopy task omits its initial boundary and includes
-		// the final endpoint. The still-independent legacy HSGeneral timeline does
-		// the converse, so all but one row must overlap physically.
+		// The spectroscopy task omits its initial boundary, while HSGeneral emits
+		// both t=0 and the exact requested endpoint. Every legacy sample must
+		// therefore occur on the General timeline; one General boundary row may be
+		// task-specific.
 		return matchedRows + 1 >= std::min(legacyRows.size(), generalRows.size());
 	}
 
@@ -732,16 +733,21 @@ bool test_hsgeneral_static_direct_matches_frozen_legacy_reference()
 	auto legacyYieldFixture = BuildHSGeneralPowderYieldSystem();
 	auto generalYieldFixture = BuildHSGeneralPowderYieldSystem();
 
-	const std::string common =
-		"totaltime=0.3;timestep=0.1;propagationmethod=normal;"
+	const std::string tail =
+		"timestep=0.1;propagationmethod=normal;"
 		"transitionyields=true;yieldcorrections=false;";
 	std::string legacyTime, generalTime, legacyYield, generalYield;
-	if (!RunHSGeneralSpectraTask(legacyTimeFixture, "StaticHS-Direct-TimeEvo", common, legacyTime) ||
+	// The frozen tasks allocate ceil(t_total/dt) samples beginning at t=0,
+	// so requesting T+dt is necessary to compare the same physical [0,T]
+	// trajectory/integral with endpoint-correct HSGeneral.
+	if (!RunHSGeneralSpectraTask(legacyTimeFixture, "StaticHS-Direct-TimeEvo",
+			"totaltime=0.4;" + tail, legacyTime) ||
 		!RunHSGeneralSpectraTask(generalTimeFixture, "HSGeneral",
-			"dynamics=static;calculation=timeevolution;sampling=direct;" + common, generalTime) ||
-		!RunHSGeneralSpectraTask(legacyYieldFixture, "StaticHS-Direct-Yields", common, legacyYield) ||
+			"dynamics=static;calculation=timeevolution;sampling=direct;totaltime=0.3;" + tail, generalTime) ||
+		!RunHSGeneralSpectraTask(legacyYieldFixture, "StaticHS-Direct-Yields",
+			"totaltime=0.4;" + tail, legacyYield) ||
 		!RunHSGeneralSpectraTask(generalYieldFixture, "HSGeneral",
-			"dynamics=static;calculation=yields;sampling=direct;" + common, generalYield))
+			"dynamics=static;calculation=yields;sampling=direct;totaltime=0.3;" + tail, generalYield))
 	{
 		return false;
 	}
@@ -834,6 +840,72 @@ bool test_hsgeneral_pulse_preparation_rotates_polarization()
 		log.find("Applied instant pulse \"flip\"") != std::string::npos;
 }
 
+bool test_hsgeneral_finite_pulse_includes_partial_final_interval()
+{
+	auto spin = std::make_shared<SpinAPI::Spin>("E", "type=electron;spin=1/2;");
+	auto up = std::make_shared<SpinAPI::State>("Up", "spin(E)=|1/2>;");
+	auto pulse = std::make_shared<SpinAPI::Pulse>("finite",
+		"type=LongPulseStaticField;field=0.001 0 0;pulsetime=0.25;timestep=0.1;"
+		"group=E;prefactorlist=1,1,1;commonprefactorlist=false;ignoretensorslist=true;");
+	auto system = std::make_shared<SpinAPI::SpinSystem>("System");
+	system->Add(spin);
+	system->Add(up);
+	system->Add(pulse);
+	if (!up->ParseFromSystem(*system) || !system->ValidatePulses().empty())
+		return false;
+	system->SetProperties(std::make_shared<MSDParser::ObjectParser>(
+		"properties", "initialstate=Up;initialstatecoherences=keep;"));
+
+	HSGeneralSpectraSystem fixture{system, up};
+	std::string data;
+	std::string log;
+	if (!RunHSGeneralSpectraTask(fixture, "HSGeneral",
+		"dynamics=static;calculation=timeevolution;sampling=direct;spinlist=E;"
+		"pulsesequence=[\"finite 0\"];printtimeframe=pulse;totaltime=0;"
+		"timestep=0.1;propagationmethod=normal;", data, &log))
+		return false;
+
+	std::string header;
+	std::vector<std::vector<double>> rows;
+	if (!ParseNumericData(data, header, rows) || rows.size() != 4)
+		return false;
+	const std::vector<double> expectedTimes{0.0, 0.1, 0.2, 0.25};
+	for (size_t i = 0; i < rows.size(); ++i)
+		if (rows[i].size() < 2 || std::abs(rows[i][1] - expectedTimes[i]) > 1.0e-13)
+			return false;
+	return log.find("Applied finite pulse \"finite\" for 0.25 ns") != std::string::npos;
+}
+
+bool test_hsgeneral_dynamic_factor_rk4_uses_stage_generators()
+{
+	using namespace RunSection::General::HS;
+	HSExecutionPlan plan;
+	plan.propagation = PropagationMethod::RK4;
+	auto spin = std::make_shared<SpinAPI::Spin>("E", "type=electron;spin=1/2;");
+	SpinAPI::SpinSpace space(std::vector<SpinAPI::spin_ptr>{spin});
+	HSPropagator propagator(plan, space);
+
+	const double h = 0.2;
+	arma::sp_cx_mat zero(1, 1);
+	arma::sp_cx_mat hStart(1, 1);
+	arma::sp_cx_mat hMid(1, 1);
+	arma::sp_cx_mat hEnd(1, 1);
+	hMid(0, 0) = 0.25 * h * h;
+	hEnd(0, 0) = h * h;
+	arma::cx_mat factors(1, 1, arma::fill::ones);
+	std::string error;
+	if (!propagator.StepDynamicRK4(hStart, zero, hMid, zero, hEnd, zero,
+		h, factors, error))
+		return false;
+
+	// H(t)=t^2 is scalar, so the exact factor is exp[-i integral_0^h t^2 dt].
+	// A frozen midpoint generator would use h^3/4 and fails this check; the RK4
+	// stages integrate the time dependence with Simpson weights to h^3/3.
+	const arma::cx_double expected = std::exp(
+		-arma::cx_double(0.0, 1.0) * (h * h * h / 3.0));
+	return std::abs(factors(0, 0) - expected) < 1.0e-6;
+}
+
 bool test_hsgeneral_quantum_yield_cidnp_and_timeinf_polarization()
 {
 	auto quantumFixture = BuildHSGeneralPolarizationYieldSystem();
@@ -882,7 +954,7 @@ bool test_hsgeneral_secular_h0_with_explicit_dynamic_drive_supports_so3()
 
 	std::string header;
 	std::vector<std::vector<double>> rows;
-	return ParseNumericData(data, header, rows) && rows.size() == 3 &&
+	return ParseNumericData(data, header, rows) && rows.size() == 4 &&
 		log.find("orientation=theta/phi/gamma") != std::string::npos &&
 		log.find("Hamiltonian approximation: high-field secular") != std::string::npos;
 }
@@ -966,15 +1038,17 @@ bool test_hsgeneral_direct_relaxation_matches_frozen_legacy_reference()
 	if (!legacyTimeFixture.spinSystem || !generalTimeFixture.spinSystem ||
 		!legacyYieldFixture.spinSystem || !generalYieldFixture.spinSystem) return false;
 
-	const std::string common =
-		"totaltime=0.4;timestep=0.05;propagationmethod=normal;transitionyields=true;yieldcorrections=false;";
+	const std::string tail =
+		"timestep=0.05;propagationmethod=normal;transitionyields=true;yieldcorrections=false;";
 	std::string legacyTime, generalTime, legacyYield, generalYield, generalLog;
-	if (!RunHSGeneralSpectraTask(legacyTimeFixture, "StaticHS-Direct-TimeEvo", common, legacyTime) ||
+	if (!RunHSGeneralSpectraTask(legacyTimeFixture, "StaticHS-Direct-TimeEvo",
+			"totaltime=0.45;" + tail, legacyTime) ||
 		!RunHSGeneralSpectraTask(generalTimeFixture, "HSGeneral",
-			"dynamics=static;calculation=timeevolution;sampling=direct;" + common, generalTime, &generalLog) ||
-		!RunHSGeneralSpectraTask(legacyYieldFixture, "StaticHS-Direct-Yields", common, legacyYield) ||
+			"dynamics=static;calculation=timeevolution;sampling=direct;totaltime=0.4;" + tail, generalTime, &generalLog) ||
+		!RunHSGeneralSpectraTask(legacyYieldFixture, "StaticHS-Direct-Yields",
+			"totaltime=0.45;" + tail, legacyYield) ||
 		!RunHSGeneralSpectraTask(generalYieldFixture, "HSGeneral",
-			"dynamics=static;calculation=yields;sampling=direct;" + common, generalYield))
+			"dynamics=static;calculation=yields;sampling=direct;totaltime=0.4;" + tail, generalYield))
 		return false;
 
 	return SpectraDataNumericallyEqual(legacyTime, generalTime, 3.0e-6) &&
@@ -991,33 +1065,49 @@ bool test_hsgeneral_dynamic_direct_relaxation_matches_frozen_legacy_reference()
 	if (!legacyTimeFixture.spinSystem || !generalTimeFixture.spinSystem ||
 		!legacyYieldFixture.spinSystem || !generalYieldFixture.spinSystem) return false;
 
-	const std::string common =
-		"totaltime=0.3;timestep=0.05;propagationmethod=normal;transitionyields=true;yieldcorrections=false;";
+	const std::string tail =
+		"timestep=0.05;propagationmethod=normal;transitionyields=true;yieldcorrections=false;";
 	std::string legacyTime, generalTime, legacyYield, generalYield;
-	if (!RunHSGeneralSpectraTask(legacyTimeFixture, "DynamicHS-Direct-TimeEvo", common, legacyTime) ||
+	if (!RunHSGeneralSpectraTask(legacyTimeFixture, "DynamicHS-Direct-TimeEvo",
+			"totaltime=0.35;" + tail, legacyTime) ||
 		!RunHSGeneralSpectraTask(generalTimeFixture, "HSGeneral",
-			"dynamics=dynamic;calculation=timeevolution;sampling=direct;" + common, generalTime) ||
-		!RunHSGeneralSpectraTask(legacyYieldFixture, "DynamicHS-Direct-Yields", common, legacyYield) ||
+			"dynamics=dynamic;calculation=timeevolution;sampling=direct;totaltime=0.3;" + tail, generalTime) ||
+		!RunHSGeneralSpectraTask(legacyYieldFixture, "DynamicHS-Direct-Yields",
+			"totaltime=0.35;" + tail, legacyYield) ||
 		!RunHSGeneralSpectraTask(generalYieldFixture, "HSGeneral",
-			"dynamics=dynamic;calculation=yields;sampling=direct;" + common, generalYield))
+			"dynamics=dynamic;calculation=yields;sampling=direct;totaltime=0.3;" + tail, generalYield))
 		return false;
 
 	return SpectraDataNumericallyEqual(legacyTime, generalTime, 4.0e-6) &&
 		SpectraDataNumericallyEqual(legacyYield, generalYield, 4.0e-6);
 }
 
-bool test_hsgeneral_yield_correction_matches_frozen_legacy_reference()
+bool test_hsgeneral_yield_correction_matches_finite_decay_law()
 {
-	auto legacyFixture = BuildHSGeneralPowderYieldSystem();
 	auto generalFixture = BuildHSGeneralPowderYieldSystem();
 	const std::string common =
 		"totaltime=0.5;timestep=0.05;propagationmethod=normal;transitionyields=true;yieldcorrections=true;";
-	std::string legacyData, generalData, generalLog;
-	if (!RunHSGeneralSpectraTask(legacyFixture, "StaticHS-Direct-Yields", common, legacyData) ||
-		!RunHSGeneralSpectraTask(generalFixture, "HSGeneral",
+	std::string generalData, generalLog;
+	if (!RunHSGeneralSpectraTask(generalFixture, "HSGeneral",
 			"dynamics=static;calculation=yields;sampling=direct;" + common, generalData, &generalLog))
 		return false;
-	return SpectraDataNumericallyEqual(legacyData, generalData, 3.0e-6) &&
+	std::string header;
+	std::vector<std::vector<double>> rows;
+	if (!ParseNumericData(generalData, header, rows) || rows.size() != 1 || rows.front().size() != 2)
+		return false;
+	const double rate = 0.02;
+	const double total = 0.5;
+	const double dt = 0.05;
+	double trapezoid = 0.0;
+	for (int step = 1; step <= 10; ++step)
+	{
+		const double left = static_cast<double>(step - 1) * dt;
+		const double right = static_cast<double>(step) * dt;
+		trapezoid += 0.5 * dt * rate *
+			(std::exp(-rate * left) + std::exp(-rate * right));
+	}
+	const double expected = trapezoid / (1.0 - std::exp(-rate * total));
+	return std::abs(rows.front()[1] - expected) < 1.0e-10 &&
 		generalLog.find("Applied the legacy finite-time yield correction") != std::string::npos;
 }
 
@@ -1419,7 +1509,7 @@ bool test_hsgeneral_dynamic_powder_internal_external_and_sampling()
 	// one finite-time integrated result rather than a timeinf solve.
 	return SpectraDataNumericallyEqual(directTime, stochasticTime, 2e-10) &&
 		SpectraDataNumericallyEqual(directYield, stochasticYield, 2e-10) &&
-		timeRows.size() == 3 && yieldRows.size() == 1 &&
+		timeRows.size() == 4 && yieldRows.size() == 1 &&
 		directTime.find("System.Singlet") != std::string::npos &&
 		directTime.find("System.E1Up") != std::string::npos &&
 		directYield.find("System.sink.yield") != std::string::npos &&
@@ -1523,6 +1613,62 @@ bool test_hsgeneral_state_preparation_component_owns_orientation()
 		arma::norm(oriented.factors * oriented.factors.t() - oriented.density, "fro") < 1.0e-10;
 }
 
+bool test_hsgeneral_eigen_thermal_uses_selected_oriented_hamiltonian()
+{
+	auto electron = std::make_shared<SpinAPI::Spin>(
+		"E", "type=electron;spin=1/2;tensor=matrix(\"2.0 0 0;0 2.2 0;0 0 2.6\");");
+	auto thermal = std::make_shared<SpinAPI::Interaction>(
+		"thermal", "type=zeeman;spins=E;field=0 0 3.4;ignoretensors=false;"
+		"commonprefactor=true;prefactor=1;");
+	auto excluded = std::make_shared<SpinAPI::Interaction>(
+		"excluded", "type=singlespin;spins=E;field=500 0 0;commonprefactor=true;prefactor=1;");
+	auto system = std::make_shared<SpinAPI::SpinSystem>("ThermalHS");
+	system->Add(electron);
+	system->Add(thermal);
+	system->Add(excluded);
+	if (!system->ValidateInteractions().empty()) return false;
+	system->SetProperties(std::make_shared<MSDParser::ObjectParser>("properties",
+		"initialstate=Thermal;initialstateframe=eigen;temperature=250;"
+		"thermalhamiltonian=thermal;"));
+
+	MSDParser::ObjectParser parser("general",
+		"type=HSGeneral;dynamics=static;calculation=timeevolution;sampling=direct;"
+		"approximation=secular;hamiltonianh0list=thermal,excluded;"
+		"powderorientation=0.37 0.82 -0.21;totaltime=0;timestep=1;");
+	RunSection::General::HS::HSExecutionPlan plan;
+	std::string error;
+	if (!RunSection::General::HS::ResolveExecutionPlan(parser, plan, error)) return false;
+
+	SpinAPI::SpinSpace space(system);
+	space.UseSuperoperatorSpace(false);
+	std::mt19937 generator(11);
+	std::ostringstream log;
+	RunSection::General::HS::HSPreparedState reference;
+	if (!RunSection::General::HS::HSStatePreparation::Prepare(
+		plan, system, space, reference, generator, log, error) ||
+		!reference.orientationSpecificThermal)
+		return false;
+
+	std::vector<RunSection::General::HS::HSOrientation> orientations;
+	if (!RunSection::General::HS::HSOrientationSampler::Build(
+		plan, orientations, log, error) || orientations.size() != 1)
+		return false;
+	RunSection::General::HS::HSOrientedState oriented;
+	if (!RunSection::General::HS::HSStatePreparation::PrepareForOrientation(
+		plan, space, reference, orientations.front(), oriented, error))
+		return false;
+
+	arma::sp_cx_mat selectedHamiltonian;
+	arma::cx_mat expected;
+	if (!space.BaseHamiltonianRotatedZYZ({"thermal"},
+		orientations.front().frameToLab, selectedHamiltonian) ||
+		!space.ThermalStateFromHamiltonian(
+			arma::cx_mat(selectedHamiltonian), 250.0, expected))
+		return false;
+	return arma::norm(oriented.density - expected, "fro") < 1.0e-12 &&
+		arma::norm(oriented.factors * oriented.factors.t() - expected, "fro") < 1.0e-10;
+}
+
 bool test_hsgeneral_spinapi_reaction_rotation_component()
 {
 	auto fixture = BuildHSGeneralDynamicPowderSystem();
@@ -1589,8 +1735,9 @@ bool test_hsgeneral_observable_component_owns_integration()
 	std::string error;
 	arma::mat values(3, 1, arma::fill::ones);
 	arma::rowvec finite;
-	if (!collector.IntegrateFiniteTime(values, 0.5, finite, error) ||
-		finite.n_elem != 1 || std::abs(finite(0) - 1.0) > 1.0e-12)
+	const std::vector<double> finiteTimes{0.0, 0.5, 1.25};
+	if (!collector.IntegrateFiniteTime(values, finiteTimes, finite, error) ||
+		finite.n_elem != 1 || std::abs(finite(0) - 1.25) > 1.0e-12)
 		return false;
 
 	const std::vector<double> times{0.0, 1.0, 2.0};
@@ -1601,6 +1748,24 @@ bool test_hsgeneral_observable_component_owns_integration()
 		std::abs(timeline(0, 0) - 1.0) < 1.0e-12 &&
 		std::abs(timeline(1, 0) - 1.0) < 1.0e-12 &&
 		std::abs(timeline(2, 0) - 2.0) < 1.0e-12;
+}
+
+bool test_hsgeneral_time_grid_includes_exact_endpoint()
+{
+	auto fixture = BuildHSGeneralSpectraSystem();
+	std::string data;
+	if (!RunHSGeneralSpectraTask(fixture, "HSGeneral",
+		"dynamics=static;calculation=timeevolution;sampling=direct;"
+		"observables=states;totaltime=0.25;timestep=0.2;", data))
+		return false;
+	std::string header;
+	std::vector<std::vector<double>> rows;
+	if (!ParseNumericData(data, header, rows) || rows.size() != 3)
+		return false;
+	return rows[0].size() >= 2 && rows[1].size() >= 2 && rows[2].size() >= 2 &&
+		std::abs(rows[0][1]) < 1.0e-14 &&
+		std::abs(rows[1][1] - 0.2) < 1.0e-14 &&
+		std::abs(rows[2][1] - 0.25) < 1.0e-14;
 }
 
 bool test_hsgeneral_parser_uses_canonical_sampling_keywords_and_warns_krylovtol()
@@ -1653,6 +1818,8 @@ void AddHSGeneralTests(std::vector<test_case> &_cases)
 	_cases.push_back(test_case("HSGeneral defaults are explicit and compatible", test_hsgeneral_defaults_are_explicit_and_compatible));
 	_cases.push_back(test_case("HSGeneral explicit observable modes are unambiguous", test_hsgeneral_explicit_observable_modes_are_unambiguous));
 	_cases.push_back(test_case("HSGeneral pulse preparation rotates polarization", test_hsgeneral_pulse_preparation_rotates_polarization));
+	_cases.push_back(test_case("HSGeneral finite pulse includes partial final interval", test_hsgeneral_finite_pulse_includes_partial_final_interval));
+	_cases.push_back(test_case("HSGeneral dynamic factor RK4 uses time stages", test_hsgeneral_dynamic_factor_rk4_uses_stage_generators));
 	_cases.push_back(test_case("HSGeneral pulse timeline matches DirectSpectra", test_hsgeneral_pulse_timeline_matches_directspectra));
 	_cases.push_back(test_case("HSGeneral quantum yields, CIDNP and timeinf polarization are explicit", test_hsgeneral_quantum_yield_cidnp_and_timeinf_polarization));
 	_cases.push_back(test_case("HSGeneral secular H0 with explicit dynamic drive supports SO3", test_hsgeneral_secular_h0_with_explicit_dynamic_drive_supports_so3));
@@ -1660,7 +1827,7 @@ void AddHSGeneralTests(std::vector<test_case> &_cases)
 	_cases.push_back(test_case("Standalone DirectSpectra retains trace sampling and approximation selection", test_standalone_direct_spectra_retains_trace_sampling_and_approximation));
 	_cases.push_back(test_case("HSGeneral direct relaxation matches frozen legacy reference", test_hsgeneral_direct_relaxation_matches_frozen_legacy_reference));
 	_cases.push_back(test_case("HSGeneral dynamic direct relaxation matches frozen legacy reference", test_hsgeneral_dynamic_direct_relaxation_matches_frozen_legacy_reference));
-	_cases.push_back(test_case("HSGeneral yield correction matches frozen legacy reference", test_hsgeneral_yield_correction_matches_frozen_legacy_reference));
+	_cases.push_back(test_case("HSGeneral yield correction matches finite decay law", test_hsgeneral_yield_correction_matches_finite_decay_law));
 	_cases.push_back(test_case("HSGeneral stochastic mode uses state-aware sampling", test_hsgeneral_stochastic_uses_state_aware_sampling));
 	_cases.push_back(test_case("HSGeneral stochastic state preparation remains factorized", test_hsgeneral_stochastic_preparation_remains_factorized));
 	_cases.push_back(test_case("HSGeneral stochastic powder invariant support avoids dense rotation caches", test_hsgeneral_stochastic_powder_invariant_support_avoids_dense_rotation_cache));
@@ -1674,9 +1841,11 @@ void AddHSGeneralTests(std::vector<test_case> &_cases)
 	_cases.push_back(test_case("HSGeneral dynamic powder gamma matches explicit SO(3) decomposition", test_hsgeneral_dynamic_powder_gamma_matches_external_decomposition));
 	_cases.push_back(test_case("HSGeneral powder rotates orientation-dependent reaction states", test_hsgeneral_powder_rotates_orientation_dependent_reaction_state));
 	_cases.push_back(test_case("HSGeneral state preparation owns orientation policy", test_hsgeneral_state_preparation_component_owns_orientation));
+	_cases.push_back(test_case("HSGeneral eigen Thermal uses selected oriented Hamiltonian", test_hsgeneral_eigen_thermal_uses_selected_oriented_hamiltonian));
 	_cases.push_back(test_case("SpinAPI owns rotated Hilbert reaction operators", test_hsgeneral_spinapi_reaction_rotation_component));
 	_cases.push_back(test_case("HSGeneral propagator owns the timeinf solve", test_hsgeneral_propagator_owns_timeinf_solve));
 	_cases.push_back(test_case("HSGeneral observable collector owns integration", test_hsgeneral_observable_component_owns_integration));
+	_cases.push_back(test_case("HSGeneral time grid includes exact endpoint", test_hsgeneral_time_grid_includes_exact_endpoint));
 	_cases.push_back(test_case("HSGeneral parser uses canonical sampling keywords and warns on krylovtol", test_hsgeneral_parser_uses_canonical_sampling_keywords_and_warns_krylovtol));
 	_cases.push_back(test_case("HSGeneral rejects unsupported physics", test_hsgeneral_rejects_unsupported_physics));
 }

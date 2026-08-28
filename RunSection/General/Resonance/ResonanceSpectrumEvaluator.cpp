@@ -56,17 +56,21 @@ namespace RunSection::General::Resonance
             return false;
         }
 
-        const arma::cx_mat densityEigen = eigenvectors.t() * density * eigenvectors;
+		arma::vec dEdB;
+		if (!ResonanceFieldJacobian::ResolveDegenerateSubspaces(
+			energies, eigenvectors, dHdB, dEdB, error))
+			return false;
+
+		// Resolve degenerate field-following states before transforming either
+		// the density or magnetic-dipole operators. Otherwise populations and
+		// transition moments depend on an arbitrary basis chosen by eig_sym.
+		const arma::cx_mat densityEigen = eigenvectors.t() * density * eigenvectors;
         const arma::vec populations = arma::real(densityEigen.diag());
         if (!populations.is_finite())
         {
             error = "non-finite eigenbasis populations";
             return false;
         }
-
-        arma::vec dEdB;
-        if (!ResonanceFieldJacobian::DiagonalEnergyDerivatives(eigenvectors, dHdB, dEdB, error))
-            return false;
 
         std::vector<Transition> transitions;
         const double omegaMw = 2.0 * arma::datum::pi * request.microwaveFrequencyGHz;

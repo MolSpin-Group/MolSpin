@@ -9,6 +9,12 @@
 // reaction sources and State observables cannot acquire backend-dependent
 // orientation semantics.
 //
+// `eigen` is intentionally limited to a Thermal initial state.  A named State
+// projector has no unique "eigen frame" without specifying which Hamiltonian,
+// degeneracy convention, and state-to-eigenvector assignment define it.  The
+// General backends therefore reject eigen for reactions/observables instead of
+// silently treating it as a fixed laboratory projector.
+//
 // Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
 // (c) 2026 Quantum Biology and Computational Physics Group.
 // See LICENSE.txt for license information.
@@ -99,6 +105,17 @@ namespace RunSection::General
 			state->Properties()->Get("observable_state_frame", value)))
 			return fallback;
 		return ParseStateFrame(value, fallback);
+	}
+
+	inline bool ValidateProjectorStateFrame(SpinAPI::StateFrame frame,
+		const std::string &object, std::string &error)
+	{
+		if (frame != SpinAPI::StateFrame::Eigen)
+			return true;
+		error = object +
+			" uses frame=eigen, which is defined only for a Thermal initial state; "
+			"use frame=fixed or frame=molecular for named State projectors";
+		return false;
 	}
 }
 

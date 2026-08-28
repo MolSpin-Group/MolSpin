@@ -38,6 +38,11 @@ namespace RunSection::General::HS
 
 		bool Step(const arma::sp_cx_mat &_hamiltonian, const arma::sp_cx_mat &_reaction,
 			double _dt, arma::cx_mat &_factors, std::string &_error);
+		bool StepDynamicRK4(const arma::sp_cx_mat &_hamiltonianStart,
+			const arma::sp_cx_mat &_reactionStart, const arma::sp_cx_mat &_hamiltonianMid,
+			const arma::sp_cx_mat &_reactionMid, const arma::sp_cx_mat &_hamiltonianEnd,
+			const arma::sp_cx_mat &_reactionEnd, double _dt, arma::cx_mat &_factors,
+			std::string &_error);
 		bool StepDensity(const arma::sp_cx_mat &_hamiltonian, const arma::sp_cx_mat &_reaction,
 			double _dt, arma::cx_mat &_density, const HSReactionRelaxation &_relaxation,
 			const HSRelaxationContext &_context, std::string &_error);

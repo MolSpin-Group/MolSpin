@@ -205,6 +205,11 @@ namespace RunSection::General::HS
 				error = "powderorientation must contain alpha beta [gamma [weight]]";
 				return false;
 			}
+			if (!(plan.explicitWeight > 0.0))
+			{
+				error = "explicit powderorientation weight must be positive";
+				return false;
+			}
 			explicitOrientationSpecified = true;
 		}
 		else
@@ -221,7 +226,7 @@ namespace RunSection::General::HS
 			if (thetaSpecified || phiSpecified || weightSpecified)
 			{
 				if (!(thetaSpecified && phiSpecified) || !std::isfinite(theta) ||
-					!std::isfinite(phi) || !std::isfinite(weight))
+					!std::isfinite(phi) || !std::isfinite(weight) || !(weight > 0.0))
 				{
 					error = "explicit powder orientation requires finite powdertheta and powderphi [powderweight]";
 					return false;

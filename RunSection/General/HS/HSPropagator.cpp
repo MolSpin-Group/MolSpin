@@ -17,6 +17,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <ostream>
 
 namespace RunSection::General::HS
@@ -72,6 +73,33 @@ namespace RunSection::General::HS
 			return true;
 		}
 		}
+	}
+
+	bool HSPropagator::StepDynamicRK4(const arma::sp_cx_mat &hamiltonianStart,
+		const arma::sp_cx_mat &reactionStart, const arma::sp_cx_mat &hamiltonianMid,
+		const arma::sp_cx_mat &reactionMid, const arma::sp_cx_mat &hamiltonianEnd,
+		const arma::sp_cx_mat &reactionEnd, double dt, arma::cx_mat &factors,
+		std::string &error)
+	{
+		error.clear();
+		if (factors.is_empty())
+		{
+			error = "cannot propagate an empty Hilbert factor";
+			return false;
+		}
+
+		// For dB/dt=G(t)B, classical RK4 needs G at t, t+h/2 and
+		// t+h. Freezing G at the midpoint is an exponential-midpoint method,
+		// not fourth-order Runge-Kutta for a time-dependent Hamiltonian.
+		const arma::sp_cx_mat start = -arma::cx_double(0.0, 1.0) * hamiltonianStart - reactionStart;
+		const arma::sp_cx_mat middle = -arma::cx_double(0.0, 1.0) * hamiltonianMid - reactionMid;
+		const arma::sp_cx_mat end = -arma::cx_double(0.0, 1.0) * hamiltonianEnd - reactionEnd;
+		const arma::cx_mat k1 = start * factors;
+		const arma::cx_mat k2 = middle * (factors + 0.5 * dt * k1);
+		const arma::cx_mat k3 = middle * (factors + 0.5 * dt * k2);
+		const arma::cx_mat k4 = end * (factors + dt * k3);
+		factors += (dt / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4);
+		return factors.is_finite();
 	}
 
 	bool HSPropagator::StepDensity(const arma::sp_cx_mat &hamiltonian,
@@ -297,18 +325,40 @@ namespace RunSection::General::HS
 					if (!emit()) return false;
 					emittedInitialFinitePulseState = true;
 				}
-				const unsigned int steps = static_cast<unsigned int>(std::floor(std::abs(pulseTime / pulseDt) + 1.0e-12));
-				for (unsigned int n = 1; n <= steps; ++n)
+				const double ratio = pulseTime / pulseDt;
+				if (!std::isfinite(ratio) ||
+					ratio > static_cast<double>(std::numeric_limits<size_t>::max()))
 				{
+					error = "pulse \"" + pulseName + "\" requires too many propagation intervals";
+					return false;
+				}
+				const double nearest = std::round(ratio);
+				const double ratioTolerance = 64.0 * std::numeric_limits<double>::epsilon() *
+					std::max(1.0, std::abs(ratio));
+				const size_t intervals = pulseTime == 0.0 ? 0 : static_cast<size_t>(
+					nearest >= 1.0 && std::abs(ratio - nearest) <= ratioTolerance
+						? nearest : std::ceil(ratio));
+				double pulseElapsed = 0.0;
+				for (size_t n = 1; n <= intervals; ++n)
+				{
+					const double target = n == intervals
+						? pulseTime : std::min(pulseTime, static_cast<double>(n) * pulseDt);
+					const double interval = target - pulseElapsed;
+					if (!(interval > 0.0))
+					{
+						error = "pulse \"" + pulseName + "\" produced a non-increasing time grid";
+						return false;
+					}
 					double amplitude = 1.0;
 					if (type == SpinAPI::PulseType::LongPulse)
-						amplitude = std::cos(pulse->Frequency() * (static_cast<double>(n) * pulseDt));
+						amplitude = std::cos(pulse->Frequency() * target);
 					const arma::sp_cx_mat H = baseHamiltonian + amplitude * pulseOperator;
-					if (!propagate(H, pulseDt)) return false;
-					elapsedTime += pulseDt;
+					if (!propagate(H, interval)) return false;
+					pulseElapsed = target;
+					elapsedTime += interval;
 					if (!emit()) return false;
 				}
-				log << "Applied finite pulse \"" << pulseName << "\" for " << steps * pulseDt << " ns." << std::endl;
+				log << "Applied finite pulse \"" << pulseName << "\" for " << pulseElapsed << " ns." << std::endl;
 			}
 
 			if (freeDelay > 0.0)

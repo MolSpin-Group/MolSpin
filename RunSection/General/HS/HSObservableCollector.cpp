@@ -90,8 +90,11 @@ namespace RunSection::General::HS
 				if (!space.GetState(transition->SourceState(), observable.stateOrSource))
 				{ error = "failed to obtain transition source State \"" + transition->SourceState()->Name() + "\""; return false; }
 				observable.hasStateOrSource = true;
-				if (plan.IsPowder() &&
-					::RunSection::General::TransitionSourceStateFrame(system, transition) == SpinAPI::StateFrame::Molecular)
+				const SpinAPI::StateFrame sourceFrame =
+					::RunSection::General::TransitionSourceStateFrame(system, transition);
+				if (!::RunSection::General::ValidateProjectorStateFrame(sourceFrame,
+					"transition source State \"" + transition->Name() + "\"", error)) return false;
+				if (plan.IsPowder() && sourceFrame == SpinAPI::StateFrame::Molecular)
 				{
 					if (!PrepareStateRotation(observable.stateOrSource, space,
 						observable.stateRotationCache, observable.rotateStateOrSource, error)) return false;
@@ -140,8 +143,11 @@ namespace RunSection::General::HS
 						if (!space.GetState(transition->SourceState(), observable.stateOrSource))
 						{ error = "failed to construct CIDSP source State for transition \"" + transition->Name() + "\""; return false; }
 						observable.hasStateOrSource = true;
-						if (plan.IsPowder() &&
-							::RunSection::General::TransitionSourceStateFrame(system, transition) == SpinAPI::StateFrame::Molecular)
+						const SpinAPI::StateFrame sourceFrame =
+							::RunSection::General::TransitionSourceStateFrame(system, transition);
+						if (!::RunSection::General::ValidateProjectorStateFrame(sourceFrame,
+							"transition source State \"" + transition->Name() + "\"", error)) return false;
+						if (plan.IsPowder() && sourceFrame == SpinAPI::StateFrame::Molecular)
 						{
 							if (!PrepareStateRotation(observable.stateOrSource, space,
 								observable.stateRotationCache, observable.rotateStateOrSource, error)) return false;
@@ -189,8 +195,11 @@ namespace RunSection::General::HS
 				if (!space.GetState(state, observable.stateOrSource))
 				{ error = "failed to obtain State projector \"" + state->Name() + "\""; return false; }
 				observable.hasStateOrSource = true;
-				const bool molecular =
-					::RunSection::General::ObservableStateFrame(system, state) == SpinAPI::StateFrame::Molecular;
+				const SpinAPI::StateFrame observableFrame =
+					::RunSection::General::ObservableStateFrame(system, state);
+				if (!::RunSection::General::ValidateProjectorStateFrame(observableFrame,
+					"observable State \"" + state->Name() + "\"", error)) return false;
+				const bool molecular = observableFrame == SpinAPI::StateFrame::Molecular;
 				hasMolecularFrameObservable = hasMolecularFrameObservable || molecular;
 				if (plan.IsPowder() && molecular)
 				{
@@ -274,18 +283,27 @@ namespace RunSection::General::HS
 	}
 
 
-	bool HSObservableCollector::IntegrateFiniteTime(const arma::mat &values, double timeStep,
+	bool HSObservableCollector::IntegrateFiniteTime(const arma::mat &values,
+		const std::vector<double> &times,
 		arma::rowvec &integrated, std::string &error) const
 	{
 		error.clear();
 		integrated.zeros(values.n_cols);
-		if (!std::isfinite(timeStep) || !(timeStep > 0.0))
+		if (times.size() != values.n_rows)
 		{
-			error = "finite-time observable integration requires a positive finite timestep";
+			error = "finite-time observable sample times and rows have different sizes";
 			return false;
 		}
 		for (arma::uword row = 1; row < values.n_rows; ++row)
-			integrated += (0.5 * timeStep) * (values.row(row - 1) + values.row(row));
+		{
+			const double dt = times[row] - times[row - 1];
+			if (!std::isfinite(dt) || !(dt > 0.0))
+			{
+				error = "finite-time observable sample times must be finite and strictly increasing";
+				return false;
+			}
+			integrated += (0.5 * dt) * (values.row(row - 1) + values.row(row));
+		}
 		return true;
 	}
 
