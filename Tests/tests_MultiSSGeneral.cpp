@@ -135,6 +135,38 @@ bool test_multiss_constant_transfer_matches_analytic_two_level_kinetics()
     return std::abs(pA-ref)<2.0e-10 && std::abs(pB-(1.0-ref))<2.0e-10 && std::abs(pA+pB-1.0)<2.0e-11;
 }
 
+
+bool test_multiss_krylov_handles_fast_transfer_without_rk4_stability_limit()
+{
+    auto A=ScalarSystem("A",true),B=ScalarSystem("B",false);
+    A->Add(std::make_shared<SpinAPI::Transition>("fast",
+        "type=sink;sourcestate=State;target=B;targetstate=State;rate=50;",A));
+    std::vector<SpinAPI::system_ptr> systems{A,B};if(!ValidateSystemObjects(systems))return false;
+    MultiSSExecutionPlan plan;plan.totalTime=1.0;plan.timeStep=1.0;
+    plan.propagation=MultiSSPropagation::Krylov;plan.krylovDimension=30;plan.krylovTolerance=1.0e-12;
+    MultiSSOrientation o;SpinAPI::CreateZYZRotationMatrix(0,0,0,o.frameToLab);
+    MultiSSNetwork network;std::string error;if(!MultiSSNetworkBuilder::Build(systems,plan,o,network,error))return false;
+    MultiSSTrajectory trajectory;if(!MultiSSPropagator::Propagate(plan,network,trajectory,error)){std::cout<<error<<std::endl;return false;}
+    const double pA=BlockTrace(network,trajectory.states.back(),0),pB=BlockTrace(network,trajectory.states.back(),1);
+    const double ref=std::exp(-50.0);
+    return std::abs(pA-ref)<1.0e-11 && std::abs(pB-(1.0-ref))<1.0e-11;
+}
+
+bool test_multiss_exponential_allows_static_generator_with_exact_event_boundary()
+{
+    auto A=ScalarSystem("A",true),B=ScalarSystem("B",false);
+    A->Add(std::make_shared<SpinAPI::Transition>("push",
+        "type=sink;sourcestate=State;target=B;targetstate=State;rate=0;rateprofile=instantaneous;eventtime=0.5;transferfraction=0.4;",A));
+    std::vector<SpinAPI::system_ptr> systems{A,B};if(!ValidateSystemObjects(systems))return false;
+    MultiSSExecutionPlan plan;plan.totalTime=1.0;plan.timeStep=0.8;plan.propagation=MultiSSPropagation::Exponential;
+    MultiSSOrientation o;SpinAPI::CreateZYZRotationMatrix(0,0,0,o.frameToLab);
+    MultiSSNetwork network;std::string error;if(!MultiSSNetworkBuilder::Build(systems,plan,o,network,error))return false;
+    MultiSSTrajectory trajectory;if(!MultiSSPropagator::Propagate(plan,network,trajectory,error)){std::cout<<error<<std::endl;return false;}
+    bool found=false;for(double tt:trajectory.times)if(std::abs(tt-0.5)<1.0e-14)found=true;
+    const double pA=BlockTrace(network,trajectory.states.back(),0),pB=BlockTrace(network,trajectory.states.back(),1);
+    return found && std::abs(pA-0.6)<1.0e-12 && std::abs(pB-0.4)<1.0e-12;
+}
+
 bool test_multiss_instantaneous_event_lands_exactly_and_applies_once()
 {
     auto A=ScalarSystem("A",true),B=ScalarSystem("B",false);
@@ -444,6 +476,8 @@ void AddMultiSSGeneralTests(std::vector<test_case> &cases)
     cases.push_back(test_case("MultiSS Gaussian rate fraction normalization",test_multiss_timeprofile_gaussian_fraction_normalization));
     cases.push_back(test_case("MultiSS preservespins preserves nuclear coherence",test_multiss_preservespins_keeps_arbitrary_nuclear_coherence));
     cases.push_back(test_case("MultiSS constant transfer analytic kinetics",test_multiss_constant_transfer_matches_analytic_two_level_kinetics));
+    cases.push_back(test_case("MultiSS Krylov fast transfer stability",test_multiss_krylov_handles_fast_transfer_without_rk4_stability_limit));
+    cases.push_back(test_case("MultiSS exponential static plus event",test_multiss_exponential_allows_static_generator_with_exact_event_boundary));
     cases.push_back(test_case("MultiSS event boundary exact and once",test_multiss_instantaneous_event_lands_exactly_and_applies_once));
     cases.push_back(test_case("MultiSS timeintegrated solve semantics",test_multiss_timeintegrated_is_not_steadystate));
     cases.push_back(test_case("MultiSS true steady state",test_multiss_true_steadystate_closed_reversible_network));

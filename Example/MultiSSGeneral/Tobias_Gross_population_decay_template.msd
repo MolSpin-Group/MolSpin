@@ -85,11 +85,18 @@ SpinSystem S1
         rate = 0.020;          // DEMO VALUE, inverse MolSpin time unit
     }
 
-    Transition S1Decay
+    // Separate the detected radiative channel from other S1 loss.
+    Transition Fluorescence
     {
         type = sink;
         source = S1State;
-        rate = 0.005;          // DEMO terminal decay; product not explicitly represented
+        rate = 0.003;          // DEMO VALUE
+    }
+    Transition NonRadiative
+    {
+        type = sink;
+        source = S1State;
+        rate = 0.002;          // DEMO VALUE; total S1 loss remains 0.005
     }
 
     // No initialstate: this manifold starts with exactly zero population.
@@ -98,17 +105,19 @@ SpinSystem S1
 
 SpinSystem CSS
 {
+    // Synthetic values below demonstrate the rotational-modulation syntax.
+    // Replace all tensor/rate values before scientific use.
     Spin e1
     {
         spin = 1/2;
         type = electron;
-        tensor = isotropic("2.0023");
+        tensor = isotropic("2.0036666667");
     }
     Spin e2
     {
         spin = 1/2;
         type = electron;
-        tensor = isotropic("2.0023");
+        tensor = isotropic("2.0030");
     }
     Spin N1
     {
@@ -116,14 +125,27 @@ SpinSystem CSS
         type = nucleus;
     }
 
-    // Minimal demonstration Hamiltonian. Replace/extend this block with the
-    // experimentally justified g tensors, hyperfine tensors, exchange,
-    // dipolar interactions, and relaxation model for the real dyad/triad.
-    Interaction B0
+    // Rotationally averaged static Hamiltonian plus rotational modulation.
+    // For isotropic solution tumbling, rank 0 is invariant; only rank 2 relaxes.
+    Interaction B1
     {
         type = zeeman;
         field = "0 0 0.10";
-        spins = e1,e2;
+        spins = e1;
+        // Synthetic g principal values: (2.0020,2.0030,2.0060).
+        ops=0; terms=1; def_g=1; coeff=0;
+        g=0,0.115779707143,0.115779707143,0.115779707143,0.115779707143,0.115779707143;
+        tau_c=0.6;
+    }
+    Interaction B2 { type=zeeman; field="0 0 0.10"; spins=e2; }
+    Interaction A1
+    {
+        type=hyperfine; group1=e1; group2=N1; ignoretensors=true;
+        // Synthetic principal HFC=(0.0002,0.0003,0.0008) T; static Aiso only.
+        tensor=isotropic(0.000433333333); prefactor=2.0036666667;
+        ops=0; terms=1; def_g=1; coeff=0;
+        g=0,0.035823423785,0.035823423785,0.035823423785,0.035823423785,0.035823423785;
+        tau_c=0.6;
     }
 
     // Singlet/triplet are SUBSPACES of this one quantum CSS SpinSystem. They
@@ -207,9 +229,13 @@ Run
     {
         type = MultiSSGeneral;
         calculation = timeevolution;
+        relaxationmodel = nakajima_zwanzig;
 
-        // RK4 is required for finite time-dependent Gaussian rates/events.
-        propagationmethod = rk4;
+        // Krylov removes the fixed-step RK4 stability restriction; timestep still
+        // has to resolve the Gaussian/experimental time dependence.
+        propagationmethod = krylov;
+        krylovdimension = 30;
+        krylovtolerance = 1e-10;
         timestep = 0.10;
         totaltime = 500.0;
 

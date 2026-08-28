@@ -40,6 +40,7 @@ namespace RunSection::General::MultiSS
         std::vector<MultiSSNetworkChannel> events;
 
         arma::sp_cx_mat Generator(double _time) const;
+        bool ContinuousGeneratorIsTimeIndependent() const;
         bool IsTimeIndependent() const;
         bool HasEvents() const { return !events.empty(); }
         bool IsTracePreserving(double _tolerance, double *_residual=nullptr) const;

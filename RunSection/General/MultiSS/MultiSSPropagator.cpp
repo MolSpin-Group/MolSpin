@@ -35,9 +35,11 @@
 /////////////////////////////////////////////////////////////////////////
 #include "MultiSSPropagator.h"
 #include "MultiSSEventController.h"
+#include "SpinSpace.h"
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <utility>
 
 namespace RunSection::General::MultiSS
 {
@@ -67,6 +69,33 @@ namespace RunSection::General::MultiSS
             const arma::cx_vec k4=network.Generator(t+h)*(x+h*k3);
             return x+(h/6.0)*(k1+2.0*k2+2.0*k3+k4);
         }
+
+        // Exponential-midpoint propagation. Constant L gives exp(hL)x;
+        // time-dependent L(t) uses the second-order midpoint/Magnus step.
+        bool KrylovStep(const MultiSSExecutionPlan &plan,const MultiSSNetwork &network,
+            const arma::cx_vec &x,double t,double h,arma::cx_vec &out,
+            std::string &error,int depth=0)
+        {
+            if(depth>20)
+            {error="Krylov MultiSS propagation exceeded the subdivision limit; reduce timestep or increase krylovdimension";return false;}
+            if(network.systems.globalDimension>static_cast<arma::uword>(std::numeric_limits<int>::max()))
+            {error="Krylov MultiSS propagation exceeds the supported integer dimension";return false;}
+
+            const arma::sp_cx_mat L=network.Generator(t+0.5*h);
+            const int n=static_cast<int>(network.systems.globalDimension);
+            const int m=std::min(plan.krylovDimension,n);
+            SpinAPI::SpinSpace helper;
+            const auto step=helper.KrylovExpmGeneral(L,x,arma::cx_double(h,0.0),m,n);
+            if(!step.result.is_finite() || !std::isfinite(step.error_estimate))
+            {error="Krylov MultiSS propagation produced a non-finite result/error estimate";return false;}
+            const double scale=std::max({1.0,arma::norm(x,2),arma::norm(step.result,2)});
+            if(step.error_estimate<=plan.krylovTolerance*scale)
+            {out=step.result;return true;}
+
+            arma::cx_vec mid;
+            if(!KrylovStep(plan,network,x,t,0.5*h,mid,error,depth+1))return false;
+            return KrylovStep(plan,network,mid,t+0.5*h,0.5*h,out,error,depth+1);
+        }
     }
 
     bool MultiSSPropagator::Propagate(const MultiSSExecutionPlan &plan,MultiSSNetwork &network,
@@ -75,8 +104,8 @@ namespace RunSection::General::MultiSS
         trajectory=MultiSSTrajectory();error.clear();
         if(plan.calculation!=MultiSSCalculation::TimeEvolution)
         {error="MultiSSPropagator::Propagate requires calculation=timeevolution";return false;}
-        if(plan.propagation==MultiSSPropagation::Exponential && !network.IsTimeIndependent())
-        {error="exponential MultiSS propagation currently requires a time-independent generator with no instantaneous events; use rk4 for finite optical profiles/events";return false;}
+        if(plan.propagation==MultiSSPropagation::Exponential && !network.ContinuousGeneratorIsTimeIndependent())
+        {error="exponential MultiSS propagation requires time-independent continuous rates; use krylov or rk4 for finite optical profiles";return false;}
 
         arma::cx_vec state=network.systems.initialState;
         MultiSSEventController events(network);
@@ -92,10 +121,25 @@ namespace RunSection::General::MultiSS
 
             if(plan.propagation==MultiSSPropagation::RK4)
                 state=RK4Step(network,state,t,h);
-            else
+            else if(plan.propagation==MultiSSPropagation::Exponential)
                 state=arma::expmat(arma::cx_mat(network.Generator(t))*h)*state;
+            else
+            {
+                arma::cx_vec next;
+                if(!KrylovStep(plan,network,state,t,h,next,error))return false;
+                state=std::move(next);
+            }
             if(!state.is_finite()){error="MultiSS propagation produced a non-finite state";return false;}
             t+=h;
+
+            // Avoid a roundoff-sized final propagation interval.  Repeated
+            // addition of timestep can leave t microscopically below
+            // totalTime even when the physical endpoint has been reached.
+            const double finalTolerance =
+                1.0e-12*std::max(1.0,std::abs(plan.totalTime));
+            if(std::abs(t-plan.totalTime)<=finalTolerance)
+                t=plan.totalTime;
+
             // Snap to a scheduled event when roundoff is the only difference.
             for(const auto&e:network.events)
                 if(std::abs(t-e.physical.EventTime())<1.0e-11*std::max(1.0,std::abs(t)))t=e.physical.EventTime();

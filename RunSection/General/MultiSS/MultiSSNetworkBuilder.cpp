@@ -153,10 +153,15 @@ namespace RunSection::General::MultiSS
         return L;
     }
 
-    bool MultiSSNetwork::IsTimeIndependent() const
+    bool MultiSSNetwork::ContinuousGeneratorIsTimeIndependent() const
     {
         for(const auto &c:continuousChannels) if(!c.physical.IsTimeIndependent())return false;
-        return events.empty();
+        return true;
+    }
+
+    bool MultiSSNetwork::IsTimeIndependent() const
+    {
+        return ContinuousGeneratorIsTimeIndependent() && events.empty();
     }
 
     bool MultiSSNetwork::IsTracePreserving(double tolerance,double *residual) const

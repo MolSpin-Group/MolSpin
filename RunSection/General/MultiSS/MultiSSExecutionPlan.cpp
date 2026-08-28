@@ -78,6 +78,8 @@ namespace RunSection::General::MultiSS
 
         p.Get("totaltime", plan.totalTime); p.Get("timestep", plan.timeStep);
         p.Get("solverresidualtolerance", plan.solverResidualTolerance);
+        p.Get("krylovdimension", plan.krylovDimension);
+        p.Get("krylovtolerance", plan.krylovTolerance);
         p.Get("diagnostics", plan.diagnostics);
         p.Get("transitionfluxes", plan.transitionFluxes);
         if (!std::isfinite(plan.totalTime) || plan.totalTime < 0.0)
@@ -86,12 +88,17 @@ namespace RunSection::General::MultiSS
         { error="timestep must be finite and positive"; return false; }
         if (!std::isfinite(plan.solverResidualTolerance) || !(plan.solverResidualTolerance > 0.0))
         { error="solverresidualtolerance must be finite and positive"; return false; }
+        if (plan.krylovDimension < 2)
+        { error="krylovdimension must be at least two"; return false; }
+        if (!std::isfinite(plan.krylovTolerance) || !(plan.krylovTolerance > 0.0))
+        { error="krylovtolerance must be finite and positive"; return false; }
 
         value = "rk4";
         ReadString(p,{"propagationmethod","propagator"},value);
         if (value=="rk4" || value=="explicit") plan.propagation=MultiSSPropagation::RK4;
         else if (value=="exponential" || value=="exp" || value=="normal") plan.propagation=MultiSSPropagation::Exponential;
-        else { error="propagationmethod must be rk4 or exponential"; return false; }
+        else if (value=="krylov" || value=="arnoldi" || value=="expmv") plan.propagation=MultiSSPropagation::Krylov;
+        else { error="propagationmethod must be rk4, exponential, or krylov"; return false; }
 
         value = "both";
         ReadString(p,{"observables","observablemode"},value);
@@ -240,7 +247,15 @@ namespace RunSection::General::MultiSS
     const char *ToString(MultiSSCalculation v)
     { switch(v){case MultiSSCalculation::TimeEvolution:return "timeevolution";case MultiSSCalculation::TimeIntegrated:return "timeintegrated";case MultiSSCalculation::SteadyState:return "steadystate";} return "unknown"; }
     const char *ToString(MultiSSPropagation v)
-    { return v==MultiSSPropagation::RK4?"rk4":"exponential"; }
+    {
+        switch(v)
+        {
+        case MultiSSPropagation::RK4:return "rk4";
+        case MultiSSPropagation::Exponential:return "exponential";
+        case MultiSSPropagation::Krylov:return "krylov";
+        }
+        return "unknown";
+    }
     const char *ToString(MultiSSObservableMode v)
     { switch(v){case MultiSSObservableMode::Populations:return "populations";case MultiSSObservableMode::States:return "states";case MultiSSObservableMode::Both:return "both";} return "unknown"; }
     const char *ToString(MultiSSOrientationMode v)

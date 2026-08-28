@@ -24,7 +24,7 @@
 namespace RunSection::General::MultiSS
 {
     enum class MultiSSCalculation { TimeEvolution, TimeIntegrated, SteadyState };
-    enum class MultiSSPropagation { RK4, Exponential };
+    enum class MultiSSPropagation { RK4, Exponential, Krylov };
     enum class MultiSSObservableMode { Populations, States, Both };
     enum class MultiSSOrientationMode { Identity, Explicit, Powder2D, PowderSO3 };
 
@@ -41,6 +41,8 @@ namespace RunSection::General::MultiSS
         double totalTime = 1000.0;
         double timeStep = 1.0;
         double solverResidualTolerance = 1.0e-8;
+        int krylovDimension = 30;
+        double krylovTolerance = 1.0e-10;
         bool diagnostics = true;
         bool transitionFluxes = false;
 

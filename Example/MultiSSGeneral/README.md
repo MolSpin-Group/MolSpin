@@ -14,7 +14,11 @@ The output contains columns such as:
 - `css.singlet.population`, `css.t0.population`, ...
 - per-transition instantaneous fluxes when `transitionfluxes=true`
 
-For fluorescence comparison, a simple instrument-level model can be constructed afterwards as `I_F(t)=k_F P_S1(t)` (and convolved with the instrument response if required). MolSpin reports the primitive population so experiment-specific detection factors are not hard-coded into the dynamics.
+For fluorescence comparison, the updated template exposes a dedicated `Fluorescence` sink, so `S1.Fluorescence.flux = k_F P_S1(t)` is the direct primitive observable (and can be convolved with the instrument response afterwards).
+
+The updated template uses spherical (`ops=0`) Nakajima-Zwanzig rotational modulation for g-tensor anisotropy and anisotropic hyperfine fluctuations. For isotropic rotational diffusion the six `def_g=1` factors are `0,G,G,G,G,G`: rank 0 is rotationally invariant and the five rank-2 channels share the same rotational correlation. The numerical factors are synthetic and must be replaced by values derived from the real tensors.
+
+With the MultiSS Krylov update, `propagationmethod=krylov` applies the existing sparse Arnoldi/Krylov exponential action to each event-aware time interval. This avoids the conditional-stability restriction of fixed-step RK4; `timestep` still has to resolve a finite Gaussian rate profile.
 
 ## `preservespins` is not a pulse-selection keyword
 
@@ -51,5 +55,5 @@ with `k_peak` chosen such that an isolated one-way supported population obeys `f
 - T. Groß et al., delayed fluorescence / spin-correlated charge-separated states: DOI `10.1039/D6SC02081J`.
 - Finite Gaussian optical rate in an NV-center rate model: DOI `10.1038/ncomms14000`.
 - Mims et al. pump/push instantaneous-operation limit: DOI `10.1126/science.abl4254`.
-
-See `docs/MULTISS_GENERAL.md` for architecture, calculation-mode semantics, limitations, and the NZ migration status.
+- P. Mentzel et al., g-tensor-anisotropy relaxation at high field: DOI `10.1021/jacs.5c06173`.
+- L. Gerhards et al., MolSpin rotational-relaxation formalism: DOI `10.1002/jcc.27120`.

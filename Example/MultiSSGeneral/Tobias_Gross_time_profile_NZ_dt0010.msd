@@ -68,9 +68,9 @@ Run
         type=MultiSSGeneral; calculation=timeevolution;
         relaxationmodel=nakajima_zwanzig;
         propagationmethod=krylov; krylovdimension=30; krylovtolerance=1e-10;
-        timestep=0.02; totaltime=10;
+        timestep=0.01; totaltime=10;
         observables=both; transitionfluxes=true;
-        datafile="Tobias_Gross_time_profile_NZ_smoketest.dat";
-        logfile="Tobias_Gross_time_profile_NZ_smoketest.log";
+        datafile="Tobias_Gross_time_profile_NZ_dt0010.dat";
+        logfile="Tobias_Gross_time_profile_NZ_dt0010.log";
     }
 }
