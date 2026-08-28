@@ -1,4 +1,11 @@
 /////////////////////////////////////////////////////////////////////////
+// ResonanceTransitionMoments implementation (RunSection::General::Resonance)
+//
+// Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
+// (c) 2026 Quantum Biology and Computational Physics Group.
+// See LICENSE.txt for license information.
+/////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////
 // DEVELOPER WORKFLOW / OWNERSHIP MAP
 // ----------------------------------------------------------------------
 // Resonance transition-moment evaluation.
@@ -14,13 +21,7 @@
 // Why this ownership is used:
 //   - Selection rules/intensities are quantum-mechanical operator matrix elements and should not be mixed with numerical crossing detection.
 /////////////////////////////////////////////////////////////////////////
-/////////////////////////////////////////////////////////////////////////
-// ResonanceTransitionMoments implementation (RunSection::General::Resonance)
-//
-// Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
-// (c) 2026 Quantum Biology and Computational Physics Group.
-// See LICENSE.txt for license information.
-/////////////////////////////////////////////////////////////////////////
+
 #include "ResonanceTransitionMoments.h"
 
 #include <cmath>

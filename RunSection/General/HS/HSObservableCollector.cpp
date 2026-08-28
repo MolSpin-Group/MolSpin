@@ -1,4 +1,14 @@
 /////////////////////////////////////////////////////////////////////////
+// HSObservableCollector implementation (RunSection::General::HS)
+// ------------------
+// Observable construction and post-processing for State populations, spin
+// polarization, product yields, and CIDSP/CIDNP product polarization.
+//
+// Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
+// (c) 2026 Quantum Biology and Computational Physics Group.
+// See LICENSE.txt for license information.
+/////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////
 // DEVELOPER WORKFLOW / OWNERSHIP MAP
 // ----------------------------------------------------------------------
 // HSGeneral observable construction and accumulation.
@@ -15,16 +25,7 @@
 //   - Observable definitions are separated from propagation so the same trajectory can be interpreted consistently for different requested outputs.
 //   - SpinAPI remains the source of spin-space operators and state projectors.
 /////////////////////////////////////////////////////////////////////////
-/////////////////////////////////////////////////////////////////////////
-// HSObservableCollector implementation (RunSection::General::HS)
-// ------------------
-// Observable construction and post-processing for State populations, spin
-// polarization, product yields, and CIDSP/CIDNP product polarization.
-//
-// Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
-// (c) 2026 Quantum Biology and Computational Physics Group.
-// See LICENSE.txt for license information.
-/////////////////////////////////////////////////////////////////////////
+
 #include "HSObservableCollector.h"
 #include "../GeneralStateFrame.h"
 #include "SpinSystem.h"

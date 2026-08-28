@@ -1,4 +1,13 @@
 /////////////////////////////////////////////////////////////////////////
+// TaskSSGeneral implementation (RunSection::General::SS)
+// ------------------
+// StaticSS and StaticSSTimeEvo remain independent numerical references.
+//
+// Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
+// (c) 2026 Quantum Biology and Computational Physics Group.
+// See LICENSE.txt for license information.
+/////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////
 // DEVELOPER WORKFLOW / OWNERSHIP MAP
 // ----------------------------------------------------------------------
 // Top-level SSGeneral orchestration.
@@ -19,15 +28,7 @@
 // TODO:
 //   - Time-dependent Interactions/Transitions remain intentionally unqualified in SSGeneral; add them only with a defined time-ordering/relaxation contract rather than copying MultiSS kinetics.
 /////////////////////////////////////////////////////////////////////////
-/////////////////////////////////////////////////////////////////////////
-// TaskSSGeneral implementation (RunSection::General::SS)
-// ------------------
-// StaticSS and StaticSSTimeEvo remain independent numerical references.
-//
-// Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
-// (c) 2026 Quantum Biology and Computational Physics Group.
-// See LICENSE.txt for license information.
-/////////////////////////////////////////////////////////////////////////
+
 #include "TaskSSGeneral.h"
 #include "SSObservableCollector.h"
 #include "SSOrientationSampler.h"

@@ -1,4 +1,11 @@
 /////////////////////////////////////////////////////////////////////////
+// GeneralResonanceHamiltonian implementation (RunSection::General::Resonance)
+//
+// Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
+// (c) 2026 Quantum Biology and Computational Physics Group.
+// See LICENSE.txt for license information.
+/////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////
 // DEVELOPER WORKFLOW / OWNERSHIP MAP
 // ----------------------------------------------------------------------
 // Resonance-specific Hamiltonian construction.
@@ -18,13 +25,7 @@
 // TODO:
 //   - Strain distributions should enter through a shared Hamiltonian-realization layer so resonance spectra and time-domain General tasks sample the same physical parameter distributions.
 /////////////////////////////////////////////////////////////////////////
-/////////////////////////////////////////////////////////////////////////
-// GeneralResonanceHamiltonian implementation (RunSection::General::Resonance)
-//
-// Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
-// (c) 2026 Quantum Biology and Computational Physics Group.
-// See LICENSE.txt for license information.
-/////////////////////////////////////////////////////////////////////////
+
 #include "GeneralResonanceHamiltonian.h"
 
 #include <cmath>

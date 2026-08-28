@@ -1,4 +1,13 @@
 /////////////////////////////////////////////////////////////////////////
+// MultiSSOrientationSampler implementation (RunSection::General::MultiSS)
+// ------------------
+// Thin MultiSS adapter over the shared GeneralOrientationSampler. Every
+// manifold receives the same physical crystallite orientation.
+// Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
+// (c) 2026 Quantum Biology and Computational Physics Group.
+// See LICENSE.txt for license information.
+/////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////
 // DEVELOPER WORKFLOW / OWNERSHIP MAP
 // ----------------------------------------------------------------------
 // MultiSSGeneral adapter to shared powder/orientation sampling.
@@ -17,15 +26,7 @@
 // Mathematical / physical references:
 //   - Swinbank & Purser, Q. J. R. Meteorol. Soc. 132, 1769-1793 (2006), DOI: 10.1256/qj.05.227.
 /////////////////////////////////////////////////////////////////////////
-/////////////////////////////////////////////////////////////////////////
-// MultiSSOrientationSampler implementation (RunSection::General::MultiSS)
-// ------------------
-// Thin MultiSS adapter over the shared GeneralOrientationSampler. Every
-// manifold receives the same physical crystallite orientation.
-// Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
-// (c) 2026 Quantum Biology and Computational Physics Group.
-// See LICENSE.txt for license information.
-/////////////////////////////////////////////////////////////////////////
+
 #include "MultiSSOrientationSampler.h"
 #include "../GeneralOrientationSampler.h"
 

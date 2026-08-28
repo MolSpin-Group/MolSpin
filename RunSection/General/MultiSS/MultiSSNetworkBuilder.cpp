@@ -1,31 +1,4 @@
 /////////////////////////////////////////////////////////////////////////
-// DEVELOPER WORKFLOW / OWNERSHIP MAP
-// ----------------------------------------------------------------------
-// Compilation of a MultiSS kinetic graph into the global generator.
-//
-// What is done here:
-//   - Starts from block-diagonal local SS Liouvillians.
-//   - Compiles each Transition once with SpinAPI::TransferChannel.
-//   - Embeds continuous source-loss/target-gain blocks and records instantaneous event maps.
-//   - Evaluates L_global(t) = blockdiag(L_i) + sum_c k_c(t) L_c.
-//
-// Connections to the General framework / SpinAPI:
-//   - Local manifolds come from MultiSSSystemPreparation -> SSLiouvillianBuilder.
-//   - SpinAPI::TransferChannel owns physical channel compilation; MultiSS only embeds channels in the direct-sum state.
-//   - MultiSSPropagator consumes the compiled network.
-//
-// Why this ownership is used:
-//   - Reaction edges are graph objects, not local relaxation; this prevents double consumption of population.
-//   - The direct-sum representation excludes physically absent coherent superpositions between distinct kinetic manifolds.
-//
-// Mathematical / physical references:
-//   - Completely-positive Markovian generator structure: Gorini-Kossakowski-Sudarshan, J. Math. Phys. 17, 821 (1976), DOI: 10.1063/1.522979; Lindblad, Commun. Math. Phys. 48, 119 (1976), DOI: 10.1007/BF01608499.
-//   - Reversible multi-manifold radical-pair hierarchy used by MolSpin: DOI: 10.1039/D6CP00916F.
-//
-// TODO:
-//   - If future models require coherent inter-manifold superpositions, they need a different enlarged Hilbert/Liouville representation rather than extra terms in this kinetic graph.
-/////////////////////////////////////////////////////////////////////////
-/////////////////////////////////////////////////////////////////////////
 // MultiSSNetworkBuilder implementation (RunSection::General::MultiSS)
 // ----------------------------------------------------------------------
 // GRAPH COMPILATION
@@ -63,6 +36,34 @@
 // (c) 2026 Quantum Biology and Computational Physics Group.
 // See LICENSE.txt for license information.
 /////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////
+// DEVELOPER WORKFLOW / OWNERSHIP MAP
+// ----------------------------------------------------------------------
+// Compilation of a MultiSS kinetic graph into the global generator.
+//
+// What is done here:
+//   - Starts from block-diagonal local SS Liouvillians.
+//   - Compiles each Transition once with SpinAPI::TransferChannel.
+//   - Embeds continuous source-loss/target-gain blocks and records instantaneous event maps.
+//   - Evaluates L_global(t) = blockdiag(L_i) + sum_c k_c(t) L_c.
+//
+// Connections to the General framework / SpinAPI:
+//   - Local manifolds come from MultiSSSystemPreparation -> SSLiouvillianBuilder.
+//   - SpinAPI::TransferChannel owns physical channel compilation; MultiSS only embeds channels in the direct-sum state.
+//   - MultiSSPropagator consumes the compiled network.
+//
+// Why this ownership is used:
+//   - Reaction edges are graph objects, not local relaxation; this prevents double consumption of population.
+//   - The direct-sum representation excludes physically absent coherent superpositions between distinct kinetic manifolds.
+//
+// Mathematical / physical references:
+//   - Completely-positive Markovian generator structure: Gorini-Kossakowski-Sudarshan, J. Math. Phys. 17, 821 (1976), DOI: 10.1063/1.522979; Lindblad, Commun. Math. Phys. 48, 119 (1976), DOI: 10.1007/BF01608499.
+//   - Reversible multi-manifold radical-pair hierarchy used by MolSpin: DOI: 10.1039/D6CP00916F.
+//
+// TODO:
+//   - If future models require coherent inter-manifold superpositions, they need a different enlarged Hilbert/Liouville representation rather than extra terms in this kinetic graph.
+/////////////////////////////////////////////////////////////////////////
+
 #include "MultiSSNetworkBuilder.h"
 #include "../GeneralStateFrame.h"
 

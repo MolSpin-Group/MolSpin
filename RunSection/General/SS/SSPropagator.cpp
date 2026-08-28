@@ -1,4 +1,13 @@
 /////////////////////////////////////////////////////////////////////////
+// SSPropagator implementation (RunSection::General::SS)
+// ------------------
+// Propagates or solves a time-independent superspace generator.
+//
+// Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
+// (c) 2026 Quantum Biology and Computational Physics Group.
+// See LICENSE.txt for license information.
+/////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////
 // DEVELOPER WORKFLOW / OWNERSHIP MAP
 // ----------------------------------------------------------------------
 // SSGeneral one-manifold Liouville propagation and linear solves.
@@ -22,15 +31,7 @@
 // TODO:
 //   - If sparse Krylov propagation is added to SSGeneral, route it through the same SpinAPI expmv kernel and tolerance semantics used by MultiSS rather than creating a third implementation.
 /////////////////////////////////////////////////////////////////////////
-/////////////////////////////////////////////////////////////////////////
-// SSPropagator implementation (RunSection::General::SS)
-// ------------------
-// Propagates or solves a time-independent superspace generator.
-//
-// Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
-// (c) 2026 Quantum Biology and Computational Physics Group.
-// See LICENSE.txt for license information.
-/////////////////////////////////////////////////////////////////////////
+
 #include "SSPropagator.h"
 #include <algorithm>
 #include <cmath>

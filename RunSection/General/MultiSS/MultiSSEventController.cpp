@@ -1,20 +1,4 @@
 /////////////////////////////////////////////////////////////////////////
-// DEVELOPER WORKFLOW / OWNERSHIP MAP
-// ----------------------------------------------------------------------
-// MultiSS instantaneous-event controller.
-//
-// What is done here:
-//   - Tracks which scheduled instantaneous transfer events have already been consumed.
-//   - Applies the compiled SpinAPI quantum map exactly once at the event boundary.
-//
-// Connections to the General framework / SpinAPI:
-//   - Events are compiled by MultiSSNetworkBuilder and invoked by MultiSSPropagator.
-//   - Continuous transfer remains in the network generator; this file handles only discontinuous maps.
-//
-// Why this ownership is used:
-//   - Separating discontinuous events from ODE propagation prevents a time step from straddling a delta-like pump/push operation.
-/////////////////////////////////////////////////////////////////////////
-/////////////////////////////////////////////////////////////////////////
 // MultiSSEventController implementation (RunSection::General::MultiSS)
 // ----------------------------------------------------------------------
 // The EventController owns *discrete scheduling state* for instantaneous
@@ -35,6 +19,23 @@
 // (c) 2026 Quantum Biology and Computational Physics Group.
 // See LICENSE.txt for license information.
 /////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////
+// DEVELOPER WORKFLOW / OWNERSHIP MAP
+// ----------------------------------------------------------------------
+// MultiSS instantaneous-event controller.
+//
+// What is done here:
+//   - Tracks which scheduled instantaneous transfer events have already been consumed.
+//   - Applies the compiled SpinAPI quantum map exactly once at the event boundary.
+//
+// Connections to the General framework / SpinAPI:
+//   - Events are compiled by MultiSSNetworkBuilder and invoked by MultiSSPropagator.
+//   - Continuous transfer remains in the network generator; this file handles only discontinuous maps.
+//
+// Why this ownership is used:
+//   - Separating discontinuous events from ODE propagation prevents a time step from straddling a delta-like pump/push operation.
+/////////////////////////////////////////////////////////////////////////
+
 #include "MultiSSEventController.h"
 #include "QuantumMap.h"
 #include "SpinSpace.h"

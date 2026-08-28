@@ -1,4 +1,17 @@
 /////////////////////////////////////////////////////////////////////////
+// SSInteractionRelaxation implementation (RunSection::General::SS)
+// ------------------
+// Input compatibility:
+//   def_multexpo=1 : matrix rows are correlation channels, columns are
+//                    exponential terms in that channel;
+//   def_g=1        : one coupling factor per operator and one tau_c;
+//   otherwise      : flat g/tau_c lists define one shared expansion.
+//
+// Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
+// (c) 2026 Quantum Biology and Computational Physics Group.
+// See LICENSE.txt for license information.
+/////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////
 // DEVELOPER WORKFLOW / OWNERSHIP MAP
 // ----------------------------------------------------------------------
 // Shared interaction-to-relaxation preprocessing for SS NZ/Redfield.
@@ -23,19 +36,7 @@
 // TODO:
 //   - Current builders correlate operator components within one Interaction. Cross-correlation between separate Interaction objects (for example g-anisotropy and HFC driven by the same molecular tumbling) requires an explicit shared-correlation model before it may be enabled.
 /////////////////////////////////////////////////////////////////////////
-/////////////////////////////////////////////////////////////////////////
-// SSInteractionRelaxation implementation (RunSection::General::SS)
-// ------------------
-// Input compatibility:
-//   def_multexpo=1 : matrix rows are correlation channels, columns are
-//                    exponential terms in that channel;
-//   def_g=1        : one coupling factor per operator and one tau_c;
-//   otherwise      : flat g/tau_c lists define one shared expansion.
-//
-// Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
-// (c) 2026 Quantum Biology and Computational Physics Group.
-// See LICENSE.txt for license information.
-/////////////////////////////////////////////////////////////////////////
+
 #include "SSInteractionRelaxation.h"
 
 #include "Interaction.h"

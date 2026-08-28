@@ -1,4 +1,12 @@
 /////////////////////////////////////////////////////////////////////////
+// SSOrientationSampler implementation (RunSection::General::SS)
+// ------------------
+// Thin SS adapter over the shared GeneralOrientationSampler.
+// Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
+// (c) 2026 Quantum Biology and Computational Physics Group.
+// See LICENSE.txt for license information.
+/////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////
 // DEVELOPER WORKFLOW / OWNERSHIP MAP
 // ----------------------------------------------------------------------
 // SSGeneral adapter to the shared orientation sampler.
@@ -16,14 +24,7 @@
 // Mathematical / physical references:
 //   - Swinbank & Purser, Q. J. R. Meteorol. Soc. 132, 1769-1793 (2006), DOI: 10.1256/qj.05.227.
 /////////////////////////////////////////////////////////////////////////
-/////////////////////////////////////////////////////////////////////////
-// SSOrientationSampler implementation (RunSection::General::SS)
-// ------------------
-// Thin SS adapter over the shared GeneralOrientationSampler.
-// Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
-// (c) 2026 Quantum Biology and Computational Physics Group.
-// See LICENSE.txt for license information.
-/////////////////////////////////////////////////////////////////////////
+
 #include "SSOrientationSampler.h"
 #include "../GeneralOrientationSampler.h"
 

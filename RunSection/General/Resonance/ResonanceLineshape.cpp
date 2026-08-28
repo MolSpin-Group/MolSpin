@@ -1,4 +1,11 @@
 /////////////////////////////////////////////////////////////////////////
+// ResonanceLineshape implementation (RunSection::General::Resonance)
+//
+// Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
+// (c) 2026 Quantum Biology and Computational Physics Group.
+// See LICENSE.txt for license information.
+/////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////
 // DEVELOPER WORKFLOW / OWNERSHIP MAP
 // ----------------------------------------------------------------------
 // Resonance lineshape functions.
@@ -16,13 +23,7 @@
 // TODO:
 //   - Do not model strain by merely increasing a phenomenological linewidth; explicit parameter distributions belong in the Hamiltonian ensemble layer.
 /////////////////////////////////////////////////////////////////////////
-/////////////////////////////////////////////////////////////////////////
-// ResonanceLineshape implementation (RunSection::General::Resonance)
-//
-// Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
-// (c) 2026 Quantum Biology and Computational Physics Group.
-// See LICENSE.txt for license information.
-/////////////////////////////////////////////////////////////////////////
+
 #include "ResonanceLineshape.h"
 
 #include <armadillo>

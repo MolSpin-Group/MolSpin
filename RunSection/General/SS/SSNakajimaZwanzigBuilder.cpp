@@ -1,4 +1,14 @@
 /////////////////////////////////////////////////////////////////////////
+// SSNakajimaZwanzigBuilder implementation (RunSection::General::SS)
+// ------------------
+// Constructs interaction-derived Nakajima-Zwanzig relaxation in the static
+// Hamiltonian eigenbasis and returns it in the propagation basis.
+//
+// Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
+// (c) 2026 Quantum Biology and Computational Physics Group.
+// See LICENSE.txt for license information.
+/////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////
 // DEVELOPER WORKFLOW / OWNERSHIP MAP
 // ----------------------------------------------------------------------
 // Interaction-derived Nakajima-Zwanzig relaxation builder.
@@ -24,16 +34,7 @@
 // TODO:
 //   - Do not interpret the present additive treatment of separate Interaction objects as including cross-interaction correlations; add an explicit shared stochastic-source representation first.
 /////////////////////////////////////////////////////////////////////////
-/////////////////////////////////////////////////////////////////////////
-// SSNakajimaZwanzigBuilder implementation (RunSection::General::SS)
-// ------------------
-// Constructs interaction-derived Nakajima-Zwanzig relaxation in the static
-// Hamiltonian eigenbasis and returns it in the propagation basis.
-//
-// Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
-// (c) 2026 Quantum Biology and Computational Physics Group.
-// See LICENSE.txt for license information.
-/////////////////////////////////////////////////////////////////////////
+
 #include "SSNakajimaZwanzigBuilder.h"
 #include "SSInteractionRelaxation.h"
 

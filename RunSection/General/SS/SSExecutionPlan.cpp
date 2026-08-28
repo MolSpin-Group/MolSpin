@@ -1,4 +1,13 @@
 /////////////////////////////////////////////////////////////////////////
+// SSExecutionPlan implementation (RunSection::General::SS)
+// ------------------
+// Resolves user input into an explicit, validated superspace calculation plan.
+//
+// Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
+// (c) 2026 Quantum Biology and Computational Physics Group.
+// See LICENSE.txt for license information.
+/////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////
 // DEVELOPER WORKFLOW / OWNERSHIP MAP
 // ----------------------------------------------------------------------
 // SSGeneral input normalization and policy gate.
@@ -17,15 +26,7 @@
 // TODO:
 //   - Future strain/SW settings should be shared with HS/MultiSS through one realization abstraction, not added as SS-only keywords.
 /////////////////////////////////////////////////////////////////////////
-/////////////////////////////////////////////////////////////////////////
-// SSExecutionPlan implementation (RunSection::General::SS)
-// ------------------
-// Resolves user input into an explicit, validated superspace calculation plan.
-//
-// Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
-// (c) 2026 Quantum Biology and Computational Physics Group.
-// See LICENSE.txt for license information.
-/////////////////////////////////////////////////////////////////////////
+
 #include "SSExecutionPlan.h"
 #include "ObjectParser.h"
 #include <algorithm>

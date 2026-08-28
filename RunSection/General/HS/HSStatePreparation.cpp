@@ -1,4 +1,14 @@
 /////////////////////////////////////////////////////////////////////////
+// HSStatePreparation implementation (RunSection::General::HS)
+// ------------------
+// Initial-state normalization, state-aware trace sampling, molecular-frame
+// powder rotation, and optional orientation-specific eigenbasis dephasing.
+//
+// Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
+// (c) 2026 Quantum Biology and Computational Physics Group.
+// See LICENSE.txt for license information.
+/////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////
 // DEVELOPER WORKFLOW / OWNERSHIP MAP
 // ----------------------------------------------------------------------
 // HSGeneral initial-state preparation.
@@ -16,16 +26,7 @@
 //   - State-frame handling is centralized so orientation does not get applied twice or omitted.
 //   - Stochastic trace sampling is an estimator of the same quantum trace, not a different Hamiltonian model.
 /////////////////////////////////////////////////////////////////////////
-/////////////////////////////////////////////////////////////////////////
-// HSStatePreparation implementation (RunSection::General::HS)
-// ------------------
-// Initial-state normalization, state-aware trace sampling, molecular-frame
-// powder rotation, and optional orientation-specific eigenbasis dephasing.
-//
-// Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
-// (c) 2026 Quantum Biology and Computational Physics Group.
-// See LICENSE.txt for license information.
-/////////////////////////////////////////////////////////////////////////
+
 #include "HSStatePreparation.h"
 
 #include "SpinSystem.h"

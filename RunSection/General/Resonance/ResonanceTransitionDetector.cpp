@@ -1,4 +1,11 @@
 /////////////////////////////////////////////////////////////////////////
+// ResonanceTransitionDetector implementation (RunSection::General::Resonance)
+//
+// Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
+// (c) 2026 Quantum Biology and Computational Physics Group.
+// See LICENSE.txt for license information.
+/////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////
 // DEVELOPER WORKFLOW / OWNERSHIP MAP
 // ----------------------------------------------------------------------
 // Detection/interpolation of resonance crossings.
@@ -14,13 +21,7 @@
 // Why this ownership is used:
 //   - Separating root/crossing detection from matrix elements avoids coupling numerical resonance location to intensity thresholds.
 /////////////////////////////////////////////////////////////////////////
-/////////////////////////////////////////////////////////////////////////
-// ResonanceTransitionDetector implementation (RunSection::General::Resonance)
-//
-// Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
-// (c) 2026 Quantum Biology and Computational Physics Group.
-// See LICENSE.txt for license information.
-/////////////////////////////////////////////////////////////////////////
+
 #include "ResonanceTransitionDetector.h"
 
 #include <cmath>

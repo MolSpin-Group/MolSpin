@@ -1,4 +1,15 @@
 /////////////////////////////////////////////////////////////////////////
+// SSSystemPreparation implementation.
+// The local SSLiouvillianBuilder deliberately excludes reaction loss because
+// MultiSS owns inter-manifold edges. SSGeneral adds only terminal one-system
+// Haberkorn sinks here; inter-system transitions are rejected and delegated to
+// MultiSSGeneral.
+//
+// Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
+// (c) 2026 Quantum Biology and Computational Physics Group.
+// See LICENSE.txt for license information.
+/////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////
 // DEVELOPER WORKFLOW / OWNERSHIP MAP
 // ----------------------------------------------------------------------
 // Final one-system SSGeneral generator preparation.
@@ -19,17 +30,7 @@
 // Mathematical / physical references:
 //   - Haberkorn radical-pair reaction operator; Mol. Phys. 32, 1491-1493 (1976), DOI: 10.1080/00268977600102851.
 /////////////////////////////////////////////////////////////////////////
-/////////////////////////////////////////////////////////////////////////
-// SSSystemPreparation implementation.
-// The local SSLiouvillianBuilder deliberately excludes reaction loss because
-// MultiSS owns inter-manifold edges. SSGeneral adds only terminal one-system
-// Haberkorn sinks here; inter-system transitions are rejected and delegated to
-// MultiSSGeneral.
-//
-// Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
-// (c) 2026 Quantum Biology and Computational Physics Group.
-// See LICENSE.txt for license information.
-/////////////////////////////////////////////////////////////////////////
+
 #include "SSSystemPreparation.h"
 #include "../GeneralStateFrame.h"
 #include "SpinSpace.h"

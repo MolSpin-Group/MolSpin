@@ -1,4 +1,15 @@
 /////////////////////////////////////////////////////////////////////////
+// TaskHSGeneral implementation (RunSection::General::HS)
+// ------------------
+// Production Hilbert-space RunSection task. This class owns RunSection lifecycle,
+// logging, output, and orchestration only; physical/numerical operations are
+// delegated to the General/HS components and SpinAPI.
+//
+// Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
+// (c) 2026 Quantum Biology and Computational Physics Group.
+// See LICENSE.txt for license information.
+/////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////
 // DEVELOPER WORKFLOW / OWNERSHIP MAP
 // ----------------------------------------------------------------------
 // Top-level HSGeneral orchestration.
@@ -19,17 +30,7 @@
 // TODO:
 //   - General ensemble extensions (strain/SW) should wrap this per-orientation calculation instead of being embedded in TaskHSGeneral-specific loops.
 /////////////////////////////////////////////////////////////////////////
-/////////////////////////////////////////////////////////////////////////
-// TaskHSGeneral implementation (RunSection::General::HS)
-// ------------------
-// Production Hilbert-space RunSection task. This class owns RunSection lifecycle,
-// logging, output, and orchestration only; physical/numerical operations are
-// delegated to the General/HS components and SpinAPI.
-//
-// Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
-// (c) 2026 Quantum Biology and Computational Physics Group.
-// See LICENSE.txt for license information.
-/////////////////////////////////////////////////////////////////////////
+
 #include "TaskHSGeneral.h"
 
 #include "HSHamiltonianBuilder.h"

@@ -1,4 +1,16 @@
 /////////////////////////////////////////////////////////////////////////
+// HSPropagator implementation (RunSection::General::HS)
+// ------------------
+// Hilbert-factor propagation uses dB/dt = (-iH-K)B. Density propagation uses
+// drho/dt = -i[H,rho] - {K,rho} + R[rho]. General dissipators therefore select
+// density propagation, with exponential coherent/reaction half-steps around the
+// dissipative finite step unless propagationmethod=rk4 is requested explicitly.
+//
+// Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
+// (c) 2026 Quantum Biology and Computational Physics Group.
+// See LICENSE.txt for license information.
+/////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////
 // DEVELOPER WORKFLOW / OWNERSHIP MAP
 // ----------------------------------------------------------------------
 // HSGeneral numerical time-propagation and time-infinity solver.
@@ -23,18 +35,7 @@
 // TODO:
 //   - A future shared propagation facade may unify diagnostics/tolerances, but must not erase the HS versus Liouville versus direct-sum state-space distinction.
 /////////////////////////////////////////////////////////////////////////
-/////////////////////////////////////////////////////////////////////////
-// HSPropagator implementation (RunSection::General::HS)
-// ------------------
-// Hilbert-factor propagation uses dB/dt = (-iH-K)B. Density propagation uses
-// drho/dt = -i[H,rho] - {K,rho} + R[rho]. General dissipators therefore select
-// density propagation, with exponential coherent/reaction half-steps around the
-// dissipative finite step unless propagationmethod=rk4 is requested explicitly.
-//
-// Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
-// (c) 2026 Quantum Biology and Computational Physics Group.
-// See LICENSE.txt for license information.
-/////////////////////////////////////////////////////////////////////////
+
 #include "HSPropagator.h"
 #include "HSReactionRelaxation.h"
 #include "SpinSystem.h"

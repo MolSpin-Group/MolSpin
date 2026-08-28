@@ -1,4 +1,15 @@
 /////////////////////////////////////////////////////////////////////////
+// HSHamiltonianBuilder implementation (RunSection::General::HS)
+// ------------------
+// Policy layer over SpinSpace Hamiltonian construction. No interaction physics
+// is implemented here; the builder only selects static/dynamic, full/secular,
+// H0/H1, and powder-aware SpinAPI paths.
+//
+// Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
+// (c) 2026 Quantum Biology and Computational Physics Group.
+// See LICENSE.txt for license information.
+/////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////
 // DEVELOPER WORKFLOW / OWNERSHIP MAP
 // ----------------------------------------------------------------------
 // HSGeneral Hamiltonian policy layer.
@@ -19,17 +30,7 @@
 // TODO:
 //   - Introduce a shared realization-aware Hamiltonian provider before enabling semiclassical-field / strain ensembles in HSGeneral; one realization must be a square Hamiltonian, not the current composite semiclassical matrix.
 /////////////////////////////////////////////////////////////////////////
-/////////////////////////////////////////////////////////////////////////
-// HSHamiltonianBuilder implementation (RunSection::General::HS)
-// ------------------
-// Policy layer over SpinSpace Hamiltonian construction. No interaction physics
-// is implemented here; the builder only selects static/dynamic, full/secular,
-// H0/H1, and powder-aware SpinAPI paths.
-//
-// Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
-// (c) 2026 Quantum Biology and Computational Physics Group.
-// See LICENSE.txt for license information.
-/////////////////////////////////////////////////////////////////////////
+
 #include "HSHamiltonianBuilder.h"
 
 namespace RunSection::General::HS

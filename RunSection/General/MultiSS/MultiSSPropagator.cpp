@@ -1,30 +1,4 @@
 /////////////////////////////////////////////////////////////////////////
-// DEVELOPER WORKFLOW / OWNERSHIP MAP
-// ----------------------------------------------------------------------
-// MultiSS direct-sum propagation and static linear solves.
-//
-// What is done here:
-//   - Propagates d(rho_global)/dt = L(t) rho_global with RK4, dense exponential, or exponential-midpoint Krylov.
-//   - Clips steps to instantaneous-event boundaries and applies each event exactly once.
-//   - Solves time-integrated and normalized steady-state problems for static networks.
-//
-// Connections to the General framework / SpinAPI:
-//   - Consumes MultiSSNetwork; no Hamiltonian or Transition parsing belongs here.
-//   - Krylov expmv is delegated to SpinAPI::SpinSpace.
-//   - SSPropagator is the one-manifold analogue; HSPropagator uses a different representation.
-//
-// Why this ownership is used:
-//   - Exponential midpoint is used for time-dependent generators because Krylov controls expmv projection error but not the outer time-ordering error.
-//   - Dense exponential is restricted to time-independent continuous generators; event boundaries remain explicit.
-//
-// Mathematical / physical references:
-//   - Krylov approximation of exp(A)v: Saad, SIAM J. Numer. Anal. 29, 209-228 (1992), DOI: 10.1137/0729014.
-//   - Dense matrix exponential background: Higham, SIAM J. Matrix Anal. Appl. 26, 1179-1193 (2005), DOI: 10.1137/04061101X.
-//
-// TODO:
-//   - Krylov error estimates do not certify time discretization for L(t); preserve explicit timestep-convergence tests for finite optical/rate profiles.
-/////////////////////////////////////////////////////////////////////////
-/////////////////////////////////////////////////////////////////////////
 // MultiSSPropagator implementation (RunSection::General::MultiSS)
 // ----------------------------------------------------------------------
 // CONTINUOUS TIME EVOLUTION
@@ -59,6 +33,33 @@
 // (c) 2026 Quantum Biology and Computational Physics Group.
 // See LICENSE.txt for license information.
 /////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////
+// DEVELOPER WORKFLOW / OWNERSHIP MAP
+// ----------------------------------------------------------------------
+// MultiSS direct-sum propagation and static linear solves.
+//
+// What is done here:
+//   - Propagates d(rho_global)/dt = L(t) rho_global with RK4, dense exponential, or exponential-midpoint Krylov.
+//   - Clips steps to instantaneous-event boundaries and applies each event exactly once.
+//   - Solves time-integrated and normalized steady-state problems for static networks.
+//
+// Connections to the General framework / SpinAPI:
+//   - Consumes MultiSSNetwork; no Hamiltonian or Transition parsing belongs here.
+//   - Krylov expmv is delegated to SpinAPI::SpinSpace.
+//   - SSPropagator is the one-manifold analogue; HSPropagator uses a different representation.
+//
+// Why this ownership is used:
+//   - Exponential midpoint is used for time-dependent generators because Krylov controls expmv projection error but not the outer time-ordering error.
+//   - Dense exponential is restricted to time-independent continuous generators; event boundaries remain explicit.
+//
+// Mathematical / physical references:
+//   - Krylov approximation of exp(A)v: Saad, SIAM J. Numer. Anal. 29, 209-228 (1992), DOI: 10.1137/0729014.
+//   - Dense matrix exponential background: Higham, SIAM J. Matrix Anal. Appl. 26, 1179-1193 (2005), DOI: 10.1137/04061101X.
+//
+// TODO:
+//   - Krylov error estimates do not certify time discretization for L(t); preserve explicit timestep-convergence tests for finite optical/rate profiles.
+/////////////////////////////////////////////////////////////////////////
+
 #include "MultiSSPropagator.h"
 #include "MultiSSEventController.h"
 #include "SpinSpace.h"

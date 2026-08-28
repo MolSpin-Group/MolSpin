@@ -1,4 +1,15 @@
 /////////////////////////////////////////////////////////////////////////
+// HSReactionRelaxation implementation (RunSection::General::HS)
+// ------------------
+// Haberkorn channel selection plus Hilbert relaxation policy. The physical
+// k/2 R P R^dagger sink operator and relaxation superoperators are constructed
+// by SpinAPI so General/HS does not duplicate spin-space conventions.
+//
+// Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
+// (c) 2026 Quantum Biology and Computational Physics Group.
+// See LICENSE.txt for license information.
+/////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////
 // DEVELOPER WORKFLOW / OWNERSHIP MAP
 // ----------------------------------------------------------------------
 // HSGeneral reaction-loss and Hilbert-relaxation policy.
@@ -22,17 +33,7 @@
 // TODO:
 //   - If NZ/Redfield are ever exposed to HSGeneral, reuse one SpinAPI/SS relaxation kernel or a shared generator abstraction; do not duplicate the tensor/correlation algebra here.
 /////////////////////////////////////////////////////////////////////////
-/////////////////////////////////////////////////////////////////////////
-// HSReactionRelaxation implementation (RunSection::General::HS)
-// ------------------
-// Haberkorn channel selection plus Hilbert relaxation policy. The physical
-// k/2 R P R^dagger sink operator and relaxation superoperators are constructed
-// by SpinAPI so General/HS does not duplicate spin-space conventions.
-//
-// Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
-// (c) 2026 Quantum Biology and Computational Physics Group.
-// See LICENSE.txt for license information.
-/////////////////////////////////////////////////////////////////////////
+
 #include "HSReactionRelaxation.h"
 #include "../GeneralStateFrame.h"
 #include "SpinSystem.h"

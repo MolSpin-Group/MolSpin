@@ -1,4 +1,11 @@
 /////////////////////////////////////////////////////////////////////////
+// ResonanceFieldJacobian implementation (RunSection::General::Resonance)
+//
+// Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
+// (c) 2026 Quantum Biology and Computational Physics Group.
+// See LICENSE.txt for license information.
+/////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////
 // DEVELOPER WORKFLOW / OWNERSHIP MAP
 // ----------------------------------------------------------------------
 // Field-to-frequency Jacobian support for resonance spectra.
@@ -14,13 +21,7 @@
 // Why this ownership is used:
 //   - Keeping the Jacobian explicit avoids hiding field/frequency conversion inside empirical linewidth code.
 /////////////////////////////////////////////////////////////////////////
-/////////////////////////////////////////////////////////////////////////
-// ResonanceFieldJacobian implementation (RunSection::General::Resonance)
-//
-// Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
-// (c) 2026 Quantum Biology and Computational Physics Group.
-// See LICENSE.txt for license information.
-/////////////////////////////////////////////////////////////////////////
+
 #include "ResonanceFieldJacobian.h"
 
 #include <algorithm>

@@ -1,4 +1,10 @@
 /////////////////////////////////////////////////////////////////////////
+// GeneralOrientationSampler implementation (RunSection::General)
+// Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
+// (c) 2026 Quantum Biology and Computational Physics Group.
+// See LICENSE.txt for license information.
+/////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////
 // DEVELOPER WORKFLOW / OWNERSHIP MAP
 // ----------------------------------------------------------------------
 // Shared orientation and powder-ensemble adapter.
@@ -22,12 +28,7 @@
 // TODO:
 //   - Keep future strain / Schulten-Wolynes Hamiltonian realizations as a second ensemble index; combine them with powder points only in a shared outer ensemble driver.
 /////////////////////////////////////////////////////////////////////////
-/////////////////////////////////////////////////////////////////////////
-// GeneralOrientationSampler implementation (RunSection::General)
-// Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
-// (c) 2026 Quantum Biology and Computational Physics Group.
-// See LICENSE.txt for license information.
-/////////////////////////////////////////////////////////////////////////
+
 #include "GeneralOrientationSampler.h"
 
 #include <cmath>

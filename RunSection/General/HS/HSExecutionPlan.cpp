@@ -1,4 +1,14 @@
 /////////////////////////////////////////////////////////////////////////
+// HSExecutionPlan implementation (RunSection::General::HS)
+// ------------------
+// Input normalization and validation for the modular Hilbert-space execution plan.
+// Unsupported physics is rejected explicitly rather than mapped to another model.
+//
+// Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
+// (c) 2026 Quantum Biology and Computational Physics Group.
+// See LICENSE.txt for license information.
+/////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////
 // DEVELOPER WORKFLOW / OWNERSHIP MAP
 // ----------------------------------------------------------------------
 // HSGeneral input normalization and policy gate.
@@ -19,16 +29,7 @@
 // TODO:
 //   - When strain / Schulten-Wolynes support is generalized, expose ensemble policy here only after a shared realization abstraction exists; do not add HS-only sampling semantics.
 /////////////////////////////////////////////////////////////////////////
-/////////////////////////////////////////////////////////////////////////
-// HSExecutionPlan implementation (RunSection::General::HS)
-// ------------------
-// Input normalization and validation for the modular Hilbert-space execution plan.
-// Unsupported physics is rejected explicitly rather than mapped to another model.
-//
-// Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
-// (c) 2026 Quantum Biology and Computational Physics Group.
-// See LICENSE.txt for license information.
-/////////////////////////////////////////////////////////////////////////
+
 #include "HSExecutionPlan.h"
 #include "ObjectParser.h"
 

@@ -1,4 +1,13 @@
 /////////////////////////////////////////////////////////////////////////
+// SSObservableCollector implementation (RunSection::General::SS)
+// ------------------
+// Constructs and evaluates state populations and terminal reaction yields.
+//
+// Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
+// (c) 2026 Quantum Biology and Computational Physics Group.
+// See LICENSE.txt for license information.
+/////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////
 // DEVELOPER WORKFLOW / OWNERSHIP MAP
 // ----------------------------------------------------------------------
 // SSGeneral observable construction and evaluation.
@@ -14,15 +23,7 @@
 // Why this ownership is used:
 //   - Observables are kept outside Liouvillian construction and propagation to preserve independent validation of dynamics and readout.
 /////////////////////////////////////////////////////////////////////////
-/////////////////////////////////////////////////////////////////////////
-// SSObservableCollector implementation (RunSection::General::SS)
-// ------------------
-// Constructs and evaluates state populations and terminal reaction yields.
-//
-// Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
-// (c) 2026 Quantum Biology and Computational Physics Group.
-// See LICENSE.txt for license information.
-/////////////////////////////////////////////////////////////////////////
+
 #include "SSObservableCollector.h"
 #include "../GeneralStateFrame.h"
 #include "SpinSpace.h"

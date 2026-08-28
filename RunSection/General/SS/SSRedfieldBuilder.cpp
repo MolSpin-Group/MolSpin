@@ -1,4 +1,14 @@
 /////////////////////////////////////////////////////////////////////////
+// SSRedfieldBuilder implementation (RunSection::General::SS)
+// ------------------
+// Constructs interaction-derived Redfield relaxation in the static
+// Hamiltonian eigenbasis and returns it in the propagation basis.
+//
+// Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
+// (c) 2026 Quantum Biology and Computational Physics Group.
+// See LICENSE.txt for license information.
+/////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////
 // DEVELOPER WORKFLOW / OWNERSHIP MAP
 // ----------------------------------------------------------------------
 // Interaction-derived Redfield relaxation builder.
@@ -23,16 +33,7 @@
 // TODO:
 //   - General-framework slippage and cross-Interaction correlations remain missing parity items relative to dedicated legacy Redfield implementations.
 /////////////////////////////////////////////////////////////////////////
-/////////////////////////////////////////////////////////////////////////
-// SSRedfieldBuilder implementation (RunSection::General::SS)
-// ------------------
-// Constructs interaction-derived Redfield relaxation in the static
-// Hamiltonian eigenbasis and returns it in the propagation basis.
-//
-// Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
-// (c) 2026 Quantum Biology and Computational Physics Group.
-// See LICENSE.txt for license information.
-/////////////////////////////////////////////////////////////////////////
+
 #include "SSRedfieldBuilder.h"
 #include "SSInteractionRelaxation.h"
 

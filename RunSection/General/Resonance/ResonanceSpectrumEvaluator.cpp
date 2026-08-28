@@ -1,4 +1,11 @@
 /////////////////////////////////////////////////////////////////////////
+// ResonanceSpectrumEvaluator implementation (RunSection::General::Resonance)
+//
+// Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
+// (c) 2026 Quantum Biology and Computational Physics Group.
+// See LICENSE.txt for license information.
+/////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////
 // DEVELOPER WORKFLOW / OWNERSHIP MAP
 // ----------------------------------------------------------------------
 // Assembly of the final resonance spectrum.
@@ -14,13 +21,7 @@
 // Why this ownership is used:
 //   - Spectrum assembly is kept separate from resonance finding so each stage can be validated independently.
 /////////////////////////////////////////////////////////////////////////
-/////////////////////////////////////////////////////////////////////////
-// ResonanceSpectrumEvaluator implementation (RunSection::General::Resonance)
-//
-// Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
-// (c) 2026 Quantum Biology and Computational Physics Group.
-// See LICENSE.txt for license information.
-/////////////////////////////////////////////////////////////////////////
+
 #include "ResonanceSpectrumEvaluator.h"
 #include "ResonanceFieldJacobian.h"
 #include "ResonanceLineshape.h"
