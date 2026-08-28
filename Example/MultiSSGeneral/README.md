@@ -14,7 +14,7 @@ The output contains columns such as:
 - `css.singlet.population`, `css.t0.population`, ...
 - per-transition instantaneous fluxes when `transitionfluxes=true`
 
-For fluorescence comparison, the updated template exposes a dedicated `Fluorescence` sink, so `S1.Fluorescence.flux = k_F P_S1(t)` is the direct primitive observable (and can be convolved with the instrument response afterwards).
+For fluorescence comparison, the updated template exposes a dedicated `Fluorescence` sink, so `s1.fluorescence.flux = k_F P_S1(t)` is the direct primitive observable (and can be convolved with the instrument response afterwards).
 
 The updated template uses spherical (`ops=0`) Nakajima-Zwanzig rotational modulation for g-tensor anisotropy and anisotropic hyperfine fluctuations. For isotropic rotational diffusion the six `def_g=1` factors are `0,G,G,G,G,G`: rank 0 is rotationally invariant and the five rank-2 channels share the same rotational correlation. The numerical factors are synthetic and must be replaced by values derived from the real tensors.
 

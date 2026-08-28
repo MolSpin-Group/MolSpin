@@ -52,11 +52,16 @@ namespace RunSection
 		// Update the settings object with the current calculation step
 		this->settings->SetCurrentStep(_stepNumber);
 
-		// Run all tasks
+		// Run all tasks. Preserve the historical behaviour of attempting all
+		// tasks in the current step, but report failure if any task failed.
+		bool success = true;
 		for (auto i = this->tasks.cbegin(); i != this->tasks.cend(); i++)
-			(*i)->Run();
+		{
+			if (!(*i)->Run())
+				success = false;
+		}
 
-		return true;
+		return success;
 	}
 
 	// Runs all tasks sequentially starting from the task with the given name
@@ -74,11 +79,17 @@ namespace RunSection
 			i++;
 		}
 
-		// Run the rest of the tasks from that point on (if any)
+		// Run the rest of the tasks from that point on (if any). Preserve the
+		// historical behaviour of attempting every selected task, while
+		// propagating failure to the caller.
+		bool success = true;
 		for (; i != this->tasks.cend(); i++)
-			(*i)->Run();
+		{
+			if (!(*i)->Run())
+				success = false;
+		}
 
-		return true;
+		return success;
 	}
 
 	// Take a number of steps, calling all the action once per step
