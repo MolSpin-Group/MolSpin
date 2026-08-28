@@ -23,10 +23,17 @@
 #include "SpinSpace.h"
 #include "SpinSystem.h"
 #include "State.h"
+#include "Transition.h"
+#include "TransferChannel.h"
+#include "HSExecutionPlan.h"
+#include "HSOrientationSampler.h"
+#include "HSHamiltonianBuilder.h"
 
 #include <cmath>
 #include <iostream>
 #include <limits>
+#include <sstream>
+#include <vector>
 //////////////////////////////////////////////////////////////////////////////
 // Tests the ActionTarget alias ActionScalar
 // First we define a check-function
@@ -797,6 +804,420 @@ bool test_action_physical_target_guards()
 		   !diffusion->second.Set(-1.0);
 }
 
+//////////////////////////////////////////////////////////////////////////////
+// Helpers for end-to-end General task output across multiple RunSection steps.
+bool action_general_output_column(const std::string &data,
+                                  const std::string &label,
+                                  std::size_t &column)
+{
+    std::istringstream lines(data);
+    std::string line;
+    while (std::getline(lines, line))
+    {
+        if (line.empty())
+            continue;
+        std::istringstream tokens(line);
+        std::string token;
+        std::size_t index = 0;
+        while (tokens >> token)
+        {
+            if (token == label)
+            {
+                column = index;
+                return true;
+            }
+            ++index;
+        }
+        return false;
+    }
+    return false;
+}
+
+bool action_general_last_numeric_row_for_step(const std::string &data,
+                                              unsigned int step,
+                                              std::vector<double> &row)
+{
+    row.clear();
+    std::istringstream lines(data);
+    std::string line;
+    while (std::getline(lines, line))
+    {
+        std::istringstream values(line);
+        std::vector<double> candidate;
+        double value = 0.0;
+        while (values >> value)
+            candidate.push_back(value);
+        if (!candidate.empty() &&
+            std::abs(candidate.front() - static_cast<double>(step)) < 1.0e-12)
+        {
+            row = std::move(candidate);
+        }
+    }
+    return !row.empty();
+}
+
+//////////////////////////////////////////////////////////////////////////////
+// HSGeneral qualification: an ActionVector changes a Zeeman field after the
+// first calculation step. Reusing the same General Hamiltonian builder must
+// rebuild from the live Interaction object, including a non-trivial explicit
+// molecular-to-lab orientation; no stale Hamiltonian is permitted.
+bool test_action_hsgeneral_field_rebuild_after_step()
+{
+    auto electron = std::make_shared<SpinAPI::Spin>(
+        "E", "type=electron;spin=1/2;tensor=isotropic(2.0);");
+    auto field = std::make_shared<SpinAPI::Interaction>(
+        "B0",
+        "type=zeeman;spins=E;field=0 0 0;ignoretensors=true;"
+        "commonprefactor=false;prefactor=1;");
+
+    auto system = std::make_shared<SpinAPI::SpinSystem>("ActionHS");
+    system->Add(electron);
+    system->Add(field);
+    if (!system->ValidateInteractions().empty())
+        return false;
+
+    RunSection::RunSection runSection;
+    if (!runSection.Add(system))
+        return false;
+    const auto targets = runSection.GetActionVectors();
+    if (targets.count("ActionHS.B0.field") != 1)
+        return false;
+
+    MSDParser::ObjectParser action(
+        "fieldStep",
+        "type=addvector;vector=ActionHS.B0.field;"
+        "direction=1 2 3;value=0.01;");
+    if (!runSection.Add(MSDParser::ObjectType::Action, action))
+        return false;
+
+    RunSection::General::HS::HSExecutionPlan plan;
+    plan.approximation = SpinAPI::HamiltonianApproximation::Full;
+    plan.orientation = RunSection::General::HS::OrientationMode::Explicit;
+    plan.hasH0List = true;
+    plan.h0List = {"B0"};
+
+    RunSection::General::HS::HSOrientation orientation;
+    orientation.alpha = 0.23;
+    orientation.beta = 0.61;
+    orientation.gamma = -0.17;
+    orientation.weight = 1.0;
+    if (!SpinAPI::CreateZYZRotationMatrix(
+            orientation.alpha, orientation.beta, orientation.gamma,
+            orientation.frameToLab))
+        return false;
+
+    SpinAPI::SpinSpace space(system);
+    space.UseSuperoperatorSpace(false);
+    RunSection::General::HS::HSHamiltonianBuilder builder(plan, space);
+
+    arma::sp_cx_mat before, after;
+    std::string error;
+    if (!builder.BuildStatic(orientation, before, nullptr, error))
+        return false;
+    if (arma::norm(before, "fro") > 1.0e-14)
+        return false;
+
+    if (!runSection.Step(2))
+        return false;
+    const arma::vec updatedField = field->Field();
+    if (updatedField.n_elem != 3 ||
+        std::abs(arma::norm(updatedField, 2) - 0.01) > 1.0e-13)
+        return false;
+
+    if (!builder.BuildStatic(orientation, after, nullptr, error))
+        return false;
+    return arma::norm(after - before, "fro") > 1.0e-10;
+}
+
+//////////////////////////////////////////////////////////////////////////////
+// SSGeneral qualification: a Transition rate Action is applied between two
+// runs of the same TaskSSGeneral instance. The second RunLocal call must
+// reconstruct the Liouvillian from the updated Transition rather than reuse a
+// stale reaction generator.
+bool test_action_ssgeneral_transition_rate_rebuilds_between_runs()
+{
+    auto electron = std::make_shared<SpinAPI::Spin>(
+        "E", "type=electron;spin=1/2;");
+    auto up = std::make_shared<SpinAPI::State>(
+        "Up", "spin(E)=|1/2>;");
+    auto all = std::make_shared<SpinAPI::State>("All", "");
+
+    auto system = std::make_shared<SpinAPI::SpinSystem>("ActionSS");
+    system->Add(electron);
+    system->Add(up);
+    system->Add(all);
+    auto sink = std::make_shared<SpinAPI::Transition>(
+        "sink", "type=sink;sourcestate=All;rate=0.1;", system);
+    system->Add(sink);
+    system->SetProperties(std::make_shared<MSDParser::ObjectParser>(
+        "properties", "initialstate=Up;initialstatecoherences=keep;"));
+
+    if (!up->ParseFromSystem(*system) || !all->ParseFromSystem(*system) ||
+        !system->ValidateTransitions({system}).empty())
+        return false;
+
+    RunSection::RunSection runSection;
+    if (!runSection.Add(system))
+        return false;
+    const auto scalarTargets = runSection.GetActionScalars();
+    if (scalarTargets.count("ActionSS.sink.rate") != 1)
+        return false;
+
+    MSDParser::ObjectParser action(
+        "rateStep",
+        "type=addscalar;scalar=ActionSS.sink.rate;value=0.1;");
+    if (!runSection.Add(MSDParser::ObjectType::Action, action))
+        return false;
+
+    MSDParser::ObjectParser taskParser(
+        "general",
+        "type=SSGeneral;calculation=timeevolution;"
+        "propagationmethod=exponential;observables=states;"
+        "totaltime=1;timestep=1;");
+    if (!runSection.Add(MSDParser::ObjectType::Task, taskParser))
+        return false;
+    auto task = runSection.GetTask("general");
+    if (!task)
+        return false;
+
+    std::ostringstream log, data;
+    task->SetLogStream(log);
+    task->SetDataStream(data);
+
+    runSection.Run(1);
+    if (std::abs(sink->Rate() - 0.1) > 1.0e-14)
+        return false;
+    if (!runSection.Step(2) || std::abs(sink->Rate() - 0.2) > 1.0e-14)
+        return false;
+    runSection.Run(2);
+
+    std::size_t upColumn = 0;
+    std::vector<double> step1, step2;
+    if (!action_general_output_column(
+            data.str(), "ActionSS.Up.population", upColumn) ||
+        !action_general_last_numeric_row_for_step(data.str(), 1, step1) ||
+        !action_general_last_numeric_row_for_step(data.str(), 2, step2) ||
+        upColumn >= step1.size() || upColumn >= step2.size())
+        return false;
+
+    const double ref1 = std::exp(-0.1);
+    const double ref2 = std::exp(-0.2);
+    return std::abs(step1[upColumn] - ref1) < 1.0e-11 &&
+           std::abs(step2[upColumn] - ref2) < 1.0e-11 &&
+           std::abs(step1[upColumn] - step2[upColumn]) > 1.0e-3;
+}
+
+//////////////////////////////////////////////////////////////////////////////
+// MultiSSGeneral qualification: a source->target transfer-rate Action is
+// applied between two runs of the same task. The direct-sum graph must be
+// rebuilt, so source population at t=1 follows exp(-k t) for k=0.1 and 0.2.
+bool test_action_multissgeneral_transfer_rate_rebuilds_between_runs()
+{
+    auto source = std::make_shared<SpinAPI::SpinSystem>("ActionA");
+    auto target = std::make_shared<SpinAPI::SpinSystem>("ActionB");
+    auto sourceLevel = std::make_shared<SpinAPI::Spin>("level", "spin=0;");
+    auto targetLevel = std::make_shared<SpinAPI::Spin>("level", "spin=0;");
+    auto sourceState = std::make_shared<SpinAPI::State>(
+        "State", "spin(level)=|0>;");
+    auto targetState = std::make_shared<SpinAPI::State>(
+        "State", "spin(level)=|0>;");
+
+    source->Add(sourceLevel);
+    source->Add(sourceState);
+    target->Add(targetLevel);
+    target->Add(targetState);
+    auto transfer = std::make_shared<SpinAPI::Transition>(
+        "AtoB",
+        "type=sink;sourcestate=State;target=ActionB;"
+        "targetstate=State;rate=0.1;",
+        source);
+    source->Add(transfer);
+    source->SetProperties(std::make_shared<MSDParser::ObjectParser>(
+        "source_properties", "initialstate=State;"));
+    target->SetProperties(std::make_shared<MSDParser::ObjectParser>(
+        "target_properties", ""));
+
+    const std::vector<SpinAPI::system_ptr> systems{source, target};
+    if (!sourceState->ParseFromSystem(*source) ||
+        !targetState->ParseFromSystem(*target) ||
+        !source->ValidateTransitions(systems).empty() ||
+        !target->ValidateTransitions(systems).empty())
+        return false;
+
+    RunSection::RunSection runSection;
+    if (!runSection.Add(source) || !runSection.Add(target))
+        return false;
+    const auto scalarTargets = runSection.GetActionScalars();
+    if (scalarTargets.count("ActionA.AtoB.rate") != 1)
+        return false;
+
+    MSDParser::ObjectParser action(
+        "transferRateStep",
+        "type=addscalar;scalar=ActionA.AtoB.rate;value=0.1;");
+    if (!runSection.Add(MSDParser::ObjectType::Action, action))
+        return false;
+
+    MSDParser::ObjectParser taskParser(
+        "general",
+        "type=MultiSSGeneral;calculation=timeevolution;"
+        "propagationmethod=exponential;observables=states;"
+        "totaltime=1;timestep=1;");
+    if (!runSection.Add(MSDParser::ObjectType::Task, taskParser))
+        return false;
+    auto task = runSection.GetTask("general");
+    if (!task)
+        return false;
+
+    std::ostringstream log, data;
+    task->SetLogStream(log);
+    task->SetDataStream(data);
+
+    runSection.Run(1);
+    if (std::abs(transfer->Rate() - 0.1) > 1.0e-14)
+        return false;
+    if (!runSection.Step(2) || std::abs(transfer->Rate() - 0.2) > 1.0e-14)
+        return false;
+    runSection.Run(2);
+
+    std::size_t sourceColumn = 0, targetColumn = 0;
+    std::vector<double> step1, step2;
+    if (!action_general_output_column(
+            data.str(), "ActionA.State.population", sourceColumn) ||
+        !action_general_output_column(
+            data.str(), "ActionB.State.population", targetColumn) ||
+        !action_general_last_numeric_row_for_step(data.str(), 1, step1) ||
+        !action_general_last_numeric_row_for_step(data.str(), 2, step2) ||
+        sourceColumn >= step1.size() || sourceColumn >= step2.size() ||
+        targetColumn >= step1.size() || targetColumn >= step2.size())
+        return false;
+
+    const double pA1 = std::exp(-0.1);
+    const double pA2 = std::exp(-0.2);
+    return std::abs(step1[sourceColumn] - pA1) < 1.0e-11 &&
+           std::abs(step2[sourceColumn] - pA2) < 1.0e-11 &&
+           std::abs(step1[targetColumn] - (1.0 - pA1)) < 1.0e-11 &&
+           std::abs(step2[targetColumn] - (1.0 - pA2)) < 1.0e-11;
+}
+
+//////////////////////////////////////////////////////////////////////////////
+// Contract guard for profiled MultiSS transfers.
+// A writable Action target must not silently become physically irrelevant.
+bool test_action_multiss_profiled_rate_is_effective_or_rejected()
+{
+    auto source = std::make_shared<SpinAPI::SpinSystem>("ProfileA");
+    auto target = std::make_shared<SpinAPI::SpinSystem>("ProfileB");
+    auto sourceLevel = std::make_shared<SpinAPI::Spin>("level", "spin=0;");
+    auto targetLevel = std::make_shared<SpinAPI::Spin>("level", "spin=0;");
+    auto sourceState = std::make_shared<SpinAPI::State>(
+        "State", "spin(level)=|0>;");
+    auto targetState = std::make_shared<SpinAPI::State>(
+        "State", "spin(level)=|0>;");
+    source->Add(sourceLevel);
+    source->Add(sourceState);
+    target->Add(targetLevel);
+    target->Add(targetState);
+
+    auto transfer = std::make_shared<SpinAPI::Transition>(
+        "pump",
+        "type=sink;sourcestate=State;target=ProfileB;targetstate=State;"
+        "rate=0.1;rateprofile=gaussian;pulsecenter=5;pulsefwhm=2;"
+        "transferfraction=0.5;",
+        source);
+    source->Add(transfer);
+    const std::vector<SpinAPI::system_ptr> systems{source, target};
+    if (!sourceState->ParseFromSystem(*source) ||
+        !targetState->ParseFromSystem(*target) ||
+        !source->ValidateTransitions(systems).empty())
+        return false;
+
+    SpinAPI::TransferChannel before;
+    std::string error;
+    if (!SpinAPI::TransferChannel::Compile(transfer, before, error))
+        return false;
+    const double kBefore = before.Rate(5.0);
+
+    RunSection::RunSection runSection;
+    if (!runSection.Add(source) || !runSection.Add(target))
+        return false;
+    auto targets = runSection.GetActionScalars();
+    auto targetIt = targets.find("ProfileA.pump.rate");
+
+    // Safe semantics: do not expose an ineffective mutable target.
+    if (targetIt == targets.end() || targetIt->second.IsReadonly())
+        return true;
+
+    MSDParser::ObjectParser action(
+        "profileRateStep",
+        "type=addscalar;scalar=ProfileA.pump.rate;value=0.4;");
+    if (!runSection.Add(MSDParser::ObjectType::Action, action))
+        return true; // Explicit rejection is also safe.
+
+    if (!runSection.Step(2) || std::abs(transfer->Rate() - 0.5) > 1.0e-14)
+        return false;
+
+    SpinAPI::TransferChannel after;
+    if (!SpinAPI::TransferChannel::Compile(transfer, after, error))
+        return false;
+    const double kAfter = after.Rate(5.0);
+
+    // If writable, the actual compiled k(t) must change.
+    return std::abs(kAfter - kBefore) >
+           1.0e-12 * std::max({1.0, std::abs(kBefore), std::abs(kAfter)});
+}
+
+//////////////////////////////////////////////////////////////////////////////
+// Profile ActionTarget permissions must mirror TransferChannel semantics.
+// Writable means Transition::Rate() is physically used by k(t); read-only
+// means another profile parameter owns the physical rate.
+bool test_action_multiss_profile_rate_target_permissions()
+{
+    const auto check = [](const std::string &suffix, bool expectedReadonly)
+    {
+        auto source = std::make_shared<SpinAPI::SpinSystem>("ProfileSource");
+        auto target = std::make_shared<SpinAPI::SpinSystem>("ProfileTarget");
+        auto sourceLevel = std::make_shared<SpinAPI::Spin>("level", "spin=0;");
+        auto targetLevel = std::make_shared<SpinAPI::Spin>("level", "spin=0;");
+        auto sourceState = std::make_shared<SpinAPI::State>(
+            "State", "spin(level)=|0>;");
+        auto targetState = std::make_shared<SpinAPI::State>(
+            "State", "spin(level)=|0>;");
+        source->Add(sourceLevel);
+        source->Add(sourceState);
+        target->Add(targetLevel);
+        target->Add(targetState);
+        auto transition = std::make_shared<SpinAPI::Transition>(
+            "transfer",
+            "type=sink;sourcestate=State;target=ProfileTarget;"
+            "targetstate=State;rate=0.1;" + suffix,
+            source);
+        source->Add(transition);
+
+        const std::vector<SpinAPI::system_ptr> systems{source, target};
+        if (!sourceState->ParseFromSystem(*source) ||
+            !targetState->ParseFromSystem(*target) ||
+            !source->ValidateTransitions(systems).empty())
+            return false;
+
+        RunSection::RunSection runSection;
+        if (!runSection.Add(source) || !runSection.Add(target))
+            return false;
+        const auto scalars = runSection.GetActionScalars();
+        const auto found = scalars.find("ProfileSource.transfer.rate");
+        return found != scalars.end() &&
+               found->second.IsReadonly() == expectedReadonly;
+    };
+
+    return
+        check("rateprofile=constant;", false) &&
+        check("rateprofile=gaussian;pulsecenter=5;pulsefwhm=2;", false) &&
+        check("rateprofile=gaussian;pulsecenter=5;pulsefwhm=2;peakrate=0.4;", true) &&
+        check("rateprofile=gaussian;pulsecenter=5;pulsefwhm=2;transferfraction=0.5;", true) &&
+        check("rateprofile=rectangular;pulsestart=1;pulseend=2;", false) &&
+        check("rateprofile=rectangular;pulsestart=1;pulseend=2;peakrate=0.4;", true) &&
+        check("rateprofile=trajectory;profiletimes=0,1;profilerates=0.1,0.2;", true) &&
+        check("rateprofile=instantaneous;eventtime=1;transferfraction=0.5;", true);
+}
+
 // Add all the Action classes test cases
 void AddActionsTests(std::vector<test_case> &_cases)
 {
@@ -819,5 +1240,10 @@ void AddActionsTests(std::vector<test_case> &_cases)
 	_cases.push_back(test_case("Action PulseSequence target registration", test_action_pulse_sequence_target_registration));
 	_cases.push_back(test_case("Action non-state scalar target safety", test_action_nonstate_scalar_target_is_safe));
 	_cases.push_back(test_case("Action physical target guards", test_action_physical_target_guards));
+	_cases.push_back(test_case("Action HSGeneral field rebuild after step", test_action_hsgeneral_field_rebuild_after_step));
+	_cases.push_back(test_case("Action SSGeneral transition rate rebuild between runs", test_action_ssgeneral_transition_rate_rebuilds_between_runs));
+	_cases.push_back(test_case("Action MultiSSGeneral transfer rate rebuild between runs", test_action_multissgeneral_transfer_rate_rebuilds_between_runs));
+	_cases.push_back(test_case("Action profiled MultiSS rate is effective or rejected", test_action_multiss_profiled_rate_is_effective_or_rejected));
+	_cases.push_back(test_case("Action profiled MultiSS rate target permissions", test_action_multiss_profile_rate_target_permissions));
 }
 //////////////////////////////////////////////////////////////////////////////

@@ -11,8 +11,63 @@
 #include "State.h"
 #include "Transition.h"
 
+#include <algorithm>
+#include <cctype>
+
 namespace SpinAPI
 {
+	namespace
+	{
+		std::string LowerProfileName(std::string value)
+		{
+			std::transform(value.begin(), value.end(), value.begin(),
+				[](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+			return value;
+		}
+
+		// A Transition can expose ".rate" as an ActionTarget only when changing
+		// Transition::Rate() changes the actual physical rate used downstream.
+		// General/MultiSS profiles with an explicit peak/fraction/profile table
+		// derive k(t) independently of Transition::Rate(), so leaving ".rate"
+		// writable would create a silent no-op Action.
+		bool ProfileOverridesTransitionRate(
+			const std::shared_ptr<MSDParser::ObjectParser> &properties)
+		{
+			if (properties == nullptr)
+				return false;
+
+			std::string kind;
+			if (!(properties->Get("rateprofile", kind) ||
+				properties->Get("rate_profile", kind) ||
+				properties->Get("opticalprofile", kind)))
+				return false;
+
+			kind = LowerProfileName(kind);
+			double ignored = 0.0;
+			if (kind == "gaussian")
+			{
+				return properties->Get("peakrate", ignored) ||
+					properties->Get("peak_rate", ignored) ||
+					properties->Get("transferfraction", ignored) ||
+					properties->Get("transfer_fraction", ignored);
+			}
+			if (kind == "rectangular" || kind == "square")
+			{
+				return properties->Get("peakrate", ignored) ||
+					properties->Get("peak_rate", ignored);
+			}
+			if (kind == "trajectory" ||
+				kind == "instantaneous" ||
+				kind == "event" ||
+				kind == "delta")
+				return true;
+
+			// Constant/static profiles and Gaussian/rectangular profiles without
+			// an explicit override use Transition::Rate() directly.
+			return false;
+		}
+	}
+
 	// -----------------------------------------------------
 	// Spin Constructors and Destructor
 	// -----------------------------------------------------
@@ -424,9 +479,16 @@ namespace SpinAPI
 
 		if (this->IsValid())
 		{
-			// We should always have a scalar for the prefactor
-			RunSection::ActionScalar rateScalar = RunSection::ActionScalar(this->rate, &CheckActionScalarTransitionRate, this->trjHasRate);
-			scalars.push_back(RunSection::NamedActionScalar(_system + "." + this->Name() + ".rate", rateScalar));
+			// Do not expose a writable ActionTarget when the selected time profile
+			// ignores Transition::Rate(). A writable-but-ineffective target is
+			// worse than an explicit read-only contract because parameter scans can
+			// otherwise appear to run while leaving the physical generator unchanged.
+			const bool rateReadonly =
+				this->trjHasRate || ProfileOverridesTransitionRate(this->properties);
+			RunSection::ActionScalar rateScalar = RunSection::ActionScalar(
+				this->rate, &CheckActionScalarTransitionRate, rateReadonly);
+			scalars.push_back(RunSection::NamedActionScalar(
+				_system + "." + this->Name() + ".rate", rateScalar));
 		}
 
 		return scalars;
