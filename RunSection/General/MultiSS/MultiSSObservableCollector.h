@@ -7,6 +7,10 @@
 // Transfer flux is k(t) Tr(G rho_source).  Internal transfer fluxes are useful
 // kinetic observables but are NOT terminal probabilities and therefore must
 // not be summed with terminal yields as a normalization check.
+//
+// Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
+// (c) 2026 Quantum Biology and Computational Physics Group.
+// See LICENSE.txt for license information.
 /////////////////////////////////////////////////////////////////////////
 #ifndef MOD_RunSection_General_MultiSS_MultiSSObservableCollector
 #define MOD_RunSection_General_MultiSS_MultiSSObservableCollector

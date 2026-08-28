@@ -1,5 +1,11 @@
 /////////////////////////////////////////////////////////////////////////
-// SSObservableCollector — State populations and terminal reaction observables.
+// SSObservableCollector (RunSection::General::SS)
+// ------------------
+// State populations and terminal reaction observables.
+//
+// Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
+// (c) 2026 Quantum Biology and Computational Physics Group.
+// See LICENSE.txt for license information.
 /////////////////////////////////////////////////////////////////////////
 #ifndef MOD_RunSection_General_SS_SSObservableCollector
 #define MOD_RunSection_General_SS_SSObservableCollector

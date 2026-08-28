@@ -279,6 +279,9 @@ namespace SpinAPI
 		bool SuperoperatorFromOperators(const arma::sp_cx_mat &, const arma::sp_cx_mat &, arma::sp_cx_mat &) const;
 		bool SuperoperatorFromLeftOperator(const arma::sp_cx_mat &, arma::sp_cx_mat &) const;
 		bool SuperoperatorFromRightOperator(const arma::sp_cx_mat &, arma::sp_cx_mat &) const;
+		// Convert a superoperator constructed in a Hamiltonian eigenbasis back to
+		// the current propagation basis using MolSpin's row-major vectorization.
+		bool TransformSuperoperatorFromEigenbasis(const arma::cx_mat &, const arma::sp_cx_mat &, arma::sp_cx_mat &) const;
 
 		// Re-ordering of the spins, used by the GetState methods when working with entangled states
 		// TODO: Consider making non-member non-friend functions, or making such equivalents

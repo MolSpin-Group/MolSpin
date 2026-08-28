@@ -14,9 +14,13 @@
 //   ::RunSection::General::SS::SSLiouvillianBuilder
 //   RunSection::General::MultiSS::{NetworkBuilder,Propagator,...}
 //
-// Historical RunSection/Tasks classes are intentionally not called or selected
+// Existing RunSection/Tasks classes are intentionally not called or selected
 // from here.  They remain independent reference/user tasks so old and new
 // implementations can be compared during migration.
+//
+// Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
+// (c) 2026 Quantum Biology and Computational Physics Group.
+// See LICENSE.txt for license information.
 /////////////////////////////////////////////////////////////////////////
 #ifndef MOD_RunSection_General_MultiSS_TaskMultiSSGeneral
 #define MOD_RunSection_General_MultiSS_TaskMultiSSGeneral

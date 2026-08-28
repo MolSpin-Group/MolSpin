@@ -1,3 +1,12 @@
+/////////////////////////////////////////////////////////////////////////
+// SSObservableCollector implementation (RunSection::General::SS)
+// ------------------
+// Constructs and evaluates state populations and terminal reaction yields.
+//
+// Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
+// (c) 2026 Quantum Biology and Computational Physics Group.
+// See LICENSE.txt for license information.
+/////////////////////////////////////////////////////////////////////////
 #include "SSObservableCollector.h"
 #include "../GeneralStateFrame.h"
 #include "SpinSpace.h"
@@ -48,7 +57,7 @@ namespace RunSection::General::SS
                     return false;
                 }
                 if(::RunSection::General::ObservableStateFrame(system,state)==SpinAPI::StateFrame::Molecular&&
-                    plan.hamiltonianMode!=SSHamiltonianMode::FixedFull)
+                    plan.orientation!=SSOrientationMode::Identity)
                 {
                     arma::cx_mat rotated;
                     if(!prepared.local.space->RotateState(projector,orientation.frameToLab,rotated))
@@ -84,7 +93,7 @@ namespace RunSection::General::SS
                 const bool molecular =
                     ::RunSection::General::TransitionSourceStateFrame(system,transition) == SpinAPI::StateFrame::Molecular;
 
-                if(molecular&&plan.hamiltonianMode!=SSHamiltonianMode::FixedFull)
+                if(molecular&&plan.orientation!=SSOrientationMode::Identity)
                 {
                     arma::cx_mat rotated;
                     if(!prepared.local.space->RotateState(projector,orientation.frameToLab,rotated))

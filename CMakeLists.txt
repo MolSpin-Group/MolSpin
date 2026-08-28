@@ -75,6 +75,8 @@ set(SOURCES_SPINAPI
         ${PATH_SOURCE_SPINAPI}/TimeProfile.cpp
         ${PATH_SOURCE_SPINAPI}/TransferChannel.cpp
         ${PATH_SOURCE_SPINAPI}/QuantumMap.cpp
+        ${PATH_SOURCE_SPINAPI}/Relaxation.cpp
+        ${PATH_SOURCE_SPINAPI}/Redfield.cpp
         ${PATH_SOURCE_SPINAPI}/NakajimaZwanzig.cpp
 )
 
@@ -114,7 +116,9 @@ set(SOURCES_RUNSECTION
         ${PATH_SOURCE_RUNSECTION}/General/HS/HSObservableCollector.cpp
         ${PATH_SOURCE_RUNSECTION}/General/HS/TaskHSGeneral.cpp
         ${PATH_SOURCE_RUNSECTION}/General/SS/SSLiouvillianBuilder.cpp
+        ${PATH_SOURCE_RUNSECTION}/General/SS/SSInteractionRelaxation.cpp
         ${PATH_SOURCE_RUNSECTION}/General/SS/SSNakajimaZwanzigBuilder.cpp
+        ${PATH_SOURCE_RUNSECTION}/General/SS/SSRedfieldBuilder.cpp
         ${PATH_SOURCE_RUNSECTION}/General/SS/SSExecutionPlan.cpp
         ${PATH_SOURCE_RUNSECTION}/General/SS/SSOrientationSampler.cpp
         ${PATH_SOURCE_RUNSECTION}/General/SS/SSSystemPreparation.cpp

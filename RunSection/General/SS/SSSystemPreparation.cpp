@@ -4,6 +4,10 @@
 // MultiSS owns inter-manifold edges. SSGeneral adds only terminal one-system
 // Haberkorn sinks here; inter-system transitions are rejected and delegated to
 // MultiSSGeneral.
+//
+// Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
+// (c) 2026 Quantum Biology and Computational Physics Group.
+// See LICENSE.txt for license information.
 /////////////////////////////////////////////////////////////////////////
 #include "SSSystemPreparation.h"
 #include "../GeneralStateFrame.h"
@@ -41,7 +45,8 @@ namespace RunSection::General::SS
             if(!SpinAPI::IsStatic(*t)){error="time-dependent Transition \""+t->Name()+"\" is not yet qualified in SSGeneral";return false;}
         }
 
-        if(!SSLiouvillianBuilder::Prepare(system,plan.hamiltonianMode,orientation.frameToLab,prepared.local,error,plan.relaxationModel==SSRelaxationModel::HistoricalNZ))return false;
+        if(!SSLiouvillianBuilder::Prepare(system,plan.hamiltonianMode,orientation.frameToLab,
+            prepared.local,error,plan.relaxationModel))return false;
         const arma::uword d=prepared.local.hamiltonian.n_rows;
         arma::cx_mat rho=prepared.local.initialDensity;
         const arma::cx_double tr=arma::trace(rho);

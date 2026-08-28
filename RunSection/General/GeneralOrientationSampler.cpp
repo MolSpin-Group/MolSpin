@@ -64,7 +64,7 @@ namespace RunSection::General
             case SpinAPI::PowderGridType::Octant:
                 ok = SpinAPI::CreateOctantPowderGrid(request.powderPoints, base);
                 if (ok)
-                    log << request.owner << " uses SpinAPI historical octant powder grid with "
+                    log << request.owner << " uses the SpinAPI octant powder grid with "
                         << base.size() << " theta/phi orientations." << std::endl;
                 break;
             }
@@ -158,7 +158,7 @@ namespace RunSection::General
                     const double extra = WrapAngle(request.extraAngleOffset +
                         2.0*arma::datum::pi*(static_cast<double>(k)+0.5)/
                         static_cast<double>(request.extraAnglePoints));
-                    // Historical MolSpin convention: R(extra, theta, phi).
+                    // Established MolSpin convention: R(extra, theta, phi).
                     if (!Append(extra,p.theta,p.phi,
                         p.weight/static_cast<double>(request.extraAnglePoints),out))
                     {

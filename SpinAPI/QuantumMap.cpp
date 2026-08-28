@@ -25,6 +25,10 @@
 //   The implementation verifies Hermiticity dimensions, checks that G is a
 //   projector (the closed-form K0 formula assumes this), validates f in [0,1],
 //   and checks total source+target trace conservation after the map.
+//
+// Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
+// (c) 2026 Quantum Biology and Computational Physics Group.
+// See LICENSE.txt for license information.
 /////////////////////////////////////////////////////////////////////////
 #include "QuantumMap.h"
 

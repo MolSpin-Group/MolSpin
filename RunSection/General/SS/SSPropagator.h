@@ -1,5 +1,11 @@
 /////////////////////////////////////////////////////////////////////////
-// SSPropagator — numerical engine for one static Liouville generator.
+// SSPropagator (RunSection::General::SS)
+// ------------------
+// Numerical engine for one static Liouville generator.
+//
+// Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
+// (c) 2026 Quantum Biology and Computational Physics Group.
+// See LICENSE.txt for license information.
 /////////////////////////////////////////////////////////////////////////
 #ifndef MOD_RunSection_General_SS_SSPropagator
 #define MOD_RunSection_General_SS_SSPropagator

@@ -19,7 +19,7 @@
 //       L_internal rho = -i[H,rho] + R_local rho.
 //
 //   Existing SpinAPI relaxation Operator implementations are reused.  The
-//   historical NZ algebra is being extracted separately into SpinAPI first so
+//   established NZ algebra is extracted separately into SpinAPI so
 //   published behavior (DOI: 10.1021/jacs.5c06173) can be parity-tested before
 //   it is wired into this production builder.  The formal reactive NZ reference
 //   is DOI: 10.1063/5.0040519; it is not silently substituted here.
@@ -30,9 +30,14 @@
 //   Hamiltonian; `rotated_sa` selects the existing high-field/secular SpinAPI
 //   construction.  General/MultiSS never samples separate random orientations
 //   for separate electronic manifolds of one molecular network.
+//
+// Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
+// (c) 2026 Quantum Biology and Computational Physics Group.
+// See LICENSE.txt for license information.
 /////////////////////////////////////////////////////////////////////////
 #include "SSLiouvillianBuilder.h"
 #include "SSNakajimaZwanzigBuilder.h"
+#include "SSRedfieldBuilder.h"
 
 #include "ObjectParser.h"
 #include "Operator.h"
@@ -86,7 +91,7 @@ namespace RunSection::General::SS
 
     bool SSLiouvillianBuilder::BuildInitialDensity(const SpinAPI::system_ptr &system,
         SpinAPI::SpinSpace &space, const arma::sp_cx_mat &hamiltonian,
-        SSHamiltonianMode mode, const arma::mat &rotation,
+        const arma::mat &rotation,
         arma::cx_mat &density, std::string &error)
     {
         error.clear(); density.reset();
@@ -101,6 +106,14 @@ namespace RunSection::General::SS
             // zero-population destination.  This differs from single-system
             // HSGeneral, where absence of an initial state is usually an error.
             return true;
+        }
+
+        if (system->InitialStateFrame() == SpinAPI::StateFrame::Eigen &&
+            (initialStates.size() != 1 || initialStates.front() != nullptr))
+        {
+            error = "initial-state frame=eigen for SpinSystem \"" + system->Name() +
+                "\" requires exactly one Thermal initial state";
+            return false;
         }
 
         std::vector<double> weights = system->Weights();
@@ -132,7 +145,7 @@ namespace RunSection::General::SS
                 if (!space.GetState(initialStates[i], component))
                 { error = "failed to construct initial State \"" + initialStates[i]->Name() + "\""; return false; }
                 if (system->InitialStateFrame() == SpinAPI::StateFrame::Molecular &&
-                    mode != SSHamiltonianMode::FixedFull && !IsIdentityRotation(rotation))
+                    !IsIdentityRotation(rotation))
                 {
                     arma::cx_mat rotated;
                     if (!space.RotateState(component, rotation, rotated))
@@ -169,7 +182,7 @@ namespace RunSection::General::SS
     bool SSLiouvillianBuilder::BuildInternalLiouvillian(const SpinAPI::system_ptr &system,
         SpinAPI::SpinSpace &space, const arma::sp_cx_mat &hamiltonian,
         const arma::mat &rotation, arma::sp_cx_mat &liouvillian,
-        std::string &error, bool historicalNZ)
+        std::string &error, SSRelaxationModel relaxationModel)
     {
         error.clear();
         const arma::uword d = hamiltonian.n_rows;
@@ -184,9 +197,10 @@ namespace RunSection::General::SS
 
         // Existing SpinAPI relaxation Operator implementations are reused here.
         // They are local one-manifold physics and therefore belong below the
-        // MultiSS network layer.  Nakajima-Zwanzig is migrated separately into
-        // a reusable SpinAPI builder because the historical NZ task encoded its
-        // theory locally rather than as an Operator object.
+        // MultiSS network layer. Explicit Operators and the selected
+        // interaction-derived model are additive, matching the legacy NZ and
+        // Redfield tasks. Every contribution is returned in this Liouvillian's
+        // propagation basis before it is added.
         if (!system->Operators().empty())
         {
             arma::vec eigenvalues;
@@ -202,27 +216,35 @@ namespace RunSection::General::SS
             }
         }
 
-        if (historicalNZ)
+        if (relaxationModel == SSRelaxationModel::NakajimaZwanzig)
         {
             arma::sp_cx_mat nz;
-            if (!SSNakajimaZwanzigBuilder::BuildHistorical(system, space, hamiltonian, nz, error))
+            if (!SSNakajimaZwanzigBuilder::Build(system, space, hamiltonian, rotation, nz, error))
                 return false;
             liouvillian += nz;
+        }
+        else if (relaxationModel == SSRelaxationModel::Redfield)
+        {
+            arma::sp_cx_mat redfield;
+            if (!SSRedfieldBuilder::Build(system, space, hamiltonian, rotation, redfield, error))
+                return false;
+            liouvillian += redfield;
         }
         return true;
     }
 
     bool SSLiouvillianBuilder::Prepare(const SpinAPI::system_ptr &system,
         SSHamiltonianMode mode, const arma::mat &rotation,
-        SSPreparedSystem &prepared, std::string &error, bool historicalNZ)
+        SSPreparedSystem &prepared, std::string &error,
+        SSRelaxationModel relaxationModel)
     {
         prepared = SSPreparedSystem(); error.clear();
         if (system == nullptr) { error = "cannot prepare null SpinSystem"; return false; }
         prepared.system = system;
         prepared.space = std::make_shared<SpinAPI::SpinSpace>(system);
         if (!BuildHamiltonian(system, *prepared.space, mode, rotation, prepared.hamiltonian, error) ||
-            !BuildInitialDensity(system, *prepared.space, prepared.hamiltonian, mode, rotation, prepared.initialDensity, error) ||
-            !BuildInternalLiouvillian(system, *prepared.space, prepared.hamiltonian, rotation, prepared.internalLiouvillian, error, historicalNZ))
+            !BuildInitialDensity(system, *prepared.space, prepared.hamiltonian, rotation, prepared.initialDensity, error) ||
+            !BuildInternalLiouvillian(system, *prepared.space, prepared.hamiltonian, rotation, prepared.internalLiouvillian, error, relaxationModel))
             return false;
         return true;
     }

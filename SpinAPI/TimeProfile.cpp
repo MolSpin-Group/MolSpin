@@ -7,7 +7,7 @@
 //   General/MultiSS evaluates the resulting channel while assembling a global
 //   direct-sum Liouvillian; TaskMultiSSGeneral only orchestrates the calculation.
 //   This file must therefore contain no RunSection task logic and no knowledge
-//   of historical TaskMultiStaticSS implementations.
+//   of existing TaskMultiStaticSS implementations.
 //
 // PHYSICAL CONTRACT FOR OPTICAL DRIVING
 //   A Gaussian TimeProfile represents an *incoherent population-transfer rate*,
@@ -37,8 +37,12 @@
 // NUMERICAL CONTRACT
 //   Objects are immutable after construction.  Integral() is analytical for
 //   constant/Gaussian/rectangular profiles and exact piecewise-trapezoidal for
-//   the piecewise-linear trajectory definition.  Unlike historical mutable
+//   the piecewise-linear trajectory definition. Unlike mutable
 //   Transition trajectories, evaluating a TimeProfile has no side effects.
+//
+// Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
+// (c) 2026 Quantum Biology and Computational Physics Group.
+// See LICENSE.txt for license information.
 /////////////////////////////////////////////////////////////////////////
 #include "TimeProfile.h"
 

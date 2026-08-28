@@ -1,4 +1,4 @@
-// General/MultiSS smoke test: finite optical pumping + local historical NZ.
+// General/MultiSS smoke test: finite optical pumping plus local NZ relaxation.
 // Numerical parameters are synthetic regression values, NOT Tobias Groß data.
 SpinSystem S0
 {
@@ -27,7 +27,7 @@ SpinSystem CSS
     Interaction B1
     {
         type=zeeman; field="0 0 0.02"; spins=e1;
-        // Synthetic historical-NZ correlation source.  This exercises the
+        // Synthetic NZ correlation source. This exercises the
         // established Interaction g/tau_c syntax; it is not a fitted dyad value.
         ops=1; terms=1; g=0.002; tau_c=0.6;
     }
@@ -49,7 +49,7 @@ Run
     Task combined
     {
         type=MultiSSGeneral; calculation=timeevolution;
-        relaxationmodel=historical_nz;
+        relaxationmodel=nakajima_zwanzig;
         propagationmethod=rk4; timestep=0.02; totaltime=10;
         observables=both; transitionfluxes=true;
         datafile="Tobias_Gross_time_profile_NZ_smoketest.dat";

@@ -15,6 +15,10 @@
 // creates S1-CSS coherences, an enlarged Hilbert-space mode is required instead.
 // The block-diagonal kinetic representation is consistent with the reversible
 // S1/CSS hierarchy discussed in DOI: 10.1039/D6CP00916F.
+//
+// Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
+// (c) 2026 Quantum Biology and Computational Physics Group.
+// See LICENSE.txt for license information.
 /////////////////////////////////////////////////////////////////////////
 #ifndef MOD_RunSection_General_MultiSS_MultiSSSystemPreparation
 #define MOD_RunSection_General_MultiSS_MultiSSSystemPreparation

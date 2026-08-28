@@ -5,6 +5,10 @@
 // every SpinSystem in the network.  Independent per-manifold orientations are
 // forbidden because they would destroy the covariance of a coupled molecular
 // reaction network.
+//
+// Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
+// (c) 2026 Quantum Biology and Computational Physics Group.
+// See LICENSE.txt for license information.
 /////////////////////////////////////////////////////////////////////////
 #ifndef MOD_RunSection_General_MultiSS_MultiSSOrientationSampler
 #define MOD_RunSection_General_MultiSS_MultiSSOrientationSampler

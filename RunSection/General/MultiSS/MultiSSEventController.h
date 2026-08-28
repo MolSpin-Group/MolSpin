@@ -4,10 +4,14 @@
 // Pure timeline helper for discontinuous network events.
 //
 // It replaces the traversal-order-sensitive mutable Active flags used by some
-// historical PulseSequence workflows.  The propagator asks for the next event,
+// established PulseSequence workflows.  The propagator asks for the next event,
 // lands on it exactly, and applies it exactly once.  Magnetic Pulse objects can
 // be compiled into this same event timeline in a later extension without
 // changing TransferChannel or QuantumMap.
+//
+// Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
+// (c) 2026 Quantum Biology and Computational Physics Group.
+// See LICENSE.txt for license information.
 /////////////////////////////////////////////////////////////////////////
 #ifndef MOD_RunSection_General_MultiSS_MultiSSEventController
 #define MOD_RunSection_General_MultiSS_MultiSSEventController

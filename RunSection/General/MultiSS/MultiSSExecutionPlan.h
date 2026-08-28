@@ -8,6 +8,10 @@
 //   spin operators (SpinAPI), local one-system generators (General/SS), or
 //   output streams (TaskMultiSSGeneral).  Keeping these concerns separate is
 //   intentional and mirrors the successful General/HS architecture.
+//
+// Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
+// (c) 2026 Quantum Biology and Computational Physics Group.
+// See LICENSE.txt for license information.
 /////////////////////////////////////////////////////////////////////////
 #ifndef MOD_RunSection_General_MultiSS_MultiSSExecutionPlan
 #define MOD_RunSection_General_MultiSS_MultiSSExecutionPlan
@@ -31,12 +35,12 @@ namespace RunSection::General::MultiSS
         MultiSSObservableMode observables = MultiSSObservableMode::Both;
         ::RunSection::General::SS::SSHamiltonianMode hamiltonianMode =
             ::RunSection::General::SS::SSHamiltonianMode::FixedFull;
-        bool historicalNZ = false;
+        ::RunSection::General::SS::SSRelaxationModel relaxationModel =
+            ::RunSection::General::SS::SSRelaxationModel::Operators;
 
         double totalTime = 1000.0;
         double timeStep = 1.0;
         double solverResidualTolerance = 1.0e-8;
-        double probabilityTolerance = 1.0e-9;
         bool diagnostics = true;
         bool transitionFluxes = false;
 

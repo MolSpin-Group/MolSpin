@@ -34,6 +34,7 @@ Benji*
 *.zip
 msd-files/
 *.out
+*.d
 python/
 *.txt
 __pycache__/

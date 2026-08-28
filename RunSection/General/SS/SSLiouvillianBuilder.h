@@ -14,8 +14,12 @@
 //
 // This class intentionally never follows a Transition into another SpinSystem.
 // Intersystem kinetics belongs to General/MultiSS through SpinAPI::TransferChannel.
-// It also never calls historical RunSection/Tasks implementations.  Those remain
+// It also never calls legacy RunSection/Tasks implementations. Those remain
 // executable, independent numerical references.
+//
+// Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
+// (c) 2026 Quantum Biology and Computational Physics Group.
+// See LICENSE.txt for license information.
 /////////////////////////////////////////////////////////////////////////
 #ifndef MOD_RunSection_General_SS_SSLiouvillianBuilder
 #define MOD_RunSection_General_SS_SSLiouvillianBuilder
@@ -34,6 +38,13 @@ namespace RunSection::General::SS
         RotatedSecular
     };
 
+    enum class SSRelaxationModel
+    {
+        Operators,
+        NakajimaZwanzig,
+        Redfield
+    };
+
     struct SSPreparedSystem
     {
         SpinAPI::system_ptr system;
@@ -49,7 +60,7 @@ namespace RunSection::General::SS
         static bool Prepare(const SpinAPI::system_ptr &_system,
             SSHamiltonianMode _mode, const arma::mat &_rotation,
             SSPreparedSystem &_prepared, std::string &_error,
-            bool _historicalNZ = false);
+            SSRelaxationModel _relaxationModel = SSRelaxationModel::Operators);
 
         static bool BuildHamiltonian(const SpinAPI::system_ptr &_system,
             SpinAPI::SpinSpace &_space, SSHamiltonianMode _mode,
@@ -58,13 +69,14 @@ namespace RunSection::General::SS
 
         static bool BuildInitialDensity(const SpinAPI::system_ptr &_system,
             SpinAPI::SpinSpace &_space, const arma::sp_cx_mat &_hamiltonian,
-            SSHamiltonianMode _mode, const arma::mat &_rotation,
+            const arma::mat &_rotation,
             arma::cx_mat &_density, std::string &_error);
 
         static bool BuildInternalLiouvillian(const SpinAPI::system_ptr &_system,
             SpinAPI::SpinSpace &_space, const arma::sp_cx_mat &_hamiltonian,
             const arma::mat &_rotation, arma::sp_cx_mat &_liouvillian,
-            std::string &_error, bool _historicalNZ = false);
+            std::string &_error,
+            SSRelaxationModel _relaxationModel = SSRelaxationModel::Operators);
     };
 }
 

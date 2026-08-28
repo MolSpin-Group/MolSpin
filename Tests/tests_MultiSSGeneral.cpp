@@ -177,14 +177,14 @@ bool test_multiss_true_steadystate_closed_reversible_network()
     return std::abs(BlockTrace(network,rho,0)-1.0/3.0)<1.0e-11 && std::abs(BlockTrace(network,rho,1)-2.0/3.0)<1.0e-11;
 }
 
-bool test_multiss_historical_nz_core_exact_algebra()
+bool test_multiss_nakajima_zwanzig_core_exact_algebra()
 {
     arma::vec eig={-0.3,0.7};arma::cx_mat omega,J,R;std::string error;
-    if(!SpinAPI::NakajimaZwanzig::HistoricalFrequencyMatrix(eig,omega,&error))return false;
-    if(!SpinAPI::NakajimaZwanzig::HistoricalExponentialSpectralDensity({0.8,0.0},{0.4,0.0},omega,J,&error))return false;
+    if(!SpinAPI::NakajimaZwanzig::FrequencyMatrix(eig,omega,&error))return false;
+    if(!SpinAPI::NakajimaZwanzig::ExponentialSpectralDensity({0.8,0.0},{0.4,0.0},omega,J,&error))return false;
     arma::cx_mat op1=arma::cx_mat("0 1;1 0");
     arma::cx_mat op2=arma::cx_mat("1 0;0 -1");
-    if(!SpinAPI::NakajimaZwanzig::HistoricalTensor(op1,op2,J,R,&error))return false;
+    if(!SpinAPI::NakajimaZwanzig::RelaxationTensor(op1,op2,J,R,&error))return false;
     const arma::cx_mat I=arma::eye<arma::cx_mat>(2,2);
     const arma::cx_mat ref=-(arma::kron(op1.t(),I)-arma::kron(I,op1.t().st()))*J.t()*(arma::kron(op2,I)-arma::kron(I,op2.st()));
     return arma::norm(R-ref,"fro")<1.0e-14;
@@ -406,7 +406,9 @@ bool test_multiss_system_level_state_frames_use_common_orientation()
         "type=sink;sourcestate=Up;target=B;targetstate=Up;rate=0.2;",A));
     std::vector<SpinAPI::system_ptr> systems{A,B};if(!ValidateSystemObjects(systems))return false;
 
-    MultiSSExecutionPlan plan;plan.hamiltonianMode=RunSection::General::SS::SSHamiltonianMode::RotatedFull;
+    MultiSSExecutionPlan plan;
+    plan.orientation=MultiSSOrientationMode::Explicit;
+    plan.hamiltonianMode=RunSection::General::SS::SSHamiltonianMode::RotatedFull;
     plan.observables=MultiSSObservableMode::States;
     MultiSSOrientation o;o.alpha=0.37;o.beta=0.81;o.gamma=-0.22;o.weight=1.0;
     if(!SpinAPI::CreateZYZRotationMatrix(o.alpha,o.beta,o.gamma,o.frameToLab))return false;
@@ -445,7 +447,7 @@ void AddMultiSSGeneralTests(std::vector<test_case> &cases)
     cases.push_back(test_case("MultiSS event boundary exact and once",test_multiss_instantaneous_event_lands_exactly_and_applies_once));
     cases.push_back(test_case("MultiSS timeintegrated solve semantics",test_multiss_timeintegrated_is_not_steadystate));
     cases.push_back(test_case("MultiSS true steady state",test_multiss_true_steadystate_closed_reversible_network));
-    cases.push_back(test_case("MultiSS historical NZ core parity",test_multiss_historical_nz_core_exact_algebra));
+    cases.push_back(test_case("MultiSS NZ core parity",test_multiss_nakajima_zwanzig_core_exact_algebra));
     cases.push_back(test_case("MultiSS parallel-channel rates add",test_multiss_three_parallel_channels_use_sum_of_rates));
     cases.push_back(test_case("MultiSS Mims push coherence map",test_multiss_mims_spin_selective_push_preserves_coherence_amplitude));
     cases.push_back(test_case("MultiSS timeintegrated matches long propagation",test_multiss_timeintegrated_matches_long_time_propagation));

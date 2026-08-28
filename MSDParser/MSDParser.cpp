@@ -242,13 +242,14 @@ namespace MSDParser
 		for (auto i = this->systems.cbegin(); i != this->systems.cend(); i++)
 			_run.Add((*i));
 
+		// Tasks copy stream precision and other global run options when they are
+		// constructed, so Settings must be applied before task construction.
+		for (auto i = this->settingsObjects.cbegin(); i != this->settingsObjects.cend(); i++)
+			_run.Add(ObjectType::Settings, (*i));
+
 		// Add tasks to the RunSection
 		for (auto i = this->runTasks.cbegin(); i != this->runTasks.cend(); i++)
 			_run.Add(ObjectType::Task, (*i));
-
-		// Add the settings object
-		for (auto i = this->settingsObjects.cbegin(); i != this->settingsObjects.cend(); i++)
-			_run.Add(ObjectType::Settings, (*i));
 
 		// -----------------------------------------------------------------------------
 		// NOTE: Make sure that all ActionTargets are created before this point, since

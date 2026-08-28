@@ -303,7 +303,7 @@ namespace RunSection::General::HS
 		}
 
 		output.zeros(values.n_rows, values.n_cols);
-		// Historical DirectSpectra compatibility: the trapezoidal recurrence is
+		// DirectSpectra compatibility: the established trapezoidal recurrence is
 		// accumulated from a zero row 0 and only afterwards is row 0 replaced by
 		// the instantaneous initial value. Consequently row 1 contains only the
 		// first interval integral rather than initial-value + first interval.

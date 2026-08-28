@@ -23,7 +23,7 @@
 //   a Gaussian temporal pulse profile in the optical transition rate:
 //       DOI: 10.1038/ncomms14000
 //
-// Molecular Spin Dynamics Software.
+// Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
 // (c) 2026 Quantum Biology and Computational Physics Group.
 // See LICENSE.txt for license information.
 /////////////////////////////////////////////////////////////////////////

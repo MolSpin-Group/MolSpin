@@ -8,9 +8,9 @@
 //
 //       L_global(t) = blockdiag(L_i) + sum_c k_c(t) L_c^(unit).
 //
-//   That separation prevents the historical failure mode in which a local
+//   That separation prevents the previous failure mode in which a local
 //   reaction sink and an inter-system transfer edge both consume the same
-//   population.  Historical RunSection/Tasks remain independent references and
+//   population. Existing RunSection/Tasks remain independent references and
 //   are never dispatched from this builder.
 //
 // PHYSICAL MAP
@@ -21,7 +21,7 @@
 //
 // ORIENTATION / INPUT COMPATIBILITY
 //   Source and target State frames are resolved with the same precedence as the
-//   historical orientation-aware MultiStaticSS input contract: system-level
+//   established orientation-aware MultiStaticSS input contract: system-level
 //   `transitionstateframe` is the fallback, while Transition-level sourceframe /
 //   targetframe / transitionstateframe may override it.  The code reproduces
 //   that input semantics locally; it does not call legacy task code.
@@ -31,6 +31,10 @@
 //   the target gain map C rho C^dagger is embedded as C (x) C*, while source
 //   loss is 1/2[G rho + rho G].  The unit-rate edge is multiplied by k(t) only
 //   in MultiSSNetwork::Generator().
+//
+// Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
+// (c) 2026 Quantum Biology and Computational Physics Group.
+// See LICENSE.txt for license information.
 /////////////////////////////////////////////////////////////////////////
 #include "MultiSSNetworkBuilder.h"
 #include "../GeneralStateFrame.h"

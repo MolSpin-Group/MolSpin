@@ -9,6 +9,8 @@
 #
 # MolSpin was developed using gcc 5.4.0.
 # --------------------------------------------------------------------------
+.DEFAULT_GOAL := molspin
+
 # Armadillo's wrapper selects and links its configured BLAS/LAPACK backend.
 # pkg-config also supplies non-standard include/library paths, as used by
 # Conda. Both variables can be overridden for a custom installation.
@@ -25,7 +27,7 @@ ARMADILLO_LIBS ?= $(shell $(PKG_CONFIG) --libs armadillo 2>/dev/null || echo -la
 # SpinAPI module
 PATH_SPINAPI = ./SpinAPI
 
-OBJS_SPINAPI = $(PATH_SPINAPI)/SpinSystem.o $(PATH_SPINAPI)/Spin.o $(PATH_SPINAPI)/Interaction.o $(PATH_SPINAPI)/Transition.o $(PATH_SPINAPI)/Operator.o $(PATH_SPINAPI)/Pulse.o $(PATH_SPINAPI)/State.o $(PATH_SPINAPI)/SpinSpace.o $(PATH_SPINAPI)/StandardOutput.o $(PATH_SPINAPI)/Tensor.o $(PATH_SPINAPI)/Trajectory.o $(PATH_SPINAPI)/SubSystem.o $(PATH_SPINAPI)/Function.o $(PATH_SPINAPI)/PulseSequence.o $(PATH_SPINAPI)/PowderGrid.o $(PATH_SPINAPI)/TimeProfile.o $(PATH_SPINAPI)/TransferChannel.o $(PATH_SPINAPI)/QuantumMap.o $(PATH_SPINAPI)/NakajimaZwanzig.o
+OBJS_SPINAPI = $(PATH_SPINAPI)/SpinSystem.o $(PATH_SPINAPI)/Spin.o $(PATH_SPINAPI)/Interaction.o $(PATH_SPINAPI)/Transition.o $(PATH_SPINAPI)/Operator.o $(PATH_SPINAPI)/Pulse.o $(PATH_SPINAPI)/State.o $(PATH_SPINAPI)/SpinSpace.o $(PATH_SPINAPI)/StandardOutput.o $(PATH_SPINAPI)/Tensor.o $(PATH_SPINAPI)/Trajectory.o $(PATH_SPINAPI)/SubSystem.o $(PATH_SPINAPI)/Function.o $(PATH_SPINAPI)/PulseSequence.o $(PATH_SPINAPI)/PowderGrid.o $(PATH_SPINAPI)/TimeProfile.o $(PATH_SPINAPI)/TransferChannel.o $(PATH_SPINAPI)/QuantumMap.o $(PATH_SPINAPI)/Relaxation.o $(PATH_SPINAPI)/Redfield.o $(PATH_SPINAPI)/NakajimaZwanzig.o
 DEP_SPINAPI = 
 
 # --------------------------------------------------------------------------
@@ -50,7 +52,7 @@ OBJS_RUNSECTION_GENERAL_HS = $(PATH_RUNSECTION_GENERAL_HS)/HSExecutionPlan.o $(P
 # ---
 # Unified superspace architecture shared by MultiSSGeneral
 PATH_RUNSECTION_GENERAL_SS = ./RunSection/General/SS
-OBJS_RUNSECTION_GENERAL_SS = $(PATH_RUNSECTION_GENERAL_SS)/SSLiouvillianBuilder.o $(PATH_RUNSECTION_GENERAL_SS)/SSNakajimaZwanzigBuilder.o $(PATH_RUNSECTION_GENERAL_SS)/SSExecutionPlan.o $(PATH_RUNSECTION_GENERAL_SS)/SSOrientationSampler.o $(PATH_RUNSECTION_GENERAL_SS)/SSSystemPreparation.o $(PATH_RUNSECTION_GENERAL_SS)/SSPropagator.o $(PATH_RUNSECTION_GENERAL_SS)/SSObservableCollector.o $(PATH_RUNSECTION_GENERAL_SS)/TaskSSGeneral.o
+OBJS_RUNSECTION_GENERAL_SS = $(PATH_RUNSECTION_GENERAL_SS)/SSLiouvillianBuilder.o $(PATH_RUNSECTION_GENERAL_SS)/SSInteractionRelaxation.o $(PATH_RUNSECTION_GENERAL_SS)/SSNakajimaZwanzigBuilder.o $(PATH_RUNSECTION_GENERAL_SS)/SSRedfieldBuilder.o $(PATH_RUNSECTION_GENERAL_SS)/SSExecutionPlan.o $(PATH_RUNSECTION_GENERAL_SS)/SSOrientationSampler.o $(PATH_RUNSECTION_GENERAL_SS)/SSSystemPreparation.o $(PATH_RUNSECTION_GENERAL_SS)/SSPropagator.o $(PATH_RUNSECTION_GENERAL_SS)/SSObservableCollector.o $(PATH_RUNSECTION_GENERAL_SS)/TaskSSGeneral.o
 PATH_RUNSECTION_GENERAL_MULTISS = ./RunSection/General/MultiSS
 OBJS_RUNSECTION_GENERAL_MULTISS = $(PATH_RUNSECTION_GENERAL_MULTISS)/MultiSSExecutionPlan.o $(PATH_RUNSECTION_GENERAL_MULTISS)/MultiSSOrientationSampler.o $(PATH_RUNSECTION_GENERAL_MULTISS)/MultiSSSystemPreparation.o $(PATH_RUNSECTION_GENERAL_MULTISS)/MultiSSNetworkBuilder.o $(PATH_RUNSECTION_GENERAL_MULTISS)/MultiSSEventController.o $(PATH_RUNSECTION_GENERAL_MULTISS)/MultiSSPropagator.o $(PATH_RUNSECTION_GENERAL_MULTISS)/MultiSSObservableCollector.o $(PATH_RUNSECTION_GENERAL_MULTISS)/TaskMultiSSGeneral.o
 # ---
@@ -95,7 +97,7 @@ DEFINES ?= -DARMA_DONT_PRINT_FAST_MATH_WARNING -DARMA_NO_DEBUG -DASSERT=1 -DNEGA
 TESTDEFINES ?= -DSPINAPI_TEST=0 -DMSDPARSER_TEST=0 -DACTION_TEST=0 -DSTATICHSSDECAY_TEST=0 -DSTATICSS_TEST=0 -DMULTISTATICSS_TEST=0 -DSTATICRPONLY_TEST=0 -DSTATICSSSPECTRA_TEST=0 -DSTATICHSRESONANCE_TEST=0 -DSTATICPOWDERSPECTRA_TEST=1 -DHSGENERAL_TEST=1 -DSSGENERAL_TEST=1 -DMULTISSGENERAL_TEST=1 -DGENERALLOG_TEST=1 -DUTIL_TEST=0
 CC = $(CXX) $(CXXSTD)		# Compiler to use
 LFLAGS = $(WARNFLAGS) $(DEBUGFLAGS) -DARMA_DONT_PRINT_FAST_MATH_WARNING $(OPTFLAGS)	# Linker Flags
-CFLAGS = $(WARNFLAGS) -c $(ARCHFLAGS) $(LOOPFLAGS) $(COMPATFLAGS) $(DEBUGFLAGS) $(OPENMPFLAGS) $(DEFINES) $(OPTFLAGS) # Compile flags to .o
+CFLAGS = $(WARNFLAGS) -c -MMD -MP $(ARCHFLAGS) $(LOOPFLAGS) $(COMPATFLAGS) $(DEBUGFLAGS) $(OPENMPFLAGS) $(DEFINES) $(OPTFLAGS) # Compile flags to .o
 TESTCFLAGS = $(CFLAGS) $(TESTDEFINES)
 LDLIBS = $(ARMADILLO_LIBS) $(OPENMPFLAGS) $(DLFLAGS)
 # Example portability override: make ARCHFLAGS= LOOPFLAGS=
@@ -107,6 +109,13 @@ LDLIBS = $(ARMADILLO_LIBS) $(OPENMPFLAGS) $(DLFLAGS)
 # Compilation of the main program
 # --------------------------------------------------------------------------
 SEARCHDIR_MOLSPIN = -I$(PATH_SPINAPI) -I$(PATH_MSDPARSER) -I$(PATH_RUNSECTION) -I$(PATH_RUNSECTION_GENERAL_RESONANCE) -I$(PATH_RUNSECTION_GENERAL_HS) -I$(PATH_RUNSECTION_GENERAL_SS) -I$(PATH_RUNSECTION_GENERAL_MULTISS) -I$(PATH_RUNSECTION_TASKS) -I$(PATH_RUNSECTION_CUSTOMTASKS) -I$(PATH_RUNSECTION_ACTIONS) -I$(PATH_LINALG_VENDOR) $(ARMADILLO_CFLAGS)
+
+# Compiler-generated dependency files keep incremental builds correct when a
+# shared header changes class layout or an inline API. Without these files,
+# stale objects can link successfully and fail at runtime with an ABI mismatch.
+DEPFILES = $(sort $(OBJECTS:.o=.d) $(OBJS_TESTS:.o=.d) $(OBJS_TESTS_DEBUG:.o=.d))
+-include $(DEPFILES)
+
 molspin: $(OBJECTS)
 	$(CC) $(LFLAGS) $^ $(LDLIBS) -o $@
 
@@ -170,7 +179,7 @@ $(PATH_TESTS)/testmain_debug.o: $(TESTMAIN_DEPS)
 # Clean-up binaries for clean recompilation
 .PHONY: clean
 clean:
-	rm -f *.o $(PATH_MSDPARSER)/*.o $(PATH_SPINAPI)/*.o $(PATH_RUNSECTION)/*.o $(PATH_RUNSECTION_GENERAL)/*.o $(PATH_RUNSECTION_GENERAL_RESONANCE)/*.o $(PATH_RUNSECTION_GENERAL_HS)/*.o $(PATH_RUNSECTION_GENERAL_SS)/*.o $(PATH_RUNSECTION_GENERAL_MULTISS)/*.o $(PATH_RUNSECTION_ACTIONS)/*.o $(PATH_RUNSECTION_TASKS)/*.o $(PATH_RUNSECTION_CUSTOMTASKS)/*.o molspin $(PATH_TESTS)/*.o $(PATH_TESTS)/molspintest $(PATH_TESTS)/molspintest-debug
+	rm -f *.o *.d $(PATH_MSDPARSER)/*.o $(PATH_MSDPARSER)/*.d $(PATH_SPINAPI)/*.o $(PATH_SPINAPI)/*.d $(PATH_RUNSECTION)/*.o $(PATH_RUNSECTION)/*.d $(PATH_RUNSECTION_GENERAL)/*.o $(PATH_RUNSECTION_GENERAL)/*.d $(PATH_RUNSECTION_GENERAL_RESONANCE)/*.o $(PATH_RUNSECTION_GENERAL_RESONANCE)/*.d $(PATH_RUNSECTION_GENERAL_HS)/*.o $(PATH_RUNSECTION_GENERAL_HS)/*.d $(PATH_RUNSECTION_GENERAL_SS)/*.o $(PATH_RUNSECTION_GENERAL_SS)/*.d $(PATH_RUNSECTION_GENERAL_MULTISS)/*.o $(PATH_RUNSECTION_GENERAL_MULTISS)/*.d $(PATH_RUNSECTION_ACTIONS)/*.o $(PATH_RUNSECTION_ACTIONS)/*.d $(PATH_RUNSECTION_TASKS)/*.o $(PATH_RUNSECTION_TASKS)/*.d $(PATH_RUNSECTION_CUSTOMTASKS)/*.o $(PATH_RUNSECTION_CUSTOMTASKS)/*.d molspin $(PATH_TESTS)/*.o $(PATH_TESTS)/*.d $(PATH_TESTS)/molspintest $(PATH_TESTS)/molspintest-debug
 #	rm debug/*.o
 
 # Clean-up testing binaries and run the test again

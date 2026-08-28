@@ -113,7 +113,7 @@ namespace RunSection::General::HS
 		// Powder-grid input follows the shared SpinAPI vocabulary. `powdergrid`
 		// is canonical for General tasks; `powdergridtype` is retained only as a
 		// compatibility alias for existing resonance inputs. `uniform` is the
-		// historical golden-angle/Fibonacci constructor in SpinAPI.
+		// established golden-angle/Fibonacci constructor in SpinAPI.
 		std::string powderGridName;
 		const bool powderGridSpecified = ReadString(properties,
 			{"powdergrid", "powder_grid", "powdergridtype"}, powderGridName);

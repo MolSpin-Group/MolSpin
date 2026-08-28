@@ -1,5 +1,11 @@
 /////////////////////////////////////////////////////////////////////////
-// SSOrientationSampler — common one-system molecular->lab orientation samples.
+// SSOrientationSampler (RunSection::General::SS)
+// ------------------
+// Common one-system molecular-to-lab orientation samples.
+//
+// Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
+// (c) 2026 Quantum Biology and Computational Physics Group.
+// See LICENSE.txt for license information.
 /////////////////////////////////////////////////////////////////////////
 #ifndef MOD_RunSection_General_SS_SSOrientationSampler
 #define MOD_RunSection_General_SS_SSOrientationSampler

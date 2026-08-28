@@ -1,5 +1,11 @@
 /////////////////////////////////////////////////////////////////////////
-// SSExecutionPlan implementation.
+// SSExecutionPlan implementation (RunSection::General::SS)
+// ------------------
+// Resolves user input into an explicit, validated superspace calculation plan.
+//
+// Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
+// (c) 2026 Quantum Biology and Computational Physics Group.
+// See LICENSE.txt for license information.
 /////////////////////////////////////////////////////////////////////////
 #include "SSExecutionPlan.h"
 #include "ObjectParser.h"
@@ -66,7 +72,7 @@ namespace RunSection::General::SS
         else {error="observables must be states, transitionyields, or both";return false;}
 
         value="full";
-        const bool modeSpecified=ReadString(p,{"hamiltonianmode","hamiltonian_mode","approximation"},value);
+        ReadString(p,{"hamiltonianmode","hamiltonian_mode","approximation"},value);
         if(value=="full"||value=="fixed"||value=="exact"||value=="nonsecular") plan.hamiltonianMode=SSHamiltonianMode::FixedFull;
         else if(value=="rotated_zyz"||value=="rotatedzyz") plan.hamiltonianMode=SSHamiltonianMode::RotatedFull;
         else if(value=="secular"||value=="highfield"||value=="high-field"||value=="rotated_sa"||value=="rotatedsa") plan.hamiltonianMode=SSHamiltonianMode::RotatedSecular;
@@ -74,13 +80,14 @@ namespace RunSection::General::SS
 
         value="operators"; ReadString(p,{"relaxationmodel","relaxation_model"},value);
         if(value=="operators"||value=="operator"||value=="local") plan.relaxationModel=SSRelaxationModel::Operators;
-        else if(value=="historical_nz"||value=="historical-nz"||value=="nakajimazwanzig"||value=="nz") plan.relaxationModel=SSRelaxationModel::HistoricalNZ;
-        else {error="relaxationmodel must be operators or historical_nz/nakajimazwanzig";return false;}
+        else if(value=="nakajima_zwanzig"||value=="nakajima-zwanzig"||value=="nakajimazwanzig"||value=="nz") plan.relaxationModel=SSRelaxationModel::NakajimaZwanzig;
+        else if(value=="redfield") plan.relaxationModel=SSRelaxationModel::Redfield;
+        else {error="relaxationmodel must be operators, nakajima_zwanzig, or redfield";return false;}
 
         value="haberkorn"; ReadString(p,{"reactionoperators","reactionoperator","reaction_operator"},value);
         if(value=="haberkorn"||value=="hab") plan.reactionOperator=SpinAPI::ReactionOperatorType::Haberkorn;
         else if(value=="lindblad"||value=="gksl")
-        {error="SSGeneral Lindblad reaction-operator parity is not yet qualified; use reactionoperators=haberkorn or a historical task";return false;}
+        {error="SSGeneral Lindblad reaction-operator parity is not yet qualified; use reactionoperators=haberkorn or a dedicated task";return false;}
         else {error="reactionoperators must be haberkorn (Lindblad is currently parity-gated)";return false;}
 
         std::string explicitOrientation;
@@ -119,12 +126,10 @@ namespace RunSection::General::SS
             plan.powderGridType!=SpinAPI::PowderGridType::Sophe&&plan.powderPoints<1)
         {error="generated powder grid requires positive powdersamplingpoints";return false;}
 
-        // A full powder calculation must rotate the Hamiltonian even when the
-        // user expressed the request simply as approximation=full.
-        if(plan.orientation!=SSOrientationMode::Identity&&plan.orientation!=SSOrientationMode::Explicit &&
+        // Any non-identity crystallite orientation must rotate a full
+        // Hamiltonian. This includes an explicit one-point orientation.
+        if(plan.orientation!=SSOrientationMode::Identity&&
             plan.hamiltonianMode==SSHamiltonianMode::FixedFull)
-            plan.hamiltonianMode=SSHamiltonianMode::RotatedFull;
-        if(plan.orientation==SSOrientationMode::Explicit&&plan.hamiltonianMode==SSHamiltonianMode::FixedFull&&modeSpecified)
             plan.hamiltonianMode=SSHamiltonianMode::RotatedFull;
         return true;
     }
@@ -132,6 +137,6 @@ namespace RunSection::General::SS
     const char *ToString(SSCalculation v){switch(v){case SSCalculation::TimeEvolution:return "timeevolution";case SSCalculation::TimeIntegrated:return "timeintegrated";case SSCalculation::SteadyState:return "steadystate";}return "unknown";}
     const char *ToString(SSPropagation v){return v==SSPropagation::Exponential?"exponential":"rk4";}
     const char *ToString(SSObservableMode v){switch(v){case SSObservableMode::States:return "states";case SSObservableMode::TransitionYields:return "transitionyields";case SSObservableMode::Both:return "both";}return "unknown";}
-    const char *ToString(SSRelaxationModel v){return v==SSRelaxationModel::HistoricalNZ?"historical_nz":"operators";}
+    const char *ToString(SSRelaxationModel v){switch(v){case SSRelaxationModel::Operators:return "operators";case SSRelaxationModel::NakajimaZwanzig:return "nakajima_zwanzig";case SSRelaxationModel::Redfield:return "redfield";}return "unknown";}
     const char *ToString(SSOrientationMode v){switch(v){case SSOrientationMode::Identity:return "identity";case SSOrientationMode::Explicit:return "explicit";case SSOrientationMode::Powder2D:return "powder2d";case SSOrientationMode::PowderSO3:return "powderso3";}return "unknown";}
 }

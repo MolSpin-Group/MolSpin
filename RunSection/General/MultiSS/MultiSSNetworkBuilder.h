@@ -6,6 +6,10 @@
 //
 // IMPORTANT: a Transition appears exactly once in this layer. General/SS never
 // adds Transition loss, so intersystem transfer cannot be double counted.
+//
+// Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
+// (c) 2026 Quantum Biology and Computational Physics Group.
+// See LICENSE.txt for license information.
 /////////////////////////////////////////////////////////////////////////
 #ifndef MOD_RunSection_General_MultiSS_MultiSSNetworkBuilder
 #define MOD_RunSection_General_MultiSS_MultiSSNetworkBuilder

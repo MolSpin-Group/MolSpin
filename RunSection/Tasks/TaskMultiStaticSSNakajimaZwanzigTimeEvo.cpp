@@ -8,6 +8,7 @@
 // See LICENSE.txt for license information.
 /////////////////////////////////////////////////////////////////////////
 #include <iostream>
+#include <cmath>
 #include "TaskMultiStaticSSNakajimaZwanzigTimeEvo.h"
 #include "Settings.h"
 #include "ObjectParser.h"
@@ -580,7 +581,7 @@ namespace RunSection
 											{
 												for (s = 0; s < num_op; s++)
 												{
-													max_row_value = max(ampl_mat.row(m));
+													max_row_value = arma::abs(ampl_mat.row(m)).max();
 
 													// Check if the maximum value is zero
 													if (max_row_value == 0.0)
@@ -638,7 +639,7 @@ namespace RunSection
 											// Do the autocorrelation terms for each of the 3 terms
 											for (k = 0; k < num_op; k++)
 											{
-												max_row_value = max(ampl_mat.row(m));
+												max_row_value = arma::abs(ampl_mat.row(m)).max();
 
 												// Check if the maximum value is zero
 												if (max_row_value == 0.0)
@@ -910,7 +911,7 @@ namespace RunSection
 												{
 													for (s = 0; s < num_op; s++)
 													{
-														max_row_value = max(ampl_mat.row(m));
+														max_row_value = arma::abs(ampl_mat.row(m)).max();
 
 														// Check if the maximum value is zero
 														if (max_row_value == 0.0)
@@ -967,7 +968,7 @@ namespace RunSection
 												// Do the autocorrelation terms for each of the 3 terms
 												for (k = 0; k < num_op; k++)
 												{
-													max_row_value = max(ampl_mat.row(m));
+													max_row_value = arma::abs(ampl_mat.row(m)).max();
 
 													// Check if the maximum value is zero
 													if (max_row_value == 0.0)
@@ -2195,6 +2196,14 @@ namespace RunSection
 	bool TaskMultiStaticSSNakajimaZwanzigTimeEvo::ConstructSpecDensSpecificTimeEvo(const std::complex<double> &_ampl, const std::complex<double> &_tau_c, const arma::cx_mat &_omega, arma::cx_mat &_specdens)
 	{
 		// Solution of spectral density: S = Ampl/(1/tau_c - i * omega)
+		_specdens.zeros(arma::size(_omega));
+		if (!std::isfinite(_ampl.real()) || !std::isfinite(_ampl.imag()) || !_omega.is_finite())
+			return false;
+		if (std::abs(_ampl) == 0.0)
+			return true;
+		if (!std::isfinite(_tau_c.real()) || !std::isfinite(_tau_c.imag()) ||
+			_tau_c.imag() != 0.0 || !(_tau_c.real() > 0.0))
+			return false;
 
 		arma::cx_vec spectral_entries = _omega.diag();
 

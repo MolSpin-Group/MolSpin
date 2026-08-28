@@ -41,8 +41,8 @@ namespace RunSection::General::HS
 		YieldMode yieldMode = YieldMode::FiniteTime;
 
 		// Powder-grid selection follows the shared SpinAPI PowderGrid vocabulary.
-		// Uniform is the historical golden-angle grid. SOPHE symmetry defines its
-		// own spatial domain; Octant is the historical symmetry-reduced octant grid.
+		// Uniform is the established golden-angle grid. SOPHE symmetry defines its
+		// own spatial domain; Octant is the legacy symmetry-reduced octant grid.
 		SpinAPI::PowderGridType powderGridType = SpinAPI::PowderGridType::Uniform;
 		SpinAPI::PowderGridDomain powderDomain = SpinAPI::PowderGridDomain::UpperHemisphere;
 		// A uniform gamma-resolved grid is a full SO(3) integral unless the user
@@ -77,7 +77,7 @@ namespace RunSection::General::HS
 		bool hasH1List = false;
 		bool transitionYields = true;
 		bool yieldCorrections = false;
-		// Auto preserves the historical spinlist/transitionyields/cidsp inference.
+		// Auto preserves the established spinlist/transitionyields/cidsp inference.
 		// New callers can select the output physics explicitly and receive conflict
 		// diagnostics instead of relying on keyword precedence.
 		ObservableMode observableMode = ObservableMode::Auto;
@@ -85,7 +85,7 @@ namespace RunSection::General::HS
 		// Observable selection. With an empty spinList, time-evolution output
 		// defaults to configured State populations. A spinList selects Ix/Iy/Iz
 		// polarization observables; cidsp=true conditions them on each reaction
-		// channel (rate * I_alpha * P_source), which is the historical CIDSP/CIDNP
+		// channel (rate * I_alpha * P_source), which is the established CIDSP/CIDNP
 		// convention used by the spectroscopy tasks.
 		std::vector<std::string> spinList;
 		bool cidsp = false;

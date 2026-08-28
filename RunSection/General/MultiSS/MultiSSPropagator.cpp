@@ -28,6 +28,10 @@
 // HIERARCHY
 //   This file operates on a compiled MultiSSNetwork.  It contains no Hamiltonian
 //   construction, no TransferChannel parsing, and no legacy-task dispatch.
+//
+// Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
+// (c) 2026 Quantum Biology and Computational Physics Group.
+// See LICENSE.txt for license information.
 /////////////////////////////////////////////////////////////////////////
 #include "MultiSSPropagator.h"
 #include "MultiSSEventController.h"

@@ -160,7 +160,9 @@ namespace SpinAPI
 		arma::cx_vec tmpvec;
 		arma::cx_vec nextvec;
 		arma::cx_vec resultvec;
-		arma::cx_vec sumresultvec(dimensions);
+		// This vector is an accumulator over the ket components.  Leaving it
+		// uninitialized makes State projectors depend on previous heap contents.
+		arma::cx_vec sumresultvec(dimensions, arma::fill::zeros);
 		double factor_sqsum = 0.0; // Norm square of the CompleteState
 		unsigned int index = 0;
 
@@ -201,8 +203,9 @@ namespace SpinAPI
 					// "N^2" is the norm square of the CompleteState
 					tmpvec = arma::zeros<arma::cx_vec>(static_cast<unsigned int>((*i)->Multiplicity()));
 					auto mz = j->second[index].first;
-					auto vec_index = (*i)->Multiplicity() - ((*i)->S() + mz) / 2 - 1;
-					if (vec_index >= 0 || static_cast<unsigned int>(vec_index) < tmpvec.n_elem)
+					const int vec_index = static_cast<int>((*i)->Multiplicity()) -
+						((*i)->S() + mz) / 2 - 1;
+					if (vec_index >= 0 && static_cast<arma::uword>(vec_index) < tmpvec.n_elem)
 						tmpvec[vec_index] = 1.0;
 				}
 				else

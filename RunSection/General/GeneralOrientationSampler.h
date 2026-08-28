@@ -3,12 +3,12 @@
 // ------------------
 // Shared molecular-to-laboratory orientation construction for HSGeneral,
 // SSGeneral and MultiSSGeneral. SpinAPI PowderGrid constructors intentionally
-// expose their historical solid-angle integration weights; General converts
+// expose their established solid-angle integration weights; General converts
 // generated quadrature sets to normalized ensemble-average weights exactly
 // once. Explicit user-supplied orientation weights are preserved verbatim.
 //
-// MolSpin's historical powder convention maps a PowderGrid point (theta,phi)
-// to active ZYZ R(0,theta,phi). The additional SO(3) sampling angle (historical
+// MolSpin's established powder convention maps a PowderGrid point (theta,phi)
+// to active ZYZ R(0,theta,phi). The additional SO(3) sampling angle (legacy
 // input name powdergamma) occupies the first ZYZ angle: R(gamma,theta,phi).
 // This ordering is retained here to avoid changing established physics.
 // Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.

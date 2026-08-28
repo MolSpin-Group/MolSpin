@@ -1,6 +1,16 @@
+/////////////////////////////////////////////////////////////////////////
+// SSPropagator implementation (RunSection::General::SS)
+// ------------------
+// Propagates or solves a time-independent superspace generator.
+//
+// Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
+// (c) 2026 Quantum Biology and Computational Physics Group.
+// See LICENSE.txt for license information.
+/////////////////////////////////////////////////////////////////////////
 #include "SSPropagator.h"
 #include <algorithm>
 #include <cmath>
+#include <limits>
 namespace RunSection::General::SS
 {
     namespace
@@ -20,13 +30,45 @@ namespace RunSection::General::SS
     bool SSPropagator::Propagate(const SSExecutionPlan &plan,const SSPreparedCalculation &prepared,SSTrajectory &trajectory,std::string &error)
     {
         trajectory=SSTrajectory();error.clear();if(plan.calculation!=SSCalculation::TimeEvolution){error="SSPropagator::Propagate requires timeevolution";return false;}
-        arma::cx_vec state=prepared.initialState;trajectory.times.push_back(0.0);trajectory.states.push_back(state);double t=0.0;
-        while(t<plan.totalTime-1.0e-14*std::max(1.0,plan.totalTime))
+        arma::cx_vec state=prepared.initialState;trajectory.times.push_back(0.0);trajectory.states.push_back(state);
+        if(plan.totalTime==0.0)return true;
+
+        // Derive output times from integer indices.  Repeatedly adding dt can
+        // leave t a few ulps below an exactly divisible total time and used to
+        // produce a duplicate, almost-zero final propagation step.
+        const double ratio=plan.totalTime/plan.timeStep;
+        if(!std::isfinite(ratio) || ratio>static_cast<double>(std::numeric_limits<size_t>::max()))
+        {error="SSGeneral propagation requires too many time steps";return false;}
+        const double nearest=std::round(ratio);
+        const double ratioTolerance=64.0*std::numeric_limits<double>::epsilon()*
+            std::max(1.0,std::abs(ratio));
+        const size_t steps=static_cast<size_t>(nearest>=1.0 && std::abs(ratio-nearest)<=ratioTolerance?
+            nearest:std::ceil(ratio));
+        const double timeTolerance=64.0*std::numeric_limits<double>::epsilon()*
+            std::max({1.0,plan.totalTime,plan.timeStep});
+
+        // SSGeneral's generator is static.  Reuse exp(L dt) for every complete
+        // exponential step; only a genuinely shorter final interval needs a
+        // second matrix exponential.
+        arma::cx_mat fullStepPropagator;
+        if(plan.propagation==SSPropagation::Exponential)
+            fullStepPropagator=arma::expmat(arma::cx_mat(prepared.generator)*plan.timeStep);
+
+        double t=0.0;
+        for(size_t step=1;step<=steps;++step)
         {
-            const double h=std::min(plan.timeStep,plan.totalTime-t);
-            state=plan.propagation==SSPropagation::RK4?RK4(prepared.generator,state,h):arma::expmat(arma::cx_mat(prepared.generator)*h)*state;
+            const double target=(step==steps)?plan.totalTime:
+                std::min(plan.totalTime,static_cast<double>(step)*plan.timeStep);
+            const double h=target-t;
+            if(!(h>0.0)){error="SSGeneral produced a non-increasing propagation time grid";return false;}
+            if(plan.propagation==SSPropagation::RK4)
+                state=RK4(prepared.generator,state,h);
+            else if(std::abs(h-plan.timeStep)<=timeTolerance)
+                state=fullStepPropagator*state;
+            else
+                state=arma::expmat(arma::cx_mat(prepared.generator)*h)*state;
             if(!state.is_finite()){error="SSGeneral propagation produced a non-finite state";return false;}
-            t+=h;trajectory.times.push_back(t);trajectory.states.push_back(state);
+            t=target;trajectory.times.push_back(t);trajectory.states.push_back(state);
         }
         return true;
     }

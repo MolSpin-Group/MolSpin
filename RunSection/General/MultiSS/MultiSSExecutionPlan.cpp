@@ -19,6 +19,10 @@
 //
 // HIERARCHY: execution policy -> General/MultiSS engines -> TaskMultiSSGeneral.
 // No RunSection/Tasks legacy class is selected from this plan.
+//
+// Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
+// (c) 2026 Quantum Biology and Computational Physics Group.
+// See LICENSE.txt for license information.
 /////////////////////////////////////////////////////////////////////////
 #include "MultiSSExecutionPlan.h"
 #include "ObjectParser.h"
@@ -74,7 +78,6 @@ namespace RunSection::General::MultiSS
 
         p.Get("totaltime", plan.totalTime); p.Get("timestep", plan.timeStep);
         p.Get("solverresidualtolerance", plan.solverResidualTolerance);
-        p.Get("probabilitytolerance", plan.probabilityTolerance);
         p.Get("diagnostics", plan.diagnostics);
         p.Get("transitionfluxes", plan.transitionFluxes);
         if (!std::isfinite(plan.totalTime) || plan.totalTime < 0.0)
@@ -109,9 +112,13 @@ namespace RunSection::General::MultiSS
 
         value = "operators";
         ReadString(p,{"relaxationmodel","relaxation_model"},value);
-        if (value=="operators" || value=="operator" || value=="local") plan.historicalNZ=false;
-        else if (value=="historical_nz" || value=="historical-nz" || value=="nakajimazwanzig" || value=="nz") plan.historicalNZ=true;
-        else { error="relaxationmodel must be operators or historical_nz/nakajimazwanzig"; return false; }
+        if (value=="operators" || value=="operator" || value=="local")
+            plan.relaxationModel=::RunSection::General::SS::SSRelaxationModel::Operators;
+        else if (value=="nakajima_zwanzig" || value=="nakajima-zwanzig" || value=="nakajimazwanzig" || value=="nz")
+            plan.relaxationModel=::RunSection::General::SS::SSRelaxationModel::NakajimaZwanzig;
+        else if (value=="redfield")
+            plan.relaxationModel=::RunSection::General::SS::SSRelaxationModel::Redfield;
+        else { error="relaxationmodel must be operators, nakajima_zwanzig, or redfield"; return false; }
 
         std::string explicitOrientation;
         if (p.Get("powderorientation", explicitOrientation) || p.Get("orientation", explicitOrientation))
@@ -154,6 +161,13 @@ namespace RunSection::General::MultiSS
         if ((plan.orientation==MultiSSOrientationMode::Powder2D || plan.orientation==MultiSSOrientationMode::PowderSO3) &&
             plan.powderGridType!=SpinAPI::PowderGridType::Sophe && plan.powderPoints<1)
         { error="generated powder grid requires positive powdersamplingpoints"; return false; }
+
+        // Every manifold of a molecular network follows the same crystallite.
+        // A full Hamiltonian therefore uses the rotated full construction for
+        // explicit orientations and generated powder grids alike.
+        if (plan.orientation!=MultiSSOrientationMode::Identity &&
+            plan.hamiltonianMode==::RunSection::General::SS::SSHamiltonianMode::FixedFull)
+            plan.hamiltonianMode=::RunSection::General::SS::SSHamiltonianMode::RotatedFull;
 
         // A static linear solve has one fixed generator.  Finite Gaussian/
         // trajectory channels and instantaneous events are therefore rejected

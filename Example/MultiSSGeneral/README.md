@@ -52,4 +52,4 @@ with `k_peak` chosen such that an isolated one-way supported population obeys `f
 - Finite Gaussian optical rate in an NV-center rate model: DOI `10.1038/ncomms14000`.
 - Mims et al. pump/push instantaneous-operation limit: DOI `10.1126/science.abl4254`.
 
-See `docs/MULTISS_GENERAL.md` for architecture, calculation-mode semantics, limitations, and the historical-NZ migration status.
+See `docs/MULTISS_GENERAL.md` for architecture, calculation-mode semantics, limitations, and the NZ migration status.

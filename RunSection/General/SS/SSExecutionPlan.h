@@ -3,6 +3,10 @@
 // ------------------
 // Resolved calculation policy for one-SpinSystem Liouville/superspace dynamics.
 // Physics construction is delegated to the remaining General/SS components.
+//
+// Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
+// (c) 2026 Quantum Biology and Computational Physics Group.
+// See LICENSE.txt for license information.
 /////////////////////////////////////////////////////////////////////////
 #ifndef MOD_RunSection_General_SS_SSExecutionPlan
 #define MOD_RunSection_General_SS_SSExecutionPlan
@@ -19,8 +23,6 @@ namespace RunSection::General::SS
     enum class SSPropagation { Exponential, RK4 };
     enum class SSObservableMode { States, TransitionYields, Both };
     enum class SSOrientationMode { Identity, Explicit, Powder2D, PowderSO3 };
-    enum class SSRelaxationModel { Operators, HistoricalNZ };
-
     struct SSExecutionPlan
     {
         SSCalculation calculation = SSCalculation::TimeIntegrated;

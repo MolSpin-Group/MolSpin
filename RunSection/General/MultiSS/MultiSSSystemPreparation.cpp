@@ -26,6 +26,10 @@
 //   the intended global initial distribution explicitly; a typical pump-probe
 //   calculation initializes only the ground/S1 manifold and leaves the other
 //   manifolds at zero population.
+//
+// Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
+// (c) 2026 Quantum Biology and Computational Physics Group.
+// See LICENSE.txt for license information.
 /////////////////////////////////////////////////////////////////////////
 #include "MultiSSSystemPreparation.h"
 #include "SpinSpace.h"
@@ -61,7 +65,8 @@ namespace RunSection::General::MultiSS
             MultiSSSystemContext context;
             context.offset=prepared.globalDimension;
             if(!::RunSection::General::SS::SSLiouvillianBuilder::Prepare(system,
-                plan.hamiltonianMode,orientation.frameToLab,context.local,error,plan.historicalNZ)) return false;
+                plan.hamiltonianMode,orientation.frameToLab,context.local,error,
+                plan.relaxationModel)) return false;
             context.hilbertDimension=context.local.space->HilbertSpaceDimensions();
             context.superDimension=context.hilbertDimension*context.hilbertDimension;
             prepared.globalDimension+=context.superDimension;

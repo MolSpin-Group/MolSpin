@@ -1,5 +1,11 @@
 /////////////////////////////////////////////////////////////////////////
-// TaskSSGeneral — thin RunSection shell for one-system superspace calculations.
+// TaskSSGeneral (RunSection::General::SS)
+// ------------------
+// Thin RunSection shell for one-system superspace calculations.
+//
+// Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
+// (c) 2026 Quantum Biology and Computational Physics Group.
+// See LICENSE.txt for license information.
 /////////////////////////////////////////////////////////////////////////
 #ifndef MOD_RunSection_General_SS_TaskSSGeneral
 #define MOD_RunSection_General_SS_TaskSSGeneral

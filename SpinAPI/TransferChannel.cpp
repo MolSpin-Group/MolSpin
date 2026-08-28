@@ -7,7 +7,7 @@
 //       -> RunSection::General::MultiSS::MultiSSNetworkBuilder
 //       -> TaskMultiSSGeneral.
 //
-//   TransferChannel is reusable physics, not a task.  Historical
+//   TransferChannel is reusable physics, not a task. Existing
 //   RunSection/Tasks implementations are intentionally untouched and remain
 //   independent numerical references during migration.
 //
@@ -47,6 +47,10 @@
 //     operation instead of I_preserved and would corrupt coherences.
 //   * BuildSourceLossSuperoperator / BuildTargetGainSuperoperator return
 //     *unit-rate* blocks.  General/MultiSS multiplies them by k(t) exactly once.
+//
+// Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
+// (c) 2026 Quantum Biology and Computational Physics Group.
+// See LICENSE.txt for license information.
 /////////////////////////////////////////////////////////////////////////
 #include "TransferChannel.h"
 
@@ -154,18 +158,29 @@ namespace SpinAPI
             return true;
         }
 
-        std::vector<unsigned int> Multiplicities(const system_ptr &system)
+        std::vector<spin_ptr> SpinSpaceBasis(const system_ptr &system)
+        {
+            // SpinSpace(system_ptr) adds a collection through SpinSpace::Add,
+            // which sorts the spin pointers.  State projectors and all General
+            // SS/MultiSS matrices therefore use this order, not the insertion
+            // order returned by SpinSystem::Spins().  Tensor-index decoding
+            // must follow the matrix basis exactly.
+            auto result = system->Spins();
+            std::sort(result.begin(), result.end());
+            return result;
+        }
+
+        std::vector<unsigned int> Multiplicities(const std::vector<spin_ptr> &spins)
         {
             std::vector<unsigned int> result;
-            for (const auto &spin : system->Spins())
+            for (const auto &spin : spins)
                 result.push_back(static_cast<unsigned int>(spin->Multiplicity()));
             return result;
         }
 
-        bool SpinPosition(const system_ptr &system, const std::string &name,
+        bool SpinPosition(const std::vector<spin_ptr> &spins, const std::string &name,
             size_t &position, unsigned int &multiplicity)
         {
-            const auto spins = system->Spins();
             for (size_t i = 0; i < spins.size(); ++i)
             {
                 if (spins[i] != nullptr && spins[i]->Name() == name)
@@ -238,8 +253,10 @@ namespace SpinAPI
             if (!BuildProjector(sourceSystem, sourceState, Ps, error) ||
                 !BuildProjector(targetSystem, targetState, Pt, error)) return false;
 
-            const auto srcMult = Multiplicities(sourceSystem);
-            const auto dstMult = Multiplicities(targetSystem);
+            const auto srcSpins = SpinSpaceBasis(sourceSystem);
+            const auto dstSpins = SpinSpaceBasis(targetSystem);
+            const auto srcMult = Multiplicities(srcSpins);
+            const auto dstMult = Multiplicities(dstSpins);
             const arma::uword ds = Ps.n_rows;
             const arma::uword dt = Pt.n_rows;
 
@@ -249,12 +266,12 @@ namespace SpinAPI
             {
                 size_t ps = 0, pt = 0;
                 unsigned int ms = 0, mt = 0;
-                if (!SpinPosition(sourceSystem, pair.first, ps, ms))
+                if (!SpinPosition(srcSpins, pair.first, ps, ms))
                 {
                     error = "preservespins source spin \"" + pair.first + "\" was not found in SpinSystem \"" + sourceSystem->Name() + "\"";
                     return false;
                 }
-                if (!SpinPosition(targetSystem, pair.second, pt, mt))
+                if (!SpinPosition(dstSpins, pair.second, pt, mt))
                 {
                     error = "preservespins target spin \"" + pair.second + "\" was not found in SpinSystem \"" + targetSystem->Name() + "\"";
                     return false;
@@ -307,10 +324,16 @@ namespace SpinAPI
                 for (size_t k = 0; k < srcIndices.size(); ++k) is(k) = srcIndices[k];
                 for (size_t k = 0; k < dstIndices.size(); ++k) it(k) = dstIndices[k];
                 arma::cx_vec vs, vt;
-                if (!RankOneVector(Ps.submat(is, is), vs, error, tolerance) ||
-                    !RankOneVector(Pt.submat(it, it), vt, error, tolerance))
+                if (!RankOneVector(Ps.submat(is, is), vs, error, tolerance))
                 {
-                    error = "preservespins sector is not a pure active-state support: " + error;
+                    error = "preservespins source sector " + std::to_string(tupleIndex) +
+                        " is not a pure active-state support: " + error;
+                    return false;
+                }
+                if (!RankOneVector(Pt.submat(it, it), vt, error, tolerance))
+                {
+                    error = "preservespins target sector " + std::to_string(tupleIndex) +
+                        " is not a pure active-state support: " + error;
                     return false;
                 }
 

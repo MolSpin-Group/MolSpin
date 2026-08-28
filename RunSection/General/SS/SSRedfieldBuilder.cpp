@@ -1,19 +1,19 @@
 /////////////////////////////////////////////////////////////////////////
-// SSNakajimaZwanzigBuilder implementation (RunSection::General::SS)
+// SSRedfieldBuilder implementation (RunSection::General::SS)
 // ------------------
-// Constructs interaction-derived Nakajima-Zwanzig relaxation in the static
+// Constructs interaction-derived Redfield relaxation in the static
 // Hamiltonian eigenbasis and returns it in the propagation basis.
 //
 // Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
 // (c) 2026 Quantum Biology and Computational Physics Group.
 // See LICENSE.txt for license information.
 /////////////////////////////////////////////////////////////////////////
-#include "SSNakajimaZwanzigBuilder.h"
+#include "SSRedfieldBuilder.h"
 #include "SSInteractionRelaxation.h"
 
 #include "Interaction.h"
-#include "NakajimaZwanzig.h"
 #include "ObjectParser.h"
+#include "Redfield.h"
 #include "SpinSpace.h"
 #include "SpinSystem.h"
 
@@ -30,8 +30,9 @@ namespace RunSection::General::SS
         }
 
         bool AddOperatorSet(const std::vector<arma::cx_mat> &labOperators,
-            const arma::cx_mat &eigenvectors, const arma::cx_mat &omega,
+            const arma::cx_mat &eigenvectors, const arma::cx_mat &frequencies,
             const SpinAPI::Relaxation::CorrelationExpansion &correlations,
+            SpinAPI::Relaxation::SpectralDensityFunction spectralFunction,
             arma::cx_mat &total, std::string &error)
         {
             std::vector<arma::cx_mat> operators;
@@ -49,9 +50,9 @@ namespace RunSection::General::SS
                     if (!correlations.Terms(first,second,terms,&error)) return false;
                     if (terms->empty()) continue;
                     arma::cx_mat spectralDensity, contribution;
-                    if (!SpinAPI::NakajimaZwanzig::SpectralDensity(
-                            *terms,omega,spectralDensity,&error) ||
-                        !SpinAPI::NakajimaZwanzig::RelaxationTensor(
+                    if (!SpinAPI::Redfield::SpectralDensity(
+                            *terms,frequencies,spectralFunction,spectralDensity,&error) ||
+                        !SpinAPI::Redfield::RelaxationTensor(
                             operators[first],operators[second],spectralDensity,contribution,&error))
                         return false;
                     total += contribution;
@@ -61,30 +62,26 @@ namespace RunSection::General::SS
         }
     }
 
-    bool SSNakajimaZwanzigBuilder::Build(
-        const SpinAPI::system_ptr &system, SpinAPI::SpinSpace &space,
-        const arma::sp_cx_mat &hamiltonian, const arma::mat &molecularToLab,
-        arma::sp_cx_mat &relaxation,
-        std::string &error)
+    bool SSRedfieldBuilder::Build(const SpinAPI::system_ptr &system,
+        SpinAPI::SpinSpace &space, const arma::sp_cx_mat &hamiltonian,
+        const arma::mat &molecularToLab,
+        arma::sp_cx_mat &relaxation, std::string &error)
     {
         error.clear();
-        relaxation.zeros(hamiltonian.n_rows * hamiltonian.n_rows,
-                         hamiltonian.n_rows * hamiltonian.n_rows);
-        if (!system) return Fail(error,"cannot build NZ relaxation for a null SpinSystem");
-        if (hamiltonian.n_rows == 0 || hamiltonian.n_rows != hamiltonian.n_cols)
-            return Fail(error,"NZ relaxation requires a non-empty square static Hamiltonian");
+        const arma::uword dimension = hamiltonian.n_rows;
+        relaxation.zeros(dimension * dimension, dimension * dimension);
+        if (!system) return Fail(error,"cannot build Redfield relaxation for a null SpinSystem");
+        if (dimension == 0 || hamiltonian.n_cols != dimension)
+            return Fail(error,"Redfield relaxation requires a non-empty square static Hamiltonian");
 
         arma::vec eigenvalues;
         arma::cx_mat eigenvectors;
         if (!arma::eig_sym(eigenvalues,eigenvectors,arma::cx_mat(hamiltonian)))
-            return Fail(error,"failed to diagonalize the static Hamiltonian for NZ relaxation");
-        arma::cx_mat omega;
-        if (!SpinAPI::NakajimaZwanzig::FrequencyMatrix(eigenvalues,omega,&error)) return false;
+            return Fail(error,"failed to diagonalize the static Hamiltonian for Redfield relaxation");
+        arma::cx_mat frequencies;
+        if (!SpinAPI::Redfield::FrequencyMatrix(eigenvalues,frequencies,&error)) return false;
 
-        // The memory integral is evaluated in the energy eigenbasis, where
-        // each matrix element has a definite Bohr frequency. The completed
-        // superoperator is transformed back once to the propagation basis.
-        arma::cx_mat totalEigenbasis(omega.n_rows,omega.n_cols,arma::fill::zeros);
+        arma::cx_mat totalEigenbasis(dimension * dimension,dimension * dimension,arma::fill::zeros);
         bool any = false;
         space.UseSuperoperatorSpace(false);
 
@@ -99,26 +96,36 @@ namespace RunSection::General::SS
             if (!hasCorrelation) continue;
 
             int opsMode = 0, termsMode = 0, multiExponential = 0;
+            int spectralDensityMode = 0, slippage = 0;
             interaction->Properties()->Get("ops",opsMode);
             interaction->Properties()->Get("terms",termsMode);
             interaction->Properties()->Get("def_multexpo",multiExponential);
+            interaction->Properties()->Get("def_specdens",spectralDensityMode);
+            interaction->Properties()->Get("slip",slippage);
             if (opsMode != 0 && opsMode != 1)
-                return Fail(error,"NZ ops must be 0 (rank-0/2 spherical) or 1 (Cartesian)");
+                return Fail(error,"Redfield ops must be 0 (rank-0/2 spherical) or 1 (Cartesian)");
             if (termsMode != 0 && termsMode != 1)
-                return Fail(error,"NZ terms must be 0 (cross terms) or 1 (autocorrelation only)");
+                return Fail(error,"Redfield terms must be 0 (cross terms) or 1 (autocorrelation only)");
+            if (spectralDensityMode != 0 && spectralDensityMode != 1)
+                return Fail(error,"Redfield def_specdens must be 0 or 1");
             if (multiExponential == 1 && opsMode != 1)
                 return Fail(error,"def_multexpo=1 correlation matrices require ops=1 Cartesian ordering");
+            if (slippage != 0)
+                return Fail(error,"Redfield initial-state slippage is not available in the General framework; use slip=0 or a dedicated Redfield task");
 
             SpinAPI::Relaxation::CorrelationExpansion correlations;
             const std::size_t operatorCount = opsMode == 1 ? 9 : 6;
             if (!SSInteractionRelaxation::BuildCorrelationExpansion(
                     interaction,operatorCount,termsMode,correlations,error)) return false;
+            const auto spectralFunction = spectralDensityMode == 1
+                ? SpinAPI::Relaxation::SpectralDensityFunction::RealLorentzian
+                : SpinAPI::Relaxation::SpectralDensityFunction::ComplexOneSided;
             any = true;
 
             const auto group1 = interaction->Group1();
             const auto group2 = interaction->Group2();
             if (group1.empty())
-                return Fail(error,"NZ Interaction \"" + interaction->Name() + "\" has empty group1");
+                return Fail(error,"Redfield Interaction \"" + interaction->Name() + "\" has empty group1");
             if (interaction->Type() == SpinAPI::InteractionType::SingleSpin)
             {
                 for (const auto &spin1 : group1)
@@ -126,35 +133,33 @@ namespace RunSection::General::SS
                     std::vector<arma::cx_mat> operators;
                     if (!SSInteractionRelaxation::BuildOperatorBasis(
                             space,interaction,spin1,nullptr,opsMode,molecularToLab,operators,error) ||
-                        !AddOperatorSet(operators,eigenvectors,omega,correlations,totalEigenbasis,error))
-                        return false;
+                        !AddOperatorSet(operators,eigenvectors,frequencies,correlations,
+                            spectralFunction,totalEigenbasis,error)) return false;
                 }
             }
             else if (interaction->Type() == SpinAPI::InteractionType::DoubleSpin)
             {
                 if (group2.empty())
-                    return Fail(error,"NZ double-spin Interaction \"" + interaction->Name() + "\" has empty group2");
+                    return Fail(error,"Redfield double-spin Interaction \"" + interaction->Name() + "\" has empty group2");
                 for (const auto &spin1 : group1)
                     for (const auto &spin2 : group2)
                     {
                         std::vector<arma::cx_mat> operators;
                         if (!SSInteractionRelaxation::BuildOperatorBasis(
                                 space,interaction,spin1,spin2,opsMode,molecularToLab,operators,error) ||
-                            !AddOperatorSet(operators,eigenvectors,omega,correlations,totalEigenbasis,error))
-                            return false;
+                            !AddOperatorSet(operators,eigenvectors,frequencies,correlations,
+                                spectralFunction,totalEigenbasis,error)) return false;
                     }
             }
-            else return Fail(error,"NZ relaxation only supports single- and double-spin Interactions");
+            else return Fail(error,"Redfield relaxation only supports single- and double-spin Interactions");
         }
 
-        // MultiSS may contain manifolds without a relaxation-enabled
-        // Interaction. Their local contribution is exactly zero.
         if (!any) return true;
         if (!totalEigenbasis.is_finite())
-            return Fail(error,"NZ relaxation contains non-finite entries");
+            return Fail(error,"Redfield relaxation contains non-finite entries");
         if (!space.TransformSuperoperatorFromEigenbasis(
                 eigenvectors,arma::sp_cx_mat(totalEigenbasis),relaxation))
-            return Fail(error,"failed to transform NZ relaxation from the Hamiltonian eigenbasis to the propagation basis");
+            return Fail(error,"failed to transform Redfield relaxation from the Hamiltonian eigenbasis to the propagation basis");
         return true;
     }
 }

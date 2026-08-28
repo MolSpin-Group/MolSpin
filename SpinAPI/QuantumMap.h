@@ -23,6 +23,10 @@
 // A finite pulse should instead be represented by a TimeProfile multiplying a
 // TransferChannel.  The two descriptions converge in the short-pulse limit
 // when the integrated transfer action is held fixed.
+//
+// Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
+// (c) 2026 Quantum Biology and Computational Physics Group.
+// See LICENSE.txt for license information.
 /////////////////////////////////////////////////////////////////////////
 #ifndef MOD_SpinAPI_QuantumMap
 #define MOD_SpinAPI_QuantumMap

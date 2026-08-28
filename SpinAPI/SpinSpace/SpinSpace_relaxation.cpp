@@ -101,12 +101,12 @@ namespace SpinAPI
 		return true;
 	}
 
-	bool TransformSuperoperatorFromEigenbasis(const SpinSpace &_space, const arma::cx_mat &_eigenvectors, const arma::sp_cx_mat &_superoperatorEigenbasis, arma::sp_cx_mat &_out)
+	bool SpinSpace::TransformSuperoperatorFromEigenbasis(const arma::cx_mat &_eigenvectors, const arma::sp_cx_mat &_superoperatorEigenbasis, arma::sp_cx_mat &_out) const
 	{
-		// Powder spectra propagate in the lab basis, but relaxation is defined
-		// in the orientation-specific Hamiltonian eigenbasis. This converts the
-		// relaxation superoperator back without reimplementing the superspace
-		// vectorization convention here.
+		// Relaxation tensors are commonly constructed in the Hamiltonian
+		// eigenbasis, while General and powder tasks propagate in an
+		// orientation-specific working basis. Convert the completed tensor back
+		// without duplicating MolSpin's superspace vectorization convention.
 		if (_eigenvectors.n_rows != _eigenvectors.n_cols)
 			return false;
 		if (_superoperatorEigenbasis.n_rows != _superoperatorEigenbasis.n_cols)
@@ -118,8 +118,8 @@ namespace SpinAPI
 		arma::cx_mat eigenvectorsDag = eigenvectors.t();
 		arma::cx_mat fromEigenbasis;
 		arma::cx_mat toEigenbasis;
-		if (!_space.SuperoperatorFromOperators(eigenvectors, eigenvectorsDag, fromEigenbasis) ||
-			!_space.SuperoperatorFromOperators(eigenvectorsDag, eigenvectors, toEigenbasis))
+		if (!this->SuperoperatorFromOperators(eigenvectors, eigenvectorsDag, fromEigenbasis) ||
+			!this->SuperoperatorFromOperators(eigenvectorsDag, eigenvectors, toEigenbasis))
 		{
 			return false;
 		}
@@ -1119,7 +1119,7 @@ namespace SpinAPI
 		if (!this->PowderRelaxationOperatorEigenbasis(_operator, _eigenvectors, _spatialrotation, eigenbasisRelaxation))
 			return false;
 
-		return TransformSuperoperatorFromEigenbasis(*this, _eigenvectors, eigenbasisRelaxation, _out);
+		return this->TransformSuperoperatorFromEigenbasis(_eigenvectors, eigenbasisRelaxation, _out);
 	}
 
 	bool SpinSpace::RelaxationOperatorFrameChange(const operator_ptr &_operator, arma::cx_mat _rotationmatrix, arma::cx_mat &_out) const

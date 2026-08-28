@@ -6,7 +6,7 @@
 //   output formatting only.  Physics is delegated down the hierarchy:
 //
 //       SpinAPI
-//         TimeProfile / TransferChannel / QuantumMap / historical NZ algebra
+//         TimeProfile / TransferChannel / QuantumMap / established NZ algebra
 //             -> RunSection::General::SS
 //                  one-manifold superspace physics
 //             -> RunSection::General::MultiSS
@@ -27,9 +27,9 @@
 //       DOI: 10.1126/science.abl4254
 //   * population/delayed-fluorescence collaborator application:
 //       DOI: 10.1039/D6SC02081J
-//   * historical MolSpin NZ validation target:
+//   * published MolSpin NZ validation target:
 //       DOI: 10.1021/jacs.5c06173
-//   * formal reactive NZ reference, kept distinct from historical parity:
+//   * formal reactive NZ reference, kept distinct from published-model parity:
 //       DOI: 10.1063/5.0040519
 //
 // CURRENT SCOPE
@@ -37,6 +37,10 @@
 //   events.  Coherent optical excitation and finite magnetic/RF/MW pulse
 //   Hamiltonians require distinct explicit drive machinery and are not silently
 //   approximated by population-transfer rates in this implementation.
+//
+// Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
+// (c) 2026 Quantum Biology and Computational Physics Group.
+// See LICENSE.txt for license information.
 /////////////////////////////////////////////////////////////////////////
 #include "TaskMultiSSGeneral.h"
 

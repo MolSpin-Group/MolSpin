@@ -14,6 +14,10 @@
 //
 // Magnetic/RF/MW pulse Hamiltonians are a distinct physics channel and are not
 // reinterpreted as optical population-transfer events here.
+//
+// Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
+// (c) 2026 Quantum Biology and Computational Physics Group.
+// See LICENSE.txt for license information.
 /////////////////////////////////////////////////////////////////////////
 #include "MultiSSEventController.h"
 #include "QuantumMap.h"

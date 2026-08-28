@@ -10,8 +10,8 @@
 //                                                       -> TaskMultiSSGeneral
 //
 // LEGACY BOUNDARY
-//   Historical TaskMultiStaticSS and related task classes remain unchanged.
-//   They continue to use their historical rank-one creation operators and are
+//   Existing TaskMultiStaticSS and related task classes remain unchanged.
+//   They continue to use their original rank-one creation operators and are
 //   regression references, not backends of this class.
 //
 // PHYSICS
@@ -39,7 +39,7 @@
 //   reversible S1/radical-pair models such as
 //       DOI: 10.1039/D6CP00916F
 //
-// Molecular Spin Dynamics Software.
+// Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
 // (c) 2026 Quantum Biology and Computational Physics Group.
 // See LICENSE.txt for license information.
 /////////////////////////////////////////////////////////////////////////

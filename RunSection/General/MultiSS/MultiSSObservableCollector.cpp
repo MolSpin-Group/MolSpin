@@ -25,6 +25,10 @@
 //   product probabilities.  Summing every internal edge can exceed unity in a
 //   network with recrossing.  Probability balance must instead use represented
 //   manifold population plus true terminal product yields.
+//
+// Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
+// (c) 2026 Quantum Biology and Computational Physics Group.
+// See LICENSE.txt for license information.
 /////////////////////////////////////////////////////////////////////////
 #include "MultiSSObservableCollector.h"
 #include "../GeneralStateFrame.h"
@@ -69,7 +73,7 @@ namespace RunSection::General::MultiSS
                     if(!context.local.space->GetState(state,P))
                     {error="failed to construct observable State \""+state->Name()+"\"";return false;}
                     if(::RunSection::General::ObservableStateFrame(context.local.system,state)==SpinAPI::StateFrame::Molecular &&
-                        input.hamiltonianMode!=::RunSection::General::SS::SSHamiltonianMode::FixedFull)
+                        input.orientation!=MultiSSOrientationMode::Identity)
                     {
                         arma::cx_mat rotated;
                         if(!context.local.space->RotateState(P,orientation.frameToLab,rotated))

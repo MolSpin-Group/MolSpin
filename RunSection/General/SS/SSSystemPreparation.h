@@ -1,5 +1,11 @@
 /////////////////////////////////////////////////////////////////////////
-// SSSystemPreparation — complete one-system superspace state/generator assembly.
+// SSSystemPreparation (RunSection::General::SS)
+// ------------------
+// Complete one-system superspace state/generator assembly.
+//
+// Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
+// (c) 2026 Quantum Biology and Computational Physics Group.
+// See LICENSE.txt for license information.
 /////////////////////////////////////////////////////////////////////////
 #ifndef MOD_RunSection_General_SS_SSSystemPreparation
 #define MOD_RunSection_General_SS_SSSystemPreparation

@@ -1,6 +1,11 @@
 /////////////////////////////////////////////////////////////////////////
-// TaskSSGeneral implementation.
-// Historical StaticSS/StaticSSTimeEvo remain independent numerical references.
+// TaskSSGeneral implementation (RunSection::General::SS)
+// ------------------
+// StaticSS and StaticSSTimeEvo remain independent numerical references.
+//
+// Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
+// (c) 2026 Quantum Biology and Computational Physics Group.
+// See LICENSE.txt for license information.
 /////////////////////////////////////////////////////////////////////////
 #include "TaskSSGeneral.h"
 #include "SSObservableCollector.h"
@@ -22,7 +27,7 @@ namespace RunSection::General::SS
         std::string error;if(!ResolveSSExecutionPlan(*this->Properties(),plan,error)){this->Log()<<"ERROR: Invalid SSGeneral execution plan: "<<error<<"."<<std::endl;return false;}planResolved=true;
         const auto systems=this->SpinSystems();if(systems.size()!=1){this->Log()<<"ERROR: SSGeneral owns exactly one SpinSystem; coupled manifolds belong to MultiSSGeneral."<<std::endl;return false;}
         const auto system=systems.front();if(!system)return false;SpinAPI::SpinSpace space(system);
-        if(space.HasTimedependentInteractions()||space.HasTimedependentTransitions()){this->Log()<<"ERROR: time-dependent Interaction/Transition objects are not yet qualified in SSGeneral; use a historical dynamic task or MultiSSGeneral kinetic rate profiles as appropriate."<<std::endl;return false;}
+        if(space.HasTimedependentInteractions()||space.HasTimedependentTransitions()){this->Log()<<"ERROR: time-dependent Interaction/Transition objects are not yet qualified in SSGeneral; use a dedicated dynamic task or MultiSSGeneral kinetic rate profiles as appropriate."<<std::endl;return false;}
         std::vector<SSOrientation> orientations;if(!SSOrientationSampler::Build(plan,orientations,this->Log(),error)){this->Log()<<"ERROR: "<<error<<"."<<std::endl;return false;}
         SSPreparedCalculation probe;if(!SSSystemPreparation::Prepare(system,plan,orientations.front(),probe,error)){this->Log()<<"ERROR: "<<error<<"."<<std::endl;return false;}
         SSObservableCollector collector;if(!collector.Prepare(plan,probe,orientations.front(),error)){this->Log()<<"ERROR: "<<error<<"."<<std::endl;return false;}
