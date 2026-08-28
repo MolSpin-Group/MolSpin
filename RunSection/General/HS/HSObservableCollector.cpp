@@ -1,4 +1,21 @@
 /////////////////////////////////////////////////////////////////////////
+// DEVELOPER WORKFLOW / OWNERSHIP MAP
+// ----------------------------------------------------------------------
+// HSGeneral observable construction and accumulation.
+//
+// What is done here:
+//   - Prepares state populations, spin polarizations, transition yields and CIDSP/CIDNP-style product observables.
+//   - Evaluates observables from propagated Hilbert factors or density matrices without owning propagation.
+//
+// Connections to the General framework / SpinAPI:
+//   - Consumes HSExecutionPlan and SpinAPI State/Spin/Transition objects.
+//   - SSObservableCollector and MultiSSObservableCollector provide the analogous superspace/network output layers.
+//
+// Why this ownership is used:
+//   - Observable definitions are separated from propagation so the same trajectory can be interpreted consistently for different requested outputs.
+//   - SpinAPI remains the source of spin-space operators and state projectors.
+/////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////
 // HSObservableCollector implementation (RunSection::General::HS)
 // ------------------
 // Observable construction and post-processing for State populations, spin

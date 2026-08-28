@@ -1,4 +1,28 @@
 /////////////////////////////////////////////////////////////////////////
+// DEVELOPER WORKFLOW / OWNERSHIP MAP
+// ----------------------------------------------------------------------
+// Shared orientation and powder-ensemble adapter.
+//
+// What is done here:
+//   - Builds canonical molecular-to-laboratory ZYZ rotations and weights.
+//   - Delegates uniform/Fibonacci, SOPHE and octant theta/phi grids to SpinAPI.
+//   - Adds the optional third Euler angle and normalizes generated weights once.
+//
+// Connections to the General framework / SpinAPI:
+//   - Called by HSOrientationSampler, SSOrientationSampler and MultiSSOrientationSampler.
+//   - The returned frameToLab rotation must be reused by Hamiltonian, state, transition, relaxation and observable builders for one crystallite.
+//
+// Why this ownership is used:
+//   - Powder averaging is an outer ensemble integral, not a propagation method.
+//   - Keeping one sampler avoids incompatible Euler-angle conventions between General tasks.
+//
+// Mathematical / physical references:
+//   - Swinbank & Purser, Q. J. R. Meteorol. Soc. 132, 1769-1793 (2006), DOI: 10.1256/qj.05.227.
+//
+// TODO:
+//   - Keep future strain / Schulten-Wolynes Hamiltonian realizations as a second ensemble index; combine them with powder points only in a shared outer ensemble driver.
+/////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////
 // GeneralOrientationSampler implementation (RunSection::General)
 // Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
 // (c) 2026 Quantum Biology and Computational Physics Group.

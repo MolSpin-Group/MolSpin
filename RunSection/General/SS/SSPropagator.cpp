@@ -1,4 +1,28 @@
 /////////////////////////////////////////////////////////////////////////
+// DEVELOPER WORKFLOW / OWNERSHIP MAP
+// ----------------------------------------------------------------------
+// SSGeneral one-manifold Liouville propagation and linear solves.
+//
+// What is done here:
+//   - Propagates a static Liouvillian with RK4 or a cached dense matrix exponential.
+//   - Solves L X = -rho(0) for the time-integrated state.
+//   - Solves the trace-normalized stationary state for a closed trace-preserving system.
+//
+// Connections to the General framework / SpinAPI:
+//   - Consumes the generator built by SSSystemPreparation.
+//   - MultiSSPropagator generalizes to time-dependent network generators/events; HSPropagator works in Hilbert/density representation.
+//
+// Why this ownership is used:
+//   - For a static generator, caching exp(L dt) is both exact for each step up to matrix-exponential numerical error and cheaper than rebuilding it.
+//   - Time-integrated and steady-state solves are mathematically different and are deliberately separate.
+//
+// Mathematical / physical references:
+//   - Dense matrix exponential background: Higham, SIAM J. Matrix Anal. Appl. 26, 1179-1193 (2005), DOI: 10.1137/04061101X.
+//
+// TODO:
+//   - If sparse Krylov propagation is added to SSGeneral, route it through the same SpinAPI expmv kernel and tolerance semantics used by MultiSS rather than creating a third implementation.
+/////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////
 // SSPropagator implementation (RunSection::General::SS)
 // ------------------
 // Propagates or solves a time-independent superspace generator.

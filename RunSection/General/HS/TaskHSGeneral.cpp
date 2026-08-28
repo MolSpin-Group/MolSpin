@@ -1,4 +1,25 @@
 /////////////////////////////////////////////////////////////////////////
+// DEVELOPER WORKFLOW / OWNERSHIP MAP
+// ----------------------------------------------------------------------
+// Top-level HSGeneral orchestration.
+//
+// What is done here:
+//   - Validates one SpinSystem, resolves the HS execution plan and builds the orientation ensemble.
+//   - For every crystallite: prepares state/Hamiltonian/reaction/relaxation, propagates or solves, evaluates observables, and accumulates the weighted result.
+//   - Owns output/log sequencing, not low-level spin physics.
+//
+// Connections to the General framework / SpinAPI:
+//   - Delegates to HSExecutionPlan, HSOrientationSampler, HSStatePreparation, HSHamiltonianBuilder, HSReactionRelaxation, HSPropagator and HSObservableCollector.
+//   - SpinAPI owns spins, interactions, states, transitions, Hamiltonians, rotations and low-level numerical kernels.
+//   - SSGeneral is the one-manifold Liouville analogue; MultiSSGeneral is the kinetic network analogue.
+//
+// Why this ownership is used:
+//   - The task remains an orchestrator so individual numerical/physical layers can be validated independently against legacy tasks.
+//
+// TODO:
+//   - General ensemble extensions (strain/SW) should wrap this per-orientation calculation instead of being embedded in TaskHSGeneral-specific loops.
+/////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////
 // TaskHSGeneral implementation (RunSection::General::HS)
 // ------------------
 // Production Hilbert-space RunSection task. This class owns RunSection lifecycle,

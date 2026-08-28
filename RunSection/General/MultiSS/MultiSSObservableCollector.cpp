@@ -1,4 +1,20 @@
 /////////////////////////////////////////////////////////////////////////
+// DEVELOPER WORKFLOW / OWNERSHIP MAP
+// ----------------------------------------------------------------------
+// MultiSS network observable collection.
+//
+// What is done here:
+//   - Builds labels and projectors for per-manifold populations/state populations and transition flux/yield observables.
+//   - Evaluates observables from slices of the global direct-sum Liouville vector.
+//
+// Connections to the General framework / SpinAPI:
+//   - Uses MultiSSSystemPreparation offsets and local SpinAPI SpinSpace objects.
+//   - Mirrors SSObservableCollector semantics inside each manifold while adding network-level flux accounting.
+//
+// Why this ownership is used:
+//   - Network observables are derived after propagation so kinetics and measurement definitions remain separate.
+/////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////
 // MultiSSObservableCollector implementation (RunSection::General::MultiSS)
 // ----------------------------------------------------------------------
 // OBSERVABLE OWNERSHIP

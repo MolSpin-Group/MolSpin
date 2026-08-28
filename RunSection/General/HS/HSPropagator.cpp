@@ -1,4 +1,29 @@
 /////////////////////////////////////////////////////////////////////////
+// DEVELOPER WORKFLOW / OWNERSHIP MAP
+// ----------------------------------------------------------------------
+// HSGeneral numerical time-propagation and time-infinity solver.
+//
+// What is done here:
+//   - Propagates Hilbert factors or density matrices with the selected exponential, AutoExpm, Krylov or RK4 path.
+//   - Handles pulse segments and split density evolution when relaxation is present.
+//   - Solves the static time-integrated density used by time-infinity yield calculations.
+//
+// Connections to the General framework / SpinAPI:
+//   - Receives Hamiltonians from HSHamiltonianBuilder and reaction/relaxation terms from HSReactionRelaxation.
+//   - Reuses SpinAPI Krylov and relaxation machinery; SSPropagator and MultiSSPropagator solve different state-space problems and are intentionally separate.
+//
+// Why this ownership is used:
+//   - Krylov exp(A)v avoids forming a dense propagator for large sparse systems; dense expm is retained where it is numerically and dimensionally appropriate.
+//   - Explicit RK4 remains a selectable reference/dynamic integrator but must resolve the fastest generator modes.
+//
+// Mathematical / physical references:
+//   - Krylov approximation of exp(A)v: Saad, SIAM J. Numer. Anal. 29, 209-228 (1992), DOI: 10.1137/0729014.
+//   - Dense matrix exponential background: Higham, SIAM J. Matrix Anal. Appl. 26, 1179-1193 (2005), DOI: 10.1137/04061101X.
+//
+// TODO:
+//   - A future shared propagation facade may unify diagnostics/tolerances, but must not erase the HS versus Liouville versus direct-sum state-space distinction.
+/////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////
 // HSPropagator implementation (RunSection::General::HS)
 // ------------------
 // Hilbert-factor propagation uses dB/dt = (-iH-K)B. Density propagation uses

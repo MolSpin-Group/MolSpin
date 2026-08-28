@@ -1,4 +1,30 @@
 /////////////////////////////////////////////////////////////////////////
+// DEVELOPER WORKFLOW / OWNERSHIP MAP
+// ----------------------------------------------------------------------
+// Interaction-derived Nakajima-Zwanzig relaxation builder.
+//
+// What is done here:
+//   - Diagonalizes the static Hamiltonian and forms Bohr-frequency matrices.
+//   - Transforms fluctuating interaction operators to the energy basis.
+//   - Combines their correlation expansions with the NZ spectral-density/memory-kernel algebra and transforms the final superoperator back once.
+//
+// Connections to the General framework / SpinAPI:
+//   - Uses SSInteractionRelaxation for operator/correlation preprocessing.
+//   - Delegates frequency/spectral-density/relaxation-tensor algebra to SpinAPI::NakajimaZwanzig.
+//   - Called from SSLiouvillianBuilder; MultiSS inherits it locally through SS.
+//
+// Why this ownership is used:
+//   - The energy basis makes the free evolution entering the memory integral diagonal in Bohr frequencies.
+//   - The completed tensor is transformed back only once to avoid repeated basis changes and convention drift.
+//
+// Mathematical / physical references:
+//   - Nakajima projection formalism: Prog. Theor. Phys. 20, 948-959 (1958), DOI: 10.1143/PTP.20.948; MolSpin reactive-NZ reference: DOI: 10.1063/5.0040519.
+//   - Application/validation for g-tensor anisotropy in MolSpin: DOI: 10.1021/jacs.5c06173.
+//
+// TODO:
+//   - Do not interpret the present additive treatment of separate Interaction objects as including cross-interaction correlations; add an explicit shared stochastic-source representation first.
+/////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////
 // SSNakajimaZwanzigBuilder implementation (RunSection::General::SS)
 // ------------------
 // Constructs interaction-derived Nakajima-Zwanzig relaxation in the static

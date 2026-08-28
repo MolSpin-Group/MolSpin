@@ -1,4 +1,23 @@
 /////////////////////////////////////////////////////////////////////////
+// DEVELOPER WORKFLOW / OWNERSHIP MAP
+// ----------------------------------------------------------------------
+// MultiSSGeneral input normalization and policy gate.
+//
+// What is done here:
+//   - Parses calculation, local Hamiltonian approximation, relaxation model, powder sampling and propagator settings.
+//   - Rejects incompatible static-solve, event and time-dependent-network combinations early.
+//
+// Connections to the General framework / SpinAPI:
+//   - TaskMultiSSGeneral consumes this plan.
+//   - Local one-manifold semantics are deliberately aligned with SSExecutionPlan because MultiSS reuses SS local builders.
+//
+// Why this ownership is used:
+//   - MultiSS policy describes a kinetic network of Liouville manifolds; it must not silently inherit HS-only amplitude propagation semantics.
+//
+// TODO:
+//   - Add ensemble-realization settings here only through the same shared abstraction used by HSGeneral and SSGeneral.
+/////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////
 // MultiSSExecutionPlan implementation (RunSection::General::MultiSS)
 // ----------------------------------------------------------------------
 // This file normalizes user input into orthogonal execution choices.  It does

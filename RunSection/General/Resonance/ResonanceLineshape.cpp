@@ -1,4 +1,22 @@
 /////////////////////////////////////////////////////////////////////////
+// DEVELOPER WORKFLOW / OWNERSHIP MAP
+// ----------------------------------------------------------------------
+// Resonance lineshape functions.
+//
+// What is done here:
+//   - Evaluates the configured analytical broadening kernel used to turn discrete transitions into a spectrum.
+//
+// Connections to the General framework / SpinAPI:
+//   - Called by ResonanceSpectrumEvaluator after transition positions/intensities are known.
+//   - Does not modify Hamiltonians or transition moments.
+//
+// Why this ownership is used:
+//   - Broadening is a measurement/spectrum model and must remain distinct from physical Hamiltonian disorder such as g/A strain.
+//
+// TODO:
+//   - Do not model strain by merely increasing a phenomenological linewidth; explicit parameter distributions belong in the Hamiltonian ensemble layer.
+/////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////
 // ResonanceLineshape implementation (RunSection::General::Resonance)
 //
 // Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.

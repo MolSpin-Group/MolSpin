@@ -1,4 +1,28 @@
 /////////////////////////////////////////////////////////////////////////
+// DEVELOPER WORKFLOW / OWNERSHIP MAP
+// ----------------------------------------------------------------------
+// HSGeneral reaction-loss and Hilbert-relaxation policy.
+//
+// What is done here:
+//   - Builds orientation-aware Haberkorn source-loss operators for Transitions.
+//   - Prepares explicit SpinAPI relaxation Operators and phenomenological population/coherence relaxation.
+//   - Provides finite-step dissipative application and relaxation-superoperator conversion where needed.
+//
+// Connections to the General framework / SpinAPI:
+//   - Reaction and relaxation objects originate in SpinAPI; this file decides how HSGeneral may use them.
+//   - SSGeneral instead builds Liouville-space reaction/relaxation terms; MultiSS owns inter-system transfer edges separately from local relaxation.
+//
+// Why this ownership is used:
+//   - Haberkorn loss is kept in Hilbert form in HSGeneral because the HS propagator can evolve amplitudes/factors directly.
+//   - NZ/Redfield are currently superspace theories in the General framework and are therefore not silently approximated by HS relaxation.
+//
+// Mathematical / physical references:
+//   - Haberkorn radical-pair reaction operator; Mol. Phys. 32, 1491-1493 (1976), DOI: 10.1080/00268977600102851.
+//
+// TODO:
+//   - If NZ/Redfield are ever exposed to HSGeneral, reuse one SpinAPI/SS relaxation kernel or a shared generator abstraction; do not duplicate the tensor/correlation algebra here.
+/////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////
 // HSReactionRelaxation implementation (RunSection::General::HS)
 // ------------------
 // Haberkorn channel selection plus Hilbert relaxation policy. The physical

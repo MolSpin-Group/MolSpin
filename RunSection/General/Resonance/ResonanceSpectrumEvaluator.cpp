@@ -1,4 +1,20 @@
 /////////////////////////////////////////////////////////////////////////
+// DEVELOPER WORKFLOW / OWNERSHIP MAP
+// ----------------------------------------------------------------------
+// Assembly of the final resonance spectrum.
+//
+// What is done here:
+//   - Combines detected resonances, transition moments, field Jacobians, powder weights and analytical lineshapes.
+//   - Accumulates the observable spectrum without changing the underlying eigenproblem.
+//
+// Connections to the General framework / SpinAPI:
+//   - Coordinates GeneralResonanceHamiltonian, ResonanceTransitionDetector, ResonanceTransitionMoments, ResonanceFieldJacobian and ResonanceLineshape.
+//   - SpinAPI remains responsible for spin-space operators and rotated Hamiltonians.
+//
+// Why this ownership is used:
+//   - Spectrum assembly is kept separate from resonance finding so each stage can be validated independently.
+/////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////
 // ResonanceSpectrumEvaluator implementation (RunSection::General::Resonance)
 //
 // Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.

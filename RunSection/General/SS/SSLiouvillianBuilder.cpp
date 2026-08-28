@@ -1,4 +1,27 @@
 /////////////////////////////////////////////////////////////////////////
+// DEVELOPER WORKFLOW / OWNERSHIP MAP
+// ----------------------------------------------------------------------
+// One-manifold SS Hamiltonian, initial density and internal Liouvillian builder.
+//
+// What is done here:
+//   - Builds the local Hamiltonian for the current crystallite.
+//   - Prepares/rotates/normalizes the local initial density.
+//   - Constructs -i[H,rho] and adds local explicit Operator relaxation plus optional interaction-derived NZ or Redfield terms.
+//
+// Connections to the General framework / SpinAPI:
+//   - SpinAPI::SpinSpace owns Hamiltonians, rotations, state projectors and explicit relaxation operators.
+//   - SSSystemPreparation adds terminal one-system reaction loss.
+//   - MultiSSSystemPreparation reuses this builder for every local manifold but adds network edges only later.
+//
+// Why this ownership is used:
+//   - Local relaxation is separated from Transition kinetics so MultiSS cannot double-count a channel as both a dissipator and a graph edge.
+//   - All relaxation contributions are returned in one propagation basis before addition.
+//
+// Mathematical / physical references:
+//   - Nakajima projection formalism: Prog. Theor. Phys. 20, 948-959 (1958), DOI: 10.1143/PTP.20.948; MolSpin reactive-NZ reference: DOI: 10.1063/5.0040519.
+//   - Redfield weak-coupling relaxation framework; IBM J. Res. Dev. 1, 19-31 (1957), DOI: 10.1147/rd.11.0019.
+/////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////
 // SSLiouvillianBuilder implementation (RunSection::General::SS)
 // ----------------------------------------------------------------------
 // HIERARCHY AND OWNERSHIP

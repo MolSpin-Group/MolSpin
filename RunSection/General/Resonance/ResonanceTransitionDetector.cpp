@@ -1,4 +1,20 @@
 /////////////////////////////////////////////////////////////////////////
+// DEVELOPER WORKFLOW / OWNERSHIP MAP
+// ----------------------------------------------------------------------
+// Detection/interpolation of resonance crossings.
+//
+// What is done here:
+//   - Identifies field positions where an allowed transition matches the requested excitation frequency.
+//   - Handles numerical crossing logic independently of transition intensity evaluation.
+//
+// Connections to the General framework / SpinAPI:
+//   - Uses eigenvalues supplied by the resonance Hamiltonian scan.
+//   - Transition moments are evaluated separately by ResonanceTransitionMoments.
+//
+// Why this ownership is used:
+//   - Separating root/crossing detection from matrix elements avoids coupling numerical resonance location to intensity thresholds.
+/////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////
 // ResonanceTransitionDetector implementation (RunSection::General::Resonance)
 //
 // Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.

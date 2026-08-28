@@ -1,4 +1,24 @@
 /////////////////////////////////////////////////////////////////////////
+// DEVELOPER WORKFLOW / OWNERSHIP MAP
+// ----------------------------------------------------------------------
+// Construction of the MultiSS direct-sum state space.
+//
+// What is done here:
+//   - Prepares every local manifold through the SS one-manifold builder.
+//   - Assigns direct-sum offsets, embeds local internal Liouvillians, vectorizes initial densities and constructs the global trace functional.
+//
+// Connections to the General framework / SpinAPI:
+//   - Delegates local Hamiltonian/state/relaxation physics to SSLiouvillianBuilder.
+//   - MultiSSNetworkBuilder adds inter-manifold Transition edges afterward.
+//
+// Why this ownership is used:
+//   - The global state is a direct sum of density operators, not a tensor product of unrelated manifolds.
+//   - Keeping local physics below the graph layer prevents double counting of reaction/transfer channels.
+//
+// Mathematical / physical references:
+//   - Direct-sum kinetic hierarchy used by MolSpin: DOI: 10.1039/D6CP00916F.
+/////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////
 // MultiSSSystemPreparation implementation (RunSection::General::MultiSS)
 // ----------------------------------------------------------------------
 // REPRESENTATION

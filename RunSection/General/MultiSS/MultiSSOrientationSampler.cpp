@@ -1,4 +1,23 @@
 /////////////////////////////////////////////////////////////////////////
+// DEVELOPER WORKFLOW / OWNERSHIP MAP
+// ----------------------------------------------------------------------
+// MultiSSGeneral adapter to shared powder/orientation sampling.
+//
+// What is done here:
+//   - Translates MultiSS execution-plan settings to GeneralOrientationRequest.
+//   - Returns one common rigid molecular rotation for every manifold of a network.
+//
+// Connections to the General framework / SpinAPI:
+//   - Delegates grid construction to GeneralOrientationSampler / SpinAPI.
+//   - The same frameToLab rotation is passed to all local SS builders and transition-state frame handling.
+//
+// Why this ownership is used:
+//   - Different electronic manifolds of one molecule must not receive independently sampled crystallite orientations.
+//
+// Mathematical / physical references:
+//   - Swinbank & Purser, Q. J. R. Meteorol. Soc. 132, 1769-1793 (2006), DOI: 10.1256/qj.05.227.
+/////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////
 // MultiSSOrientationSampler implementation (RunSection::General::MultiSS)
 // ------------------
 // Thin MultiSS adapter over the shared GeneralOrientationSampler. Every

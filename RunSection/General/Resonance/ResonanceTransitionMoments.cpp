@@ -1,4 +1,20 @@
 /////////////////////////////////////////////////////////////////////////
+// DEVELOPER WORKFLOW / OWNERSHIP MAP
+// ----------------------------------------------------------------------
+// Resonance transition-moment evaluation.
+//
+// What is done here:
+//   - Evaluates matrix elements of the excitation/detection operator between Hamiltonian eigenstates.
+//   - Produces transition strengths used by the spectrum evaluator.
+//
+// Connections to the General framework / SpinAPI:
+//   - Uses SpinAPI spin-space operators and eigenvectors from the resonance Hamiltonian.
+//   - Does not determine resonance fields or apply lineshape broadening.
+//
+// Why this ownership is used:
+//   - Selection rules/intensities are quantum-mechanical operator matrix elements and should not be mixed with numerical crossing detection.
+/////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////
 // ResonanceTransitionMoments implementation (RunSection::General::Resonance)
 //
 // Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.

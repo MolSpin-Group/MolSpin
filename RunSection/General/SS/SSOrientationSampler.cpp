@@ -1,4 +1,22 @@
 /////////////////////////////////////////////////////////////////////////
+// DEVELOPER WORKFLOW / OWNERSHIP MAP
+// ----------------------------------------------------------------------
+// SSGeneral adapter to the shared orientation sampler.
+//
+// What is done here:
+//   - Maps SSExecutionPlan powder settings to GeneralOrientationRequest and returns SSOrientation objects.
+//
+// Connections to the General framework / SpinAPI:
+//   - Delegates all grid/rotation generation to GeneralOrientationSampler and SpinAPI.
+//   - MultiSS uses the same convention because each local manifold is prepared by SS builders.
+//
+// Why this ownership is used:
+//   - One shared powder convention is required for consistent tensor rotation and NZ/Redfield operator construction.
+//
+// Mathematical / physical references:
+//   - Swinbank & Purser, Q. J. R. Meteorol. Soc. 132, 1769-1793 (2006), DOI: 10.1256/qj.05.227.
+/////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////
 // SSOrientationSampler implementation (RunSection::General::SS)
 // ------------------
 // Thin SS adapter over the shared GeneralOrientationSampler.

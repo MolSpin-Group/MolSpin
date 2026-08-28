@@ -1,4 +1,29 @@
 /////////////////////////////////////////////////////////////////////////
+// DEVELOPER WORKFLOW / OWNERSHIP MAP
+// ----------------------------------------------------------------------
+// Interaction-derived Redfield relaxation builder.
+//
+// What is done here:
+//   - Diagonalizes the static Hamiltonian and constructs transition-frequency matrices.
+//   - Transforms fluctuating interaction operators to the energy basis.
+//   - Builds the selected Redfield spectral density/tensor and transforms the resulting superoperator back to the propagation basis.
+//
+// Connections to the General framework / SpinAPI:
+//   - Uses SSInteractionRelaxation for shared operator/correlation preprocessing.
+//   - Delegates spectral-density and Redfield tensor algebra to SpinAPI::Redfield.
+//   - Called from SSLiouvillianBuilder and therefore inherited locally by MultiSS.
+//
+// Why this ownership is used:
+//   - Redfield is kept distinct from NZ because the two approximations use different generator constructions even when they share the same fluctuation input.
+//   - Initial-state slippage remains explicitly unsupported in General rather than being silently omitted.
+//
+// Mathematical / physical references:
+//   - Redfield weak-coupling relaxation framework; IBM J. Res. Dev. 1, 19-31 (1957), DOI: 10.1147/rd.11.0019.
+//
+// TODO:
+//   - General-framework slippage and cross-Interaction correlations remain missing parity items relative to dedicated legacy Redfield implementations.
+/////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////
 // SSRedfieldBuilder implementation (RunSection::General::SS)
 // ------------------
 // Constructs interaction-derived Redfield relaxation in the static

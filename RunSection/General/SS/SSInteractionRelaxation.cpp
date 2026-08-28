@@ -1,4 +1,29 @@
 /////////////////////////////////////////////////////////////////////////
+// DEVELOPER WORKFLOW / OWNERSHIP MAP
+// ----------------------------------------------------------------------
+// Shared interaction-to-relaxation preprocessing for SS NZ/Redfield.
+//
+// What is done here:
+//   - Interprets correlation-function input attached to SpinAPI Interaction objects.
+//   - Builds the Cartesian or rank-0/2 spherical operator basis for a selected interaction.
+//   - Expands single- or multi-exponential correlation data into a common representation.
+//
+// Connections to the General framework / SpinAPI:
+//   - Used by both SSNakajimaZwanzigBuilder and SSRedfieldBuilder.
+//   - SpinAPI Interaction/SpinSpace own physical tensors and embedded spin operators.
+//
+// Why this ownership is used:
+//   - NZ and Redfield share the same fluctuating-operator/correlation vocabulary; factoring it here prevents divergent conventions.
+//   - The rank-0/2 basis is used for rotational modulation because isotropic rotational diffusion diagonalizes correlations in irreducible spherical-tensor components.
+//
+// Mathematical / physical references:
+//   - MolSpin rotational-relaxation formulation: J. Comput. Chem. (2023), DOI: 10.1002/jcc.27155.
+//   - High-field g-anisotropy application: DOI: 10.1021/jacs.5c06173.
+//
+// TODO:
+//   - Current builders correlate operator components within one Interaction. Cross-correlation between separate Interaction objects (for example g-anisotropy and HFC driven by the same molecular tumbling) requires an explicit shared-correlation model before it may be enabled.
+/////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////
 // SSInteractionRelaxation implementation (RunSection::General::SS)
 // ------------------
 // Input compatibility:

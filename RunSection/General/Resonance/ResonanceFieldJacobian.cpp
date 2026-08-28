@@ -1,4 +1,20 @@
 /////////////////////////////////////////////////////////////////////////
+// DEVELOPER WORKFLOW / OWNERSHIP MAP
+// ----------------------------------------------------------------------
+// Field-to-frequency Jacobian support for resonance spectra.
+//
+// What is done here:
+//   - Evaluates how transition frequencies change with magnetic field near a resonance.
+//   - Provides the field-domain Jacobian used when converting/intensifying frequency-domain transition information.
+//
+// Connections to the General framework / SpinAPI:
+//   - Consumes eigeninformation from the resonance Hamiltonian layer.
+//   - Does not own powder sampling, lineshapes or SpinAPI interaction construction.
+//
+// Why this ownership is used:
+//   - Keeping the Jacobian explicit avoids hiding field/frequency conversion inside empirical linewidth code.
+/////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////
 // ResonanceFieldJacobian implementation (RunSection::General::Resonance)
 //
 // Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.

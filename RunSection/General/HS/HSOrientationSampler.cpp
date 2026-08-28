@@ -1,4 +1,23 @@
 /////////////////////////////////////////////////////////////////////////
+// DEVELOPER WORKFLOW / OWNERSHIP MAP
+// ----------------------------------------------------------------------
+// HSGeneral adapter to the shared orientation sampler.
+//
+// What is done here:
+//   - Translates HSExecutionPlan orientation settings into GeneralOrientationRequest.
+//   - Converts shared GeneralOrientation objects into HSOrientation objects without changing the rotation convention.
+//
+// Connections to the General framework / SpinAPI:
+//   - Delegates all grid generation and ZYZ construction to GeneralOrientationSampler / SpinAPI.
+//   - SSOrientationSampler and MultiSSOrientationSampler are parallel adapters and should remain behaviorally equivalent.
+//
+// Why this ownership is used:
+//   - Task-specific adapters keep parsing structures independent while preserving one physical powder convention.
+//
+// Mathematical / physical references:
+//   - Swinbank & Purser, Q. J. R. Meteorol. Soc. 132, 1769-1793 (2006), DOI: 10.1256/qj.05.227.
+/////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////
 // HSOrientationSampler implementation (RunSection::General::HS)
 // ------------------
 // Thin HS adapter over the shared GeneralOrientationSampler.

@@ -1,4 +1,23 @@
 /////////////////////////////////////////////////////////////////////////
+// DEVELOPER WORKFLOW / OWNERSHIP MAP
+// ----------------------------------------------------------------------
+// SSGeneral input normalization and policy gate.
+//
+// What is done here:
+//   - Parses calculation mode, propagation, observables, orientation, Hamiltonian approximation and relaxation model.
+//   - Rejects unsupported time-dependent or reaction-model combinations before Liouvillian construction.
+//
+// Connections to the General framework / SpinAPI:
+//   - TaskSSGeneral consumes the plan; MultiSSExecutionPlan intentionally mirrors local SS vocabulary.
+//   - SpinAPI provides reaction/operator and powder-grid enums.
+//
+// Why this ownership is used:
+//   - SS policy describes one Liouville-space manifold; inter-system kinetics belong to MultiSSGeneral.
+//
+// TODO:
+//   - Future strain/SW settings should be shared with HS/MultiSS through one realization abstraction, not added as SS-only keywords.
+/////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////
 // SSExecutionPlan implementation (RunSection::General::SS)
 // ------------------
 // Resolves user input into an explicit, validated superspace calculation plan.

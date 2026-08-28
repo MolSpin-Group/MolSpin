@@ -1,4 +1,25 @@
 /////////////////////////////////////////////////////////////////////////
+// DEVELOPER WORKFLOW / OWNERSHIP MAP
+// ----------------------------------------------------------------------
+// Top-level SSGeneral orchestration.
+//
+// What is done here:
+//   - Validates exactly one SpinSystem, resolves the execution plan and builds the orientation ensemble.
+//   - For each crystallite: prepares the Liouvillian, propagates/solves, evaluates observables and accumulates the powder-weighted result.
+//   - Owns log/output sequencing rather than low-level spin physics.
+//
+// Connections to the General framework / SpinAPI:
+//   - Delegates to SSExecutionPlan, SSOrientationSampler, SSSystemPreparation, SSPropagator and SSObservableCollector.
+//   - SSLiouvillianBuilder is also reused by MultiSSGeneral for local manifold physics.
+//   - SpinAPI supplies Hamiltonian/state/relaxation primitives and NZ/Redfield numerical kernels.
+//
+// Why this ownership is used:
+//   - Keeping TaskSSGeneral as orchestration makes the same local physics reusable in MultiSS and testable against legacy SS tasks.
+//
+// TODO:
+//   - Time-dependent Interactions/Transitions remain intentionally unqualified in SSGeneral; add them only with a defined time-ordering/relaxation contract rather than copying MultiSS kinetics.
+/////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////
 // TaskSSGeneral implementation (RunSection::General::SS)
 // ------------------
 // StaticSS and StaticSSTimeEvo remain independent numerical references.

@@ -1,4 +1,22 @@
 /////////////////////////////////////////////////////////////////////////
+// DEVELOPER WORKFLOW / OWNERSHIP MAP
+// ----------------------------------------------------------------------
+// HSGeneral initial-state preparation.
+//
+// What is done here:
+//   - Constructs and normalizes the requested initial state/density for the current orientation.
+//   - Handles thermal/eigen/molecular-frame semantics and stochastic trace-sampling preparation.
+//   - Applies task-level preparation rules before free propagation begins.
+//
+// Connections to the General framework / SpinAPI:
+//   - Uses SpinAPI State, SpinSpace thermal-state and rotation utilities.
+//   - SSLiouvillianBuilder owns analogous one-manifold density preparation for SS/MultiSS.
+//
+// Why this ownership is used:
+//   - State-frame handling is centralized so orientation does not get applied twice or omitted.
+//   - Stochastic trace sampling is an estimator of the same quantum trace, not a different Hamiltonian model.
+/////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////
 // HSStatePreparation implementation (RunSection::General::HS)
 // ------------------
 // Initial-state normalization, state-aware trace sampling, molecular-frame

@@ -1,4 +1,25 @@
 /////////////////////////////////////////////////////////////////////////
+// DEVELOPER WORKFLOW / OWNERSHIP MAP
+// ----------------------------------------------------------------------
+// HSGeneral Hamiltonian policy layer.
+//
+// What is done here:
+//   - Selects static/dynamic, full/secular and H0/H1 Hamiltonian construction paths.
+//   - Applies the current crystallite rotation but leaves interaction physics to SpinAPI::SpinSpace.
+//
+// Connections to the General framework / SpinAPI:
+//   - Called by TaskHSGeneral and pulse/dynamic propagation preparation.
+//   - SpinAPI owns Interaction -> Hilbert Hamiltonian conversion and tensor rotation.
+//   - SSGeneral uses SSLiouvillianBuilder instead; MultiSS obtains each local Hamiltonian through SSGeneral.
+//
+// Why this ownership is used:
+//   - The builder chooses a SpinAPI path rather than reimplementing interaction algebra in RunSection.
+//   - H0 is approximated while H1 remains explicit so a static high-field approximation is not confused with a driven rotating-wave model.
+//
+// TODO:
+//   - Introduce a shared realization-aware Hamiltonian provider before enabling semiclassical-field / strain ensembles in HSGeneral; one realization must be a square Hamiltonian, not the current composite semiclassical matrix.
+/////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////
 // HSHamiltonianBuilder implementation (RunSection::General::HS)
 // ------------------
 // Policy layer over SpinSpace Hamiltonian construction. No interaction physics

@@ -1,4 +1,25 @@
 /////////////////////////////////////////////////////////////////////////
+// DEVELOPER WORKFLOW / OWNERSHIP MAP
+// ----------------------------------------------------------------------
+// HSGeneral input normalization and policy gate.
+//
+// What is done here:
+//   - Parses user-facing aliases into one HSExecutionPlan.
+//   - Rejects unsupported combinations before any Hamiltonian or propagation work is started.
+//   - Defines calculation, sampling, orientation, approximation, propagator, pulse and observable policy.
+//
+// Connections to the General framework / SpinAPI:
+//   - TaskHSGeneral consumes the resolved plan; SpinAPI supplies Hamiltonian approximation and powder-grid enums.
+//   - Equivalent SS/MultiSS policies live in their own ExecutionPlan files; shared vocabulary should stay semantically aligned.
+//
+// Why this ownership is used:
+//   - ExecutionPlan is policy, not physics: it must not construct operators or silently substitute one physical model for another.
+//   - Explicit rejection is preferred to hidden fallbacks because HS, SS and MultiSS use genuinely different state spaces.
+//
+// TODO:
+//   - When strain / Schulten-Wolynes support is generalized, expose ensemble policy here only after a shared realization abstraction exists; do not add HS-only sampling semantics.
+/////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////
 // HSExecutionPlan implementation (RunSection::General::HS)
 // ------------------
 // Input normalization and validation for the modular Hilbert-space execution plan.

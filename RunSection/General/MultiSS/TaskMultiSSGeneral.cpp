@@ -1,4 +1,25 @@
 /////////////////////////////////////////////////////////////////////////
+// DEVELOPER WORKFLOW / OWNERSHIP MAP
+// ----------------------------------------------------------------------
+// Top-level MultiSSGeneral orchestration.
+//
+// What is done here:
+//   - Resolves the network execution plan and common orientation ensemble.
+//   - For each crystallite: prepares local manifolds, compiles the kinetic graph, propagates/solves, evaluates observables and powder-averages the result.
+//   - Owns validation/log/output sequencing rather than local spin physics.
+//
+// Connections to the General framework / SpinAPI:
+//   - Uses MultiSSExecutionPlan, MultiSSOrientationSampler, MultiSSNetworkBuilder, MultiSSPropagator and MultiSSObservableCollector.
+//   - Reuses General/SS for local one-manifold Hamiltonian, state and relaxation construction.
+//   - SpinAPI supplies physical SpinSystem primitives and TransferChannel/quantum-map machinery.
+//
+// Why this ownership is used:
+//   - MultiSSGeneral should remain the network composition layer; local relaxation improvements belong in General/SS or SpinAPI.
+//
+// TODO:
+//   - A shared strain/SW ensemble driver must provide the same realization to all rigidly related manifolds when the fluctuating parameter is physically common.
+/////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////
 // TaskMultiSSGeneral implementation (RunSection::General::MultiSS)
 // ----------------------------------------------------------------------
 // THIS CLASS IS INTENTIONALLY THIN.

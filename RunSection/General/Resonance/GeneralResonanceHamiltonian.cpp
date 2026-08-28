@@ -1,4 +1,24 @@
 /////////////////////////////////////////////////////////////////////////
+// DEVELOPER WORKFLOW / OWNERSHIP MAP
+// ----------------------------------------------------------------------
+// Resonance-specific Hamiltonian construction.
+//
+// What is done here:
+//   - Builds the field/orientation-dependent Hamiltonian needed by the General resonance workflow.
+//   - Keeps resonance scanning separate from generic time propagation.
+//
+// Connections to the General framework / SpinAPI:
+//   - Delegates spin-interaction matrix construction and tensor rotation to SpinAPI.
+//   - Used by ResonanceFieldJacobian, transition detection and spectrum evaluation.
+//   - HSGeneral propagation uses HSHamiltonianBuilder instead; do not cross-dispatch task code.
+//
+// Why this ownership is used:
+//   - A resonance solver repeatedly evaluates an eigenproblem as a function of field; this is algorithmically distinct from propagating rho(t).
+//
+// TODO:
+//   - Strain distributions should enter through a shared Hamiltonian-realization layer so resonance spectra and time-domain General tasks sample the same physical parameter distributions.
+/////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////
 // GeneralResonanceHamiltonian implementation (RunSection::General::Resonance)
 //
 // Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.

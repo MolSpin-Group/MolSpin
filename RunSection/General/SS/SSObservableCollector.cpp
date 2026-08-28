@@ -1,4 +1,20 @@
 /////////////////////////////////////////////////////////////////////////
+// DEVELOPER WORKFLOW / OWNERSHIP MAP
+// ----------------------------------------------------------------------
+// SSGeneral observable construction and evaluation.
+//
+// What is done here:
+//   - Prepares state-population and reaction/yield observables in one-manifold Liouville space.
+//   - Evaluates observables from propagated or integrated superspace state vectors.
+//
+// Connections to the General framework / SpinAPI:
+//   - Uses the prepared SpinAPI SpinSpace/state projectors from SSSystemPreparation.
+//   - MultiSSObservableCollector extends the same idea to direct-sum manifold/network observables.
+//
+// Why this ownership is used:
+//   - Observables are kept outside Liouvillian construction and propagation to preserve independent validation of dynamics and readout.
+/////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////
 // SSObservableCollector implementation (RunSection::General::SS)
 // ------------------
 // Constructs and evaluates state populations and terminal reaction yields.

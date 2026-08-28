@@ -1,4 +1,25 @@
 /////////////////////////////////////////////////////////////////////////
+// DEVELOPER WORKFLOW / OWNERSHIP MAP
+// ----------------------------------------------------------------------
+// Final one-system SSGeneral generator preparation.
+//
+// What is done here:
+//   - Calls SSLiouvillianBuilder for the internal Hamiltonian/relaxation Liouvillian and normalized initial density.
+//   - Adds terminal same-system Haberkorn sink loss for static Transitions.
+//   - Builds the superspace initial vector and trace functional.
+//
+// Connections to the General framework / SpinAPI:
+//   - Inter-system Transitions are rejected here and belong to MultiSSNetworkBuilder.
+//   - SpinAPI supplies state projectors and superspace lifting.
+//
+// Why this ownership is used:
+//   - SSLiouvillianBuilder deliberately excludes reaction graph edges so it can be reused by MultiSS without double counting.
+//   - SSGeneral adds only terminal one-manifold loss because it has no represented target manifold.
+//
+// Mathematical / physical references:
+//   - Haberkorn radical-pair reaction operator; Mol. Phys. 32, 1491-1493 (1976), DOI: 10.1080/00268977600102851.
+/////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////
 // SSSystemPreparation implementation.
 // The local SSLiouvillianBuilder deliberately excludes reaction loss because
 // MultiSS owns inter-manifold edges. SSGeneral adds only terminal one-system
