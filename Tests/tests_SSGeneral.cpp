@@ -364,6 +364,139 @@ bool test_ssgeneral_relaxation_operator_basis_uses_powder_and_interaction_frames
     return true;
 }
 
+bool test_ssgeneral_single_spin_spherical_basis_uses_common_field_frame()
+{
+    auto spin=std::make_shared<SpinAPI::Spin>("E","type=electron;spin=1/2;");
+    auto system=std::make_shared<SpinAPI::SpinSystem>("SingleSpinFrameSystem");
+    system->Add(spin);
+    auto interaction=std::make_shared<SpinAPI::Interaction>("ZeemanNoise",
+        "type=zeeman;spins=E;field=\"0.31 -0.27 0.43\";"
+        "orientation=0.17,-0.29,0.41;ignoretensors=true;commonprefactor=false;prefactor=1;");
+    system->Add(interaction);
+    if(!system->ValidateInteractions().empty())
+    {
+        std::cout<<"single-spin spherical frame interaction validation failed"<<std::endl;
+        return false;
+    }
+
+    SpinAPI::SpinSpace space(system);
+    space.UseSuperoperatorSpace(false);
+
+    arma::mat powder,frame;
+    if(!SpinAPI::CreateZYZRotationMatrix(-0.38,0.63,0.12,powder) ||
+       !SpinAPI::CreateZYZRotationMatrix(0.17,-0.29,0.41,frame))
+        return false;
+    const arma::mat combined=powder*frame;
+
+    std::vector<arma::cx_mat> operators;
+    std::string error;
+    if(!RunSection::General::SS::SSInteractionRelaxation::BuildOperatorBasis(
+        space,interaction,spin,nullptr,0,powder,operators,error) ||
+       operators.size()!=6)
+    {
+        std::cout<<"single-spin spherical frame operator build failed: "
+                 <<error<<" size="<<operators.size()<<std::endl;
+        return false;
+    }
+
+    std::vector<arma::cx_mat> lab(3);
+    if(!space.CreateOperator(arma::conv_to<arma::cx_mat>::from(spin->Sx()),spin,lab[0]) ||
+       !space.CreateOperator(arma::conv_to<arma::cx_mat>::from(spin->Sy()),spin,lab[1]) ||
+       !space.CreateOperator(arma::conv_to<arma::cx_mat>::from(spin->Sz()),spin,lab[2]))
+        return false;
+
+    std::vector<arma::cx_mat> rotated(3);
+    for(std::size_t axis=0;axis<3;++axis)
+    {
+        rotated[axis].zeros(arma::size(lab[0]));
+        for(std::size_t labAxis=0;labAxis<3;++labAxis)
+            rotated[axis]+=combined(labAxis,axis)*lab[labAxis];
+    }
+
+    const arma::vec fieldLab=interaction->Field();
+    if(fieldLab.n_elem!=3)return false;
+    const arma::vec fieldInt=combined.t()*fieldLab;
+    const auto &sx=rotated[0],&sy=rotated[1],&sz=rotated[2];
+    const arma::cx_double im(0.0,1.0);
+    const arma::cx_mat scalar=sx*fieldInt(0)+sy*fieldInt(1)+sz*fieldInt(2);
+
+    std::vector<arma::cx_mat> expected(6);
+    expected[0]=scalar/std::sqrt(3.0);
+    expected[1]=(3.0*sz*fieldInt(2)-scalar)/std::sqrt(6.0);
+    const arma::cx_mat tp1=-0.5*(sx*fieldInt(2)+sz*fieldInt(0)+
+        im*(sy*fieldInt(2)+sz*fieldInt(1)));
+    const arma::cx_mat tm1= 0.5*(sx*fieldInt(2)+sz*fieldInt(0)-
+        im*(sy*fieldInt(2)+sz*fieldInt(1)));
+    const arma::cx_mat tp2= 0.5*(sx*fieldInt(0)-sy*fieldInt(1)+
+        im*(sx*fieldInt(1)+sy*fieldInt(0)));
+    const arma::cx_mat tm2= 0.5*(sx*fieldInt(0)-sy*fieldInt(1)-
+        im*(sx*fieldInt(1)+sy*fieldInt(0)));
+    expected[2]=-tm1;
+    expected[3]=-tp1;
+    expected[4]=tm2;
+    expected[5]=tp2;
+
+    for(std::size_t i=0;i<operators.size();++i)
+    {
+        const double mismatch=arma::norm(operators[i]-expected[i],"fro");
+        if(mismatch>1.0e-12)
+        {
+            std::cout<<"single-spin spherical common-frame mismatch at component "
+                     <<i<<": "<<mismatch<<std::endl;
+            return false;
+        }
+    }
+
+    // T00 is a scalar under the common coordinate rotation.
+    const arma::cx_vec fieldCx=arma::conv_to<arma::cx_vec>::from(fieldLab);
+    arma::cx_mat ref00,ref20,refp1,refm1,refp2,refm2;
+    if(!space.LRk0TensorT0(spin,fieldCx,ref00) ||
+       !space.LRk2SphericalTensorT0(spin,fieldCx,ref20) ||
+       !space.LRk2SphericalTensorTp1(spin,fieldCx,refp1) ||
+       !space.LRk2SphericalTensorTm1(spin,fieldCx,refm1) ||
+       !space.LRk2SphericalTensorTp2(spin,fieldCx,refp2) ||
+       !space.LRk2SphericalTensorTm2(spin,fieldCx,refm2))
+        return false;
+    if(arma::norm(operators[0]-ref00,"fro")>1.0e-12)
+    {
+        std::cout<<"single-spin spherical rank-0 covariance failed"<<std::endl;
+        return false;
+    }
+
+    const std::vector<arma::cx_mat> ref={ref00,ref20,-refm1,-refp1,refm2,refp2};
+    double rank2Norm=0.0,refRank2Norm=0.0;
+    for(std::size_t i=1;i<6;++i)
+    {
+        rank2Norm+=std::pow(arma::norm(operators[i],"fro"),2);
+        refRank2Norm+=std::pow(arma::norm(ref[i],"fro"),2);
+    }
+    if(std::abs(rank2Norm-refRank2Norm)>1.0e-11*
+       std::max({1.0,std::abs(rank2Norm),std::abs(refRank2Norm)}))
+    {
+        std::cout<<"single-spin spherical rank-2 norm covariance failed: "
+                 <<rank2Norm<<" vs "<<refRank2Norm<<std::endl;
+        return false;
+    }
+
+    // Choose molecularToLab = frame^{-1}; then the combined frame is identity
+    // and General must reduce exactly to SpinAPI's canonical LRk* basis.
+    std::vector<arma::cx_mat> identityOperators;
+    if(!RunSection::General::SS::SSInteractionRelaxation::BuildOperatorBasis(
+        space,interaction,spin,nullptr,0,frame.t(),identityOperators,error) ||
+       identityOperators.size()!=6)
+        return false;
+    for(std::size_t i=0;i<6;++i)
+    {
+        if(arma::norm(identityOperators[i]-ref[i],"fro")>1.0e-12)
+        {
+            std::cout<<"single-spin spherical identity-frame parity failed at "
+                     <<i<<std::endl;
+            return false;
+        }
+    }
+    return true;
+}
+
 bool test_ssgeneral_timeintegrated_identity_decay_is_analytic()
 {
     const double k=0.2;auto system=BuildSSIdentityDecay(k);if(!system)return false;
@@ -821,6 +954,7 @@ void AddSSGeneralTests(std::vector<test_case>&cases)
     cases.push_back({"SSGeneral explicit orientation rotates initial state",test_ssgeneral_explicit_orientation_rotates_full_hamiltonian_and_initial_state});
     cases.push_back({"SSGeneral eigen frame is orientation-specific thermal",test_ssgeneral_eigen_frame_is_orientation_specific_thermal_state});
     cases.push_back({"SSGeneral relaxation basis composes molecular frames",test_ssgeneral_relaxation_operator_basis_uses_powder_and_interaction_frames});
+    cases.push_back({"SSGeneral single-spin spherical basis uses common field frame",test_ssgeneral_single_spin_spherical_basis_uses_common_field_frame});
     cases.push_back({"SSGeneral timeintegrated identity decay analytic",test_ssgeneral_timeintegrated_identity_decay_is_analytic});
     cases.push_back({"SSGeneral time grid has one exact endpoint",test_ssgeneral_time_grid_has_single_exact_endpoint});
     cases.push_back({"SSGeneral matches MultiSS one-block generator",test_ssgeneral_matches_multiss_one_block_generator});

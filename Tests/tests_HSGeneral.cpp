@@ -474,7 +474,7 @@ namespace
 			auto fixture = BuildHSGeneralDynamicPowderSystem();
 			std::ostringstream orientationProperty;
 			orientationProperty << std::setprecision(17)
-				<< "powderorientation=" << orientation.theta << " "
+				<< "powderorientation=0 " << orientation.theta << " "
 				<< orientation.phi << " " << orientation.weight / (2.0 * arma::datum::pi) << ";";
 			std::string external;
 			if (!RunHSGeneralSpectraTask(fixture, "HSGeneral",
@@ -566,9 +566,9 @@ namespace
 				auto fixture = BuildHSGeneralDynamicPowderSystem();
 				std::ostringstream orientationProperty;
 				orientationProperty << std::setprecision(17)
-					<< "powderorientation=" << orientation.theta << " "
-					<< orientation.phi << " " << orientation.weight / (4.0 * arma::datum::pi * static_cast<double>(gammaCount)) << ";"
-					<< "powdergamma=" << gamma << ";";
+					<< "powderorientation=" << gamma << " " << orientation.theta << " "
+					<< orientation.phi << " "
+					<< orientation.weight / (4.0 * arma::datum::pi * static_cast<double>(gammaCount)) << ";";
 				std::string external;
 				if (!RunHSGeneralSpectraTask(fixture, "HSGeneral",
 						common + orientationProperty.str(), external))
@@ -1463,7 +1463,8 @@ bool test_hsgeneral_powder_rotates_orientation_dependent_reaction_state()
 		fixture.spinSystem->Add(sink);
 		std::ostringstream props;
 		props << std::setprecision(17) << common
-			<< "powderorientation=" << orientation.theta << " " << orientation.phi << " " << orientation.weight / (2.0 * arma::datum::pi) << ";";
+			<< "powderorientation=0 " << orientation.theta << " " << orientation.phi << " "
+			<< orientation.weight / (2.0 * arma::datum::pi) << ";";
 		std::string external, header;
 		std::vector<std::vector<double>> rows;
 		if (!RunHSGeneralSpectraTask(fixture, "HSGeneral", props.str(), external) ||
@@ -1623,6 +1624,9 @@ bool test_hsgeneral_rejects_unsupported_physics()
 {
 	return HSGeneralRejects(
 			   "calculation=spectra;", "standalone task") &&
+		HSGeneralRejects(
+			"calculation=timeevolution;approximation=rwa;",
+			"not a static Hamiltonian secular approximation") &&
 		HSGeneralRejects(
 			"calculation=timeevolution;powderaveraging=true;", "requires a generated powder grid") &&
 		HSGeneralRejects(

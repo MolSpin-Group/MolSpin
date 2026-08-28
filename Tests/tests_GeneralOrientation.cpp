@@ -4,6 +4,10 @@
 #include "HSOrientationSampler.h"
 #include "SSOrientationSampler.h"
 #include "MultiSSOrientationSampler.h"
+#include "HSExecutionPlan.h"
+#include "SSExecutionPlan.h"
+#include "MultiSSExecutionPlan.h"
+#include "ObjectParser.h"
 #include <cmath>
 #include <sstream>
 
@@ -101,6 +105,41 @@ bool test_general_orientation_explicit_zyz_equivalence()
     return SameOrientation(hs[0],ss[0])&&SameOrientation(hs[0],ms[0])&&std::abs(hs[0].weight-w)<1e-14;
 }
 
+bool test_general_orientation_parser_explicit_zyz_equivalence()
+{
+    const std::string orientation="powderorientation=0.41 0.73 -0.19 0.37;";
+    MSDParser::ObjectParser hpParser("hs",
+        "type=HSGeneral;calculation=timeevolution;hamiltonianh0list=H0;"+orientation);
+    MSDParser::ObjectParser spParser("ss","type=SSGeneral;"+orientation);
+    MSDParser::ObjectParser mpParser("ms","type=MultiSSGeneral;"+orientation);
+
+    RunSection::General::HS::HSExecutionPlan hp;
+    RunSection::General::SS::SSExecutionPlan sp;
+    RunSection::General::MultiSS::MultiSSExecutionPlan mp;
+    std::string error;
+    if(!RunSection::General::HS::ResolveExecutionPlan(hpParser,hp,error) ||
+       !RunSection::General::SS::ResolveSSExecutionPlan(spParser,sp,error) ||
+       !RunSection::General::MultiSS::ResolveMultiSSExecutionPlan(mpParser,mp,error))
+        return false;
+
+    std::vector<RunSection::General::HS::HSOrientation> hs;
+    std::vector<RunSection::General::SS::SSOrientation> ss;
+    std::vector<RunSection::General::MultiSS::MultiSSOrientation> ms;
+    std::ostringstream log;
+    if(!RunSection::General::HS::HSOrientationSampler::Build(hp,hs,log,error) ||
+       !RunSection::General::SS::SSOrientationSampler::Build(sp,ss,log,error) ||
+       !RunSection::General::MultiSS::MultiSSOrientationSampler::Build(mp,ms,log,error) ||
+       hs.size()!=1 || ss.size()!=1 || ms.size()!=1)
+        return false;
+
+    return SameOrientation(hs[0],ss[0]) &&
+           SameOrientation(hs[0],ms[0]) &&
+           std::abs(hs[0].alpha-0.41)<1.0e-14 &&
+           std::abs(hs[0].beta-0.73)<1.0e-14 &&
+           std::abs(hs[0].gamma+0.19)<1.0e-14 &&
+           std::abs(hs[0].weight-0.37)<1.0e-14;
+}
+
 bool test_general_orientation_generated_weights_are_normalized()
 {
     std::vector<RunSection::General::HS::HSOrientation> hs;
@@ -123,5 +162,6 @@ void AddGeneralOrientationTests(std::vector<test_case>&cases)
     cases.push_back({"General orientation HS/SS/MultiSS 2D equivalence",test_general_orientation_hs_ss_multiss_2d_equivalence});
     cases.push_back({"General orientation HS/SS/MultiSS SO3 equivalence",test_general_orientation_hs_ss_multiss_so3_equivalence});
     cases.push_back({"General orientation explicit ZYZ equivalence",test_general_orientation_explicit_zyz_equivalence});
+    cases.push_back({"General orientation parser explicit ZYZ equivalence",test_general_orientation_parser_explicit_zyz_equivalence});
     cases.push_back({"General orientation generated grid normalization",test_general_orientation_generated_weights_are_normalized});
 }

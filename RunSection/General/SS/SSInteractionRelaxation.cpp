@@ -131,9 +131,18 @@ namespace RunSection::General::SS
             arma::cx_mat t00, t20, tm1, tp1, tm2, tp2;
             if (!spin2)
             {
-                const arma::cx_vec field = arma::conv_to<arma::cx_vec>::from(interaction->Field());
-                if (field.n_elem != 3)
+                const arma::vec fieldLab = interaction->Field();
+                if (fieldLab.n_elem != 3)
                     return Fail(error, "single-spin spherical relaxation requires a three-component field");
+                // `first` is expressed along the interaction-frame axes:
+                //     S_int = R^T S_lab.
+                // The spatial field components entering the same spherical
+                // tensor must be expressed in that same frame:
+                //     B_int = R^T B_lab.
+                // Rotating only S while leaving B in the lab frame violates
+                // even the rank-0 scalar-product invariant.
+                const arma::cx_vec field = arma::conv_to<arma::cx_vec>::from(
+                    interactionToLab.t() * fieldLab);
                 const auto &sx=first[0], &sy=first[1], &sz=first[2];
                 const arma::cx_mat scalar=sx*field(0)+sy*field(1)+sz*field(2);
                 t00=scalar/std::sqrt(3.0);

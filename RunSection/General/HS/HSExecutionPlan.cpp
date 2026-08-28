@@ -50,15 +50,17 @@ namespace RunSection::General::HS
 		}
 
 		bool ParseExplicitOrientation(const std::string &value,
-			double &theta, double &phi, double &weight)
+			double &alpha, double &beta, double &gamma, double &weight)
 		{
 			std::string normalized = value;
 			for (char &c : normalized)
 				if (c == ',' || c == '[' || c == ']' || c == '(' || c == ')') c = ' ';
 			std::istringstream stream(normalized);
-			if (!(stream >> theta >> phi)) return false;
+			if (!(stream >> alpha >> beta)) return false;
+			if (!(stream >> gamma)) gamma = 0.0;
 			if (!(stream >> weight)) weight = 1.0;
-			return std::isfinite(theta) && std::isfinite(phi) && std::isfinite(weight);
+			return std::isfinite(alpha) && std::isfinite(beta) &&
+				std::isfinite(gamma) && std::isfinite(weight);
 		}
 	}
 
@@ -104,7 +106,12 @@ namespace RunSection::General::HS
 		{
 			approximation = secular ? "secular" : "full";
 		}
-		if (OneOf(approximation, {"rwa", "rotatingwave", "rotating-wave", "highfield", "high-field"})) approximation = "secular";
+		if (OneOf(approximation, {"rwa", "rotatingwave", "rotating-wave"}))
+		{
+			error = "approximation=rwa is not a static Hamiltonian secular approximation; configure the oscillatory drive Interaction/Pulse explicitly and use approximation=full or secular/highfield";
+			return false;
+		}
+		if (OneOf(approximation, {"highfield", "high-field"})) approximation = "secular";
 		if (OneOf(approximation, {"nonsecular", "non-secular", "exact"})) approximation = "full";
 		if (approximation == "full") plan.approximation = SpinAPI::HamiltonianApproximation::Full;
 		else if (approximation == "secular") plan.approximation = SpinAPI::HamiltonianApproximation::Secular;
@@ -170,8 +177,9 @@ namespace RunSection::General::HS
 		}
 
 		properties.Get("powdergammapoints", plan.powderGammaPoints);
-		properties.Get("powdergamma", plan.powderGammaOffset);
-		properties.Get("powder_gamma", plan.powderGammaOffset);
+		const bool powderGammaSpecified =
+			properties.Get("powdergamma", plan.powderGammaOffset) ||
+			properties.Get("powder_gamma", plan.powderGammaOffset);
 		if (plan.powderGammaPoints < 1)
 		{
 			error = "powdergammapoints must be at least one";
@@ -183,10 +191,18 @@ namespace RunSection::General::HS
 		if (properties.Get("powderorientation", explicitOrientation) ||
 			properties.Get("powder_orientation", explicitOrientation))
 		{
-			if (!ParseExplicitOrientation(explicitOrientation, plan.explicitTheta,
-				plan.explicitPhi, plan.explicitWeight))
+			if (powderGammaSpecified)
 			{
-				error = "powderorientation must contain theta phi [weight]";
+				error = "canonical powderorientation already contains the ZYZ gamma angle; do not combine it with powdergamma";
+				return false;
+			}
+			// Internally HS stores the canonical ZYZ triplet as
+			// (powderGammaOffset, explicitTheta, explicitPhi). The shared
+			// orientation adapter maps these to (alpha,beta,gamma).
+			if (!ParseExplicitOrientation(explicitOrientation, plan.powderGammaOffset,
+				plan.explicitTheta, plan.explicitPhi, plan.explicitWeight))
+			{
+				error = "powderorientation must contain alpha beta [gamma [weight]]";
 				return false;
 			}
 			explicitOrientationSpecified = true;
