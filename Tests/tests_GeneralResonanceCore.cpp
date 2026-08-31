@@ -4016,6 +4016,278 @@ namespace
         return std::abs(a-b)<=tolerance*scale;
     }
 
+    bool GRC_R2JA_LineNear(
+        const RunSection::General::Resonance::
+            ResonanceLine &a,
+        const RunSection::General::Resonance::
+            ResonanceLine &b,
+        double tolerance)
+    {
+        const auto near=
+            [&](double x,double y)
+            {
+                const double scale=std::max({
+                    1.0,std::abs(x),std::abs(y)});
+                return std::abs(x-y)<=
+                    tolerance*scale;
+            };
+
+        if (a.lower!=b.lower ||
+            a.upper!=b.upper ||
+            !near(a.omega,b.omega) ||
+            !near(a.populationDifference,b.populationDifference) ||
+            !near(a.dOmegaDB,b.dOmegaDB) ||
+            !near(a.dBdOmega,b.dBdOmega) ||
+            !near(a.moment.x,b.moment.x) ||
+            !near(a.moment.y,b.moment.y) ||
+            !near(a.moment.perpendicular,b.moment.perpendicular) ||
+            !near(a.moment.crossX,b.moment.crossX) ||
+            !near(a.moment.crossY,b.moment.crossY) ||
+            a.moment.channels.size()!=b.moment.channels.size())
+            return false;
+
+        for (std::size_t k=0;k<a.moment.channels.size();++k)
+        {
+            const auto &x=a.moment.channels[k];
+            const auto &y=b.moment.channels[k];
+            if (!near(x.x,y.x) ||
+                !near(x.y,y.y) ||
+                !near(x.perpendicular,y.perpendicular) ||
+                !near(x.plus,y.plus) ||
+                !near(x.minus,y.minus))
+                return false;
+        }
+        return true;
+    }
+
+    bool GRC_TestR2JAExactEigensystemOverloadParity()
+    {
+        using namespace RunSection::General::Resonance;
+
+        arma::cx_mat H(3,3,arma::fill::zeros);
+        H(0,0)=-41.0;
+        H(1,1)=3.5;
+        H(2,2)=52.0;
+        H(0,1)=arma::cx_double(1.7,-0.8);
+        H(1,0)=std::conj(H(0,1));
+        H(1,2)=arma::cx_double(-2.1,0.6);
+        H(2,1)=std::conj(H(1,2));
+
+        arma::cx_mat rho(3,3,arma::fill::zeros);
+        rho(0,0)=0.72;
+        rho(1,1)=0.21;
+        rho(2,2)=0.07;
+
+        arma::cx_mat derivative(3,3,arma::fill::zeros);
+        derivative(0,0)=-88.0;
+        derivative(1,1)=4.0;
+        derivative(2,2)=93.0;
+        derivative(0,2)=arma::cx_double(0.5,0.2);
+        derivative(2,0)=std::conj(derivative(0,2));
+
+        ResonanceDetectionOperator c1,c2;
+        c1.x.zeros(3,3); c1.y.zeros(3,3);
+        c2.x.zeros(3,3); c2.y.zeros(3,3);
+        c1.x(0,1)=arma::cx_double(0.8,0.2);
+        c1.x(1,0)=std::conj(c1.x(0,1));
+        c1.y(0,1)=arma::cx_double(0.1,-0.3);
+        c1.y(1,0)=std::conj(c1.y(0,1));
+        c2.x(1,2)=arma::cx_double(-0.25,0.45);
+        c2.x(2,1)=std::conj(c2.x(1,2));
+        c2.y(1,2)=arma::cx_double(0.55,0.05);
+        c2.y(2,1)=std::conj(c2.y(1,2));
+
+        const arma::cx_mat muX=c1.x+c2.x;
+        const arma::cx_mat muY=c1.y+c2.y;
+
+        SpectrumRequest request;
+        request.microwaveFrequencyGHz=9.5;
+        request.linewidth_mT=0.2;
+        request.populationThreshold=1.0e-15;
+        request.minimumSlope=1.0e-15;
+
+        ResonanceLineSet matrixLines,eigenLines;
+        std::string error;
+
+        if (!ExactResonanceSolver::Generate(
+                arma::sp_cx_mat(H),rho,
+                arma::sp_cx_mat(derivative),
+                muX,muY,request,
+                matrixLines,error,{c1,c2}))
+            return false;
+
+        arma::vec energies;
+        arma::cx_mat eigenvectors;
+        if (!arma::eig_sym(energies,eigenvectors,H))
+            return false;
+
+        if (!ExactResonanceSolver::Generate(
+                energies,eigenvectors,rho,
+                arma::sp_cx_mat(derivative),
+                muX,muY,request,
+                eigenLines,error,{c1,c2}))
+            return false;
+
+        if (matrixLines.lines.size()!=eigenLines.lines.size())
+            return false;
+
+        for (std::size_t i=0;i<matrixLines.lines.size();++i)
+        {
+            if (!GRC_R2JA_LineNear(
+                    matrixLines.lines[i],
+                    eigenLines.lines[i],
+                    1.0e-13))
+                return false;
+        }
+
+        arma::cx_mat bad=eigenvectors;
+        bad.col(1)=bad.col(0);
+        ResonanceLineSet rejected;
+        if (ExactResonanceSolver::Generate(
+                energies,bad,rho,
+                arma::sp_cx_mat(derivative),
+                muX,muY,request,
+                rejected,error,{c1,c2}))
+            return false;
+
+        return error==
+            "resonance eigensystem eigenvectors are not orthonormal";
+    }
+
+    bool GRC_TestR2JAResolvedSpectrumPoint()
+    {
+        using namespace RunSection::General::Resonance;
+
+        SpectrumRequest request;
+        request.microwaveFrequencyGHz=9.5;
+        request.linewidth_mT=0.0;
+
+        const double omegaMw=
+            2.0*arma::datum::pi*request.microwaveFrequencyGHz;
+
+        ResonanceLineSet lines;
+        lines.fieldJacobianQualified=true;
+
+        for (int i=0;i<2;++i)
+        {
+            ResonanceLine line;
+            line.omega=omegaMw;
+            line.populationDifference=(i==0) ? 0.7 : -0.2;
+            line.dOmegaDB=100.0;
+            line.dBdOmega=(i==0) ? 0.01 : 0.02;
+            line.moment.x=(i==0) ? 4.0 : 1.5;
+            line.moment.y=(i==0) ? 3.0 : 2.0;
+            line.moment.perpendicular=
+                0.5*(line.moment.x+line.moment.y);
+            line.moment.crossX=(i==0) ? 0.6 : -0.1;
+            line.moment.crossY=(i==0) ? -0.2 : 0.4;
+
+            TransitionMomentChannel a,b;
+            a.x=1.0+i; a.y=0.5+i;
+            a.perpendicular=0.5*(a.x+a.y);
+            a.plus=1.7+i;
+            a.minus=0.3+i;
+            b.x=0.8+0.2*i; b.y=1.1+0.1*i;
+            b.perpendicular=0.5*(b.x+b.y);
+            b.plus=0.9+0.3*i;
+            b.minus=1.4+0.2*i;
+            line.moment.channels={a,b};
+            lines.lines.push_back(line);
+        }
+
+        SpectrumPoint spectrum;
+        std::string error;
+        if (!ResonanceSpectrumEvaluator::Evaluate(
+                lines,request,spectrum,error))
+            return false;
+
+        const double p0=0.7*0.01;
+        const double p1=-0.2*0.02;
+
+        const auto near=
+            [](double x,double y)
+            {
+                return std::abs(x-y)<=
+                    1.0e-14*std::max({
+                        1.0,std::abs(x),std::abs(y)});
+            };
+
+        if (spectrum.acceptedTransitions!=2 ||
+            spectrum.channels.size()!=2 ||
+            !near(spectrum.totalX,p0*4.0+p1*1.5) ||
+            !near(spectrum.totalY,p0*3.0+p1*2.0) ||
+            !near(spectrum.crossX,p0*0.6+p1*(-0.1)) ||
+            !near(spectrum.crossY,p0*(-0.2)+p1*0.4))
+            return false;
+
+        for (std::size_t k=0;k<2;++k)
+        {
+            const auto &c0=lines.lines[0].moment.channels[k];
+            const auto &c1=lines.lines[1].moment.channels[k];
+            const auto &out=spectrum.channels[k];
+
+            if (!near(out.x,p0*c0.x+p1*c1.x) ||
+                !near(out.y,p0*c0.y+p1*c1.y) ||
+                !near(out.perpendicular,
+                    p0*c0.perpendicular+p1*c1.perpendicular) ||
+                !near(out.plus,p0*c0.plus+p1*c1.plus) ||
+                !near(out.minus,p0*c0.minus+p1*c1.minus))
+                return false;
+        }
+
+        return true;
+    }
+
+    bool GRC_TestR2JAResolvedSpectrumCardinalityFailsClosed()
+    {
+        using namespace RunSection::General::Resonance;
+
+        SpectrumRequest request;
+        request.microwaveFrequencyGHz=9.5;
+        request.linewidth_mT=0.1;
+
+        const double omega=
+            2.0*arma::datum::pi*request.microwaveFrequencyGHz;
+
+        ResonanceLine a,b;
+        for (auto *line:{&a,&b})
+        {
+            line->omega=omega;
+            line->populationDifference=1.0;
+            line->dOmegaDB=100.0;
+            line->dBdOmega=0.01;
+            line->moment.x=1.0;
+            line->moment.y=1.0;
+            line->moment.perpendicular=1.0;
+        }
+
+        TransitionMomentChannel channel;
+        channel.x=1.0;
+        channel.y=1.0;
+        channel.perpendicular=1.0;
+        channel.plus=2.0;
+        channel.minus=0.0;
+
+        a.moment.channels={channel};
+        b.moment.channels={channel,channel};
+
+        ResonanceLineSet lines;
+        lines.fieldJacobianQualified=true;
+        lines.lines={a,b};
+
+        SpectrumPoint spectrum;
+        std::string error;
+        if (ResonanceSpectrumEvaluator::Evaluate(
+                lines,request,spectrum,error))
+            return false;
+
+        return
+            error==
+                "resonance line set mixes resolved detection-channel cardinalities" &&
+            spectrum.channels.empty() &&
+            spectrum.acceptedTransitions==0;
+    }
+
     bool GRC_TestR2IBuilderResolvedChannelSum()
     {
         using namespace RunSection::General::Resonance;
@@ -6004,6 +6276,9 @@ void AddGeneralResonanceCoreTests(std::vector<test_case> &cases)
     cases.push_back(test_case("General resonance core field Jacobian and transition detection",GRC_TestFieldJacobianAndDetector));
     cases.push_back(test_case("General resonance core resolves degenerate field slopes",GRC_TestDegenerateFieldJacobian));
     cases.push_back(test_case("General resonance Hamiltonian adapter preserves full/secular distinction",GRC_TestHamiltonianAdapterPreservesApproximation));
+    cases.push_back(test_case("General resonance R2J-A exact eigensystem overload parity",GRC_TestR2JAExactEigensystemOverloadParity));
+    cases.push_back(test_case("General resonance R2J-A resolved spectrum-point aggregation",GRC_TestR2JAResolvedSpectrumPoint));
+    cases.push_back(test_case("General resonance R2J-A mixed resolved-channel cardinality fails closed",GRC_TestR2JAResolvedSpectrumCardinalityFailsClosed));
     cases.push_back(test_case("General resonance R2I resolved detection builder sum contract",GRC_TestR2IBuilderResolvedChannelSum));
     cases.push_back(test_case("General resonance R2I transition-moment channel decomposition",GRC_TestR2ITransitionMomentDecomposition));
     cases.push_back(test_case("General resonance R2I exact resolved-line total parity",GRC_TestR2IExactResolvedLineParity));

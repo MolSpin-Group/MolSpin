@@ -111,6 +111,12 @@ namespace RunSection::General::Resonance
         double totalX = 0.0;
         double totalY = 0.0;
         double totalPerpendicular = 0.0;
+        double crossX = 0.0;
+        double crossY = 0.0;
+
+        // Ordered exactly as ResonanceLine::moment.channels.
+        std::vector<TransitionMomentChannel> channels;
+
         std::size_t acceptedTransitions = 0;
     };
 }
