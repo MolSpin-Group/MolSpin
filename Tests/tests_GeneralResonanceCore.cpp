@@ -8,6 +8,7 @@
 #include "GeneralResonanceHamiltonian.h"
 #include "ExactResonanceSolver.h"
 #include "HybridNuclearResonanceSolver.h"
+#include "HybridNuclearResonancePreparation.h"
 #include "ResonanceFieldJacobian.h"
 #include "ResonanceLineshape.h"
 #include "ResonanceMagneticMomentBuilder.h"
@@ -2707,6 +2708,415 @@ namespace
         return ratio>2.8 && ratio<5.5;
     }
 
+    bool GRC_HybridPointNear(
+        const RunSection::General::Resonance::OneNucleusHybridPoint &a,
+        const RunSection::General::Resonance::OneNucleusHybridPoint &b,
+        double tolerance)
+    {
+        const auto sparseNear=
+            [&](const arma::sp_cx_mat &x,
+                const arma::sp_cx_mat &y)
+            {
+                if (x.n_rows!=y.n_rows ||
+                    x.n_cols!=y.n_cols)
+                    return false;
+                const arma::cx_mat xd(x),yd(y);
+                const double scale=std::max({
+                    1.0,
+                    arma::norm(xd,"fro"),
+                    arma::norm(yd,"fro")
+                });
+                return arma::norm(xd-yd,"fro") <=
+                    tolerance*scale;
+            };
+        const auto denseNear=
+            [&](const arma::cx_mat &x,
+                const arma::cx_mat &y)
+            {
+                if (x.n_rows!=y.n_rows ||
+                    x.n_cols!=y.n_cols)
+                    return false;
+                const double scale=std::max({
+                    1.0,
+                    arma::norm(x,"fro"),
+                    arma::norm(y,"fro")
+                });
+                return arma::norm(x-y,"fro") <=
+                    tolerance*scale;
+            };
+
+        return
+            sparseNear(
+                a.coreHamiltonian,b.coreHamiltonian) &&
+            denseNear(
+                a.coreDensity,b.coreDensity) &&
+            sparseNear(
+                a.coreDHdB,b.coreDHdB) &&
+            denseNear(
+                a.coreMuX,b.coreMuX) &&
+            denseNear(
+                a.coreMuY,b.coreMuY) &&
+            denseNear(
+                a.hybrid.hyperfineCoreNuclear,
+                b.hybrid.hyperfineCoreNuclear) &&
+            denseNear(
+                a.hybrid.nuclearHamiltonian,
+                b.hybrid.nuclearHamiltonian) &&
+            sparseNear(
+                a.hybrid.nuclearDHdB,
+                b.hybrid.nuclearDHdB) &&
+            a.hybrid.nuclearDimension ==
+                b.hybrid.nuclearDimension &&
+            std::abs(
+                a.hybrid.overlapThreshold-
+                b.hybrid.overlapThreshold) <=
+                tolerance &&
+            a.hybrid.fieldIndependentProjection ==
+                b.hybrid.fieldIndependentProjection;
+    }
+
+    bool GRC_BuildZfsPreparedPoint(
+        const GRC_ZfsHybridModel &model,
+        const RunSection::General::HS::HSOrientation &orientation,
+        double hyperfineScale,double fieldT,
+        RunSection::General::Resonance::OneNucleusHybridPoint &point,
+        std::string &error)
+    {
+        using namespace RunSection::General::Resonance;
+
+        auto system=
+            GRC_BuildZfsHybridSystem(
+                model,fieldT,hyperfineScale);
+        if (system==nullptr)
+        {
+            error =
+                "failed to build R2E-B ZFS system";
+            return false;
+        }
+
+        auto electron=system->spins_find("E");
+        auto nucleus=system->spins_find("V");
+        auto b0=system->interactions_find("B0");
+        auto zfs=system->interactions_find("ZFS");
+        auto hfc=system->interactions_find("A");
+        auto nz=system->interactions_find("NZ");
+        auto up=system->states_find("Up");
+
+        OneNucleusHybridPartition partition;
+        partition.system=system;
+        partition.exactCoreSpins={electron};
+        partition.exactCoreInteractions={b0,zfs};
+        partition.exactCoreFieldInteractions={b0};
+        partition.detectionTerms={{electron,b0}};
+        partition.perturbativeNucleus=nucleus;
+        partition.perturbativeHyperfine=hfc;
+        partition.perturbativeNuclearInteractions={nz};
+        partition.perturbativeNuclearFieldInteractions={nz};
+        partition.exactCoreState=up;
+        partition.fullTensorRotation=true;
+        partition.overlapThreshold=1.0e-14;
+        partition.fieldIndependentProjection=false;
+
+        return HybridNuclearResonancePreparation::BuildPoint(
+            partition,orientation,fieldT,point,error);
+    }
+
+    bool GRC_BuildExactCorePreparedPoint(
+        const GRC_ExactCorePromotionModel &model,
+        const RunSection::General::HS::HSOrientation &orientation,
+        double perturbativeScale,double fieldT,
+        bool swapCoreOrder,
+        RunSection::General::Resonance::OneNucleusHybridPoint &point,
+        std::string &error)
+    {
+        using namespace RunSection::General::Resonance;
+
+        auto system=
+            GRC_BuildExactCorePromotionSystem(
+                model,fieldT,perturbativeScale);
+        if (system==nullptr)
+        {
+            error =
+                "failed to build R2E-B exact-core system";
+            return false;
+        }
+
+        auto electron=system->spins_find("E");
+        auto exactNucleus=system->spins_find("Vexact");
+        auto perturbativeNucleus=system->spins_find("Vpert");
+        auto b0=system->interactions_find("B0");
+        auto aExact=system->interactions_find("Aexact");
+        auto aPert=system->interactions_find("Apert");
+        auto nzExact=system->interactions_find("NZexact");
+        auto nzPert=system->interactions_find("NZpert");
+        auto up=system->states_find("Up");
+
+        OneNucleusHybridPartition partition;
+        partition.system=system;
+        partition.exactCoreSpins=swapCoreOrder
+            ? std::vector<SpinAPI::spin_ptr>{
+                exactNucleus,electron}
+            : std::vector<SpinAPI::spin_ptr>{
+                electron,exactNucleus};
+        partition.exactCoreInteractions={
+            b0,aExact,nzExact};
+        partition.exactCoreFieldInteractions={
+            b0,nzExact};
+        partition.detectionTerms={{electron,b0}};
+        partition.perturbativeNucleus=
+            perturbativeNucleus;
+        partition.perturbativeHyperfine=aPert;
+        partition.perturbativeNuclearInteractions={
+            nzPert};
+        partition.perturbativeNuclearFieldInteractions={
+            nzPert};
+        partition.exactCoreState=up;
+        partition.fullTensorRotation=true;
+        partition.overlapThreshold=1.0e-14;
+        partition.fieldIndependentProjection=false;
+
+        return HybridNuclearResonancePreparation::BuildPoint(
+            partition,orientation,fieldT,point,error);
+    }
+
+    bool GRC_TestHybridPreparationZfsPointParity()
+    {
+        GRC_ZfsHybridModel model;
+        const auto orientation=
+            GRC_Orientation(0.29,0.77,-0.41);
+        const double frequency=9.5;
+        const double fieldT=
+            2.0*arma::datum::pi*frequency/
+            (GRC_MU_B_OVER_HBAR*model.gz);
+
+        RunSection::General::Resonance::
+            OneNucleusHybridPoint manual,prepared;
+        std::string error;
+
+        if (!GRC_BuildZfsHybridPoint(
+                model,orientation,0.57,fieldT,
+                manual,error) ||
+            !GRC_BuildZfsPreparedPoint(
+                model,orientation,0.57,fieldT,
+                prepared,error))
+            return false;
+
+        return GRC_HybridPointNear(
+            manual,prepared,1.0e-13);
+    }
+
+    bool GRC_TestHybridPreparationExactCorePointParity()
+    {
+        GRC_ExactCorePromotionModel model;
+        const auto orientation=
+            GRC_Orientation(-0.26,0.72,0.37);
+        const double frequency=9.5;
+        const double fieldT=
+            2.0*arma::datum::pi*frequency/
+            (GRC_MU_B_OVER_HBAR*model.gz);
+
+        for (const bool swap:{false,true})
+        {
+            RunSection::General::Resonance::
+                OneNucleusHybridPoint manual,prepared;
+            std::string error;
+
+            if (!GRC_BuildExactCorePromotionPoint(
+                    model,orientation,0.47,fieldT,
+                    swap,manual,error) ||
+                !GRC_BuildExactCorePreparedPoint(
+                    model,orientation,0.47,fieldT,
+                    swap,prepared,error))
+                return false;
+
+            if (!GRC_HybridPointNear(
+                    manual,prepared,1.0e-13))
+                return false;
+        }
+
+        return true;
+    }
+
+    bool GRC_LineSetsNear(
+        const RunSection::General::Resonance::ResonanceLineSet &a,
+        const RunSection::General::Resonance::ResonanceLineSet &b,
+        double tolerance)
+    {
+        if (a.fieldJacobianQualified !=
+                b.fieldJacobianQualified ||
+            a.lines.size()!=b.lines.size())
+            return false;
+
+        for (std::size_t i=0;i<a.lines.size();++i)
+        {
+            const auto &x=a.lines[i];
+            const auto &y=b.lines[i];
+
+            if (x.lower!=y.lower ||
+                x.upper!=y.upper)
+                return false;
+
+            const double scale=std::max({
+                1.0,
+                std::abs(x.omega),std::abs(y.omega),
+                std::abs(x.dOmegaDB),std::abs(y.dOmegaDB),
+                std::abs(x.moment.perpendicular),
+                std::abs(y.moment.perpendicular)
+            });
+
+            if (std::abs(x.omega-y.omega)>tolerance*scale ||
+                std::abs(
+                    x.populationDifference-
+                    y.populationDifference)>tolerance*scale ||
+                std::abs(
+                    x.dOmegaDB-y.dOmegaDB)>tolerance*scale ||
+                std::abs(
+                    x.dBdOmega-y.dBdOmega)>tolerance*scale ||
+                std::abs(
+                    x.moment.x-y.moment.x)>tolerance*scale ||
+                std::abs(
+                    x.moment.y-y.moment.y)>tolerance*scale ||
+                std::abs(
+                    x.moment.perpendicular-
+                    y.moment.perpendicular)>tolerance*scale)
+                return false;
+        }
+
+        return true;
+    }
+
+    bool GRC_TestHybridPreparationFieldResponseParity()
+    {
+        using namespace RunSection::General::Resonance;
+
+        GRC_ZfsHybridModel model;
+        const auto orientation=
+            GRC_Orientation(0.33,0.75,-0.29);
+        const double frequency=9.5;
+        const double fieldT=
+            2.0*arma::datum::pi*frequency/
+            (GRC_MU_B_OVER_HBAR*model.gz);
+
+        ResonanceLineSet manual,prepared;
+        if (!GRC_BuildZfsHybridFiniteDifference(
+                model,orientation,0.54,
+                fieldT,frequency,1.0e-4,manual))
+            return false;
+
+        OneNucleusHybridPointProvider provider=
+            [&](double field,
+                OneNucleusHybridPoint &point,
+                std::string &error)
+            {
+                return GRC_BuildZfsPreparedPoint(
+                    model,orientation,0.54,
+                    field,point,error);
+            };
+
+        OneNucleusHybridFieldResponseRequest response;
+        response.fieldT=fieldT;
+        response.fieldStepT=1.0e-4;
+        response.minimumCoreStateOverlap=0.85;
+        response.minimumNuclearStateOverlap=0.85;
+        response.jacobianRelativeTolerance=5.0e-4;
+        response.jacobianAbsoluteTolerance=2.0e-4;
+
+        SpectrumRequest request;
+        request.microwaveFrequencyGHz=frequency;
+        request.linewidth_mT=0.10;
+        request.populationThreshold=1.0e-15;
+        request.minimumSlope=1.0e-15;
+
+        std::string error;
+        if (!HybridNuclearResonanceSolver::
+                GenerateFirstOrderFiniteDifference(
+                    provider,response,request,
+                    prepared,error))
+            return false;
+
+        return GRC_LineSetsNear(
+            manual,prepared,1.0e-12);
+    }
+
+    bool GRC_TestHybridPreparationFailsClosed()
+    {
+        using namespace RunSection::General::Resonance;
+
+        GRC_ZfsHybridModel model;
+        const auto orientation=
+            GRC_Orientation(-0.21,0.69,0.31);
+        const double frequency=9.5;
+        const double fieldT=
+            2.0*arma::datum::pi*frequency/
+            (GRC_MU_B_OVER_HBAR*model.gz);
+
+        auto system=
+            GRC_BuildZfsHybridSystem(
+                model,fieldT,0.50);
+        if (system==nullptr)
+            return false;
+
+        auto electron=system->spins_find("E");
+        auto nucleus=system->spins_find("V");
+        auto b0=system->interactions_find("B0");
+        auto zfs=system->interactions_find("ZFS");
+        auto hfc=system->interactions_find("A");
+        auto nz=system->interactions_find("NZ");
+        auto up=system->states_find("Up");
+
+        OneNucleusHybridPartition valid;
+        valid.system=system;
+        valid.exactCoreSpins={electron};
+        valid.exactCoreInteractions={b0,zfs};
+        valid.exactCoreFieldInteractions={b0};
+        valid.detectionTerms={{electron,b0}};
+        valid.perturbativeNucleus=nucleus;
+        valid.perturbativeHyperfine=hfc;
+        valid.perturbativeNuclearInteractions={nz};
+        valid.perturbativeNuclearFieldInteractions={nz};
+        valid.exactCoreState=up;
+
+        OneNucleusHybridPoint point;
+        std::string error;
+
+        auto duplicateSpin=valid;
+        duplicateSpin.exactCoreSpins.push_back(nucleus);
+        if (HybridNuclearResonancePreparation::BuildPoint(
+                duplicateSpin,orientation,fieldT,
+                point,error) ||
+            error !=
+                "hybrid partition perturbative nucleus must not be part of the exact core")
+            return false;
+
+        auto unowned=valid;
+        unowned.perturbativeNuclearInteractions.clear();
+        unowned.perturbativeNuclearFieldInteractions.clear();
+        if (HybridNuclearResonancePreparation::BuildPoint(
+                unowned,orientation,fieldT,
+                point,error) ||
+            error !=
+                "hybrid partition must own every SpinSystem interaction exactly once")
+            return false;
+
+        auto polarized=std::make_shared<SpinAPI::State>(
+            "Polarized",
+            "spin(E)=|1/2>;spin(V)=|7/2>;");
+        if (!system->Add(polarized) ||
+            !polarized->ParseFromSystem(*system))
+            return false;
+
+        auto polarizedPartition=valid;
+        polarizedPartition.exactCoreState=polarized;
+        if (HybridNuclearResonancePreparation::BuildPoint(
+                polarizedPartition,orientation,fieldT,
+                point,error) ||
+            error !=
+                "hybrid perturbative nucleus reference state must be unpolarized and unspecified")
+            return false;
+
+        return true;
+    }
+
     bool GRC_TestMagneticMomentBuilderMatchesSpinAPIZeemanAxes()
     {
         using namespace RunSection::General::Resonance;
@@ -3029,6 +3439,10 @@ void AddGeneralResonanceCoreTests(std::vector<test_case> &cases)
     cases.push_back(test_case("General resonance core field Jacobian and transition detection",GRC_TestFieldJacobianAndDetector));
     cases.push_back(test_case("General resonance core resolves degenerate field slopes",GRC_TestDegenerateFieldJacobian));
     cases.push_back(test_case("General resonance Hamiltonian adapter preserves full/secular distinction",GRC_TestHamiltonianAdapterPreservesApproximation));
+    cases.push_back(test_case("General resonance R2E-B ZFS hybrid partition point parity",GRC_TestHybridPreparationZfsPointParity));
+    cases.push_back(test_case("General resonance R2E-B promoted exact-core partition point parity",GRC_TestHybridPreparationExactCorePointParity));
+    cases.push_back(test_case("General resonance R2E-B partition finite-difference solver parity",GRC_TestHybridPreparationFieldResponseParity));
+    cases.push_back(test_case("General resonance R2E-B partition ownership fails closed",GRC_TestHybridPreparationFailsClosed));
     cases.push_back(test_case("General resonance magnetic moment matches oriented SpinAPI Zeeman x/y derivatives",GRC_TestMagneticMomentBuilderMatchesSpinAPIZeemanAxes));
     cases.push_back(test_case("General resonance magnetic moment orientation contract",GRC_TestMagneticMomentBuilderOrientationContract));
     cases.push_back(test_case("General resonance magnetic moment ownership fails closed",GRC_TestMagneticMomentBuilderFailsClosedOnOwnership));
