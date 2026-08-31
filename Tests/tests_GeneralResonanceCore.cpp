@@ -17,6 +17,7 @@
 #include "ResonanceTransitionMoments.h"
 #include "HSHamiltonianBuilder.h"
 #include "Interaction.h"
+#include "NuclearZeeman.h"
 #include "ObjectParser.h"
 #include "RunSection.h"
 #include "Spin.h"
@@ -2708,6 +2709,309 @@ namespace
         return ratio>2.8 && ratio<5.5;
     }
 
+    bool GRC_TestNuclearZeemanV51Constants()
+    {
+        SpinAPI::NuclearIsotopeData a,b,c;
+        std::string error;
+
+        if (!SpinAPI::NuclearIsotopeRegistry::Lookup(
+                "51V",a,error) ||
+            !SpinAPI::NuclearIsotopeRegistry::Lookup(
+                "V-51",b,error) ||
+            !SpinAPI::NuclearIsotopeRegistry::Lookup(
+                "^51v",c,error))
+            return false;
+
+        const double expectedG=
+            1.4710587714285714;
+        const double expectedGamma=
+            0.07045513257526152;
+
+        return
+            a.canonicalName=="51V" &&
+            a.elementSymbol=="V" &&
+            a.massNumber==51 &&
+            a.twoI==7 &&
+            std::abs(
+                a.magneticMomentNuclearMagnetons-
+                5.1487057)<1.0e-13 &&
+            b.canonicalName==a.canonicalName &&
+            c.canonicalName==a.canonicalName &&
+            std::abs(
+                SpinAPI::NuclearZeeman::NuclearG(a)-
+                expectedG)<1.0e-13 &&
+            std::abs(
+                SpinAPI::NuclearZeeman::
+                    GyromagneticMagnitudeRadNsPerT(a)-
+                expectedGamma)<1.0e-13 &&
+            std::abs(
+                SpinAPI::NuclearZeeman::
+                    HamiltonianPrefactorRadNsPerT(a)+
+                expectedGamma)<1.0e-13;
+    }
+
+    bool GRC_TestNuclearZeemanSignedHamiltonian()
+    {
+        auto nucleus=
+            std::make_shared<SpinAPI::Spin>(
+                "V",
+                "type=nucleus;spin=7/2;"
+                "isotope=51V;"
+                "tensor=isotropic(1.0);");
+
+        arma::vec field(3,arma::fill::zeros);
+        field(2)=1.0;
+
+        SpinAPI::interaction_ptr interaction;
+        std::string error;
+        if (!SpinAPI::NuclearZeeman::CreateInteraction(
+                "NZ",nucleus,field,
+                interaction,error))
+            return false;
+
+        // NuclearZeeman::CreateInteraction follows the normal SpinAPI
+        // lifecycle and returns an unbound Interaction.  Bind it exactly once
+        // through SpinSystem::ValidateInteractions before operator use.
+        if (!interaction->Group1().empty() ||
+            !interaction->Group2().empty())
+            return false;
+
+        auto system=
+            std::make_shared<SpinAPI::SpinSystem>(
+                "NuclearZeemanSigned");
+        system->Add(nucleus);
+        system->Add(interaction);
+        if (!system->ValidateInteractions().empty() ||
+            !SpinAPI::NuclearZeeman::ValidateInteraction(
+                nucleus,interaction,error))
+            return false;
+
+        if (interaction->AddCommonPrefactor() ||
+            !interaction->IgnoreTensors() ||
+            !(interaction->Prefactor()<0.0))
+            return false;
+
+        SpinAPI::SpinSpace space(nucleus);
+        space.UseSuperoperatorSpace(false);
+
+        arma::cx_mat h;
+        if (!space.InteractionOperator(
+                interaction,h))
+            return false;
+
+        const arma::cx_mat iz=
+            arma::conv_to<arma::cx_mat>::from(
+                nucleus->Sz());
+        const arma::cx_mat expected=
+            interaction->Prefactor()*iz;
+        const double scale=std::max(
+            1.0,arma::norm(expected,"fro"));
+
+        return
+            arma::norm(h-expected,"fro") <=
+                1.0e-13*scale;
+    }
+
+    bool GRC_TestNuclearZeemanFailsClosed()
+    {
+        std::string error;
+        SpinAPI::interaction_ptr interaction;
+
+        auto noIsotope=
+            std::make_shared<SpinAPI::Spin>(
+                "V0",
+                "type=nucleus;spin=7/2;"
+                "tensor=isotropic(1.0);");
+        arma::vec field(3,arma::fill::zeros);
+        field(2)=1.0;
+
+        if (SpinAPI::NuclearZeeman::CreateInteraction(
+                "NZ0",noIsotope,field,
+                interaction,error) ||
+            error !=
+                "nuclear spin requires an explicit isotope property")
+            return false;
+
+        auto wrongSpin=
+            std::make_shared<SpinAPI::Spin>(
+                "Vwrong",
+                "type=nucleus;spin=1/2;"
+                "isotope=51V;"
+                "tensor=isotropic(1.0);");
+        if (SpinAPI::NuclearZeeman::CreateInteraction(
+                "NZwrong",wrongSpin,field,
+                interaction,error) ||
+            error !=
+                "nuclear isotope spin quantum number does not match Spin object")
+            return false;
+
+        auto nucleus=
+            std::make_shared<SpinAPI::Spin>(
+                "V",
+                "type=nucleus;spin=7/2;"
+                "isotope=51V;"
+                "tensor=isotropic(1.0);");
+
+        auto common=
+            std::make_shared<SpinAPI::Interaction>(
+                "NZcommon",
+                "type=zeeman;spins=V;field=0 0 1;"
+                "ignoretensors=true;"
+                "commonprefactor=true;"
+                "prefactor=1.0;");
+        if (!common->ParseSpinGroups(
+                std::vector<SpinAPI::spin_ptr>{nucleus}))
+            return false;
+
+        if (SpinAPI::NuclearZeeman::ValidateInteraction(
+                nucleus,common,error) ||
+            error !=
+                "isotope-aware nuclear Zeeman must set commonprefactor=false")
+            return false;
+
+        auto wrongSign=
+            std::make_shared<SpinAPI::Interaction>(
+                "NZwrongSign",
+                "type=zeeman;spins=V;field=0 0 1;"
+                "ignoretensors=true;"
+                "commonprefactor=false;"
+                "prefactor=0.07045513257526152;");
+        if (!wrongSign->ParseSpinGroups(
+                std::vector<SpinAPI::spin_ptr>{nucleus}))
+            return false;
+
+        if (SpinAPI::NuclearZeeman::ValidateInteraction(
+                nucleus,wrongSign,error) ||
+            error !=
+                "isotope-aware nuclear Zeeman prefactor does not match -g_N mu_N/hbar")
+            return false;
+
+        SpinAPI::NuclearIsotopeData unsupported;
+        if (SpinAPI::NuclearIsotopeRegistry::Lookup(
+                "50V",unsupported,error) ||
+            error !=
+                "unsupported nuclear isotope; authenticated registry currently contains only 51V")
+            return false;
+
+        return true;
+    }
+
+    bool GRC_TestNuclearZeemanHybridPreparation()
+    {
+        using namespace RunSection::General::Resonance;
+
+        auto electron=
+            std::make_shared<SpinAPI::Spin>(
+                "E",
+                "type=electron;spin=1/2;"
+                "tensor=isotropic(2.0023);");
+        auto nucleus=
+            std::make_shared<SpinAPI::Spin>(
+                "V",
+                "type=nucleus;spin=7/2;"
+                "isotope=51V;"
+                "tensor=isotropic(1.0);");
+
+        const double fieldT=0.34;
+
+        auto b0=
+            std::make_shared<SpinAPI::Interaction>(
+                "B0",
+                "type=zeeman;spins=E;"
+                "field=0 0 0.34;"
+                "ignoretensors=false;"
+                "commonprefactor=true;"
+                "prefactor=1.0;");
+        auto hfc=
+            std::make_shared<SpinAPI::Interaction>(
+                "A",
+                "type=hyperfine;"
+                "group1=E;group2=V;"
+                "tensor=isotropic(0.005);"
+                "commonprefactor=false;"
+                "prefactor=1.0;");
+
+        arma::vec nuclearField(
+            3,arma::fill::zeros);
+        nuclearField(2)=fieldT;
+
+        SpinAPI::interaction_ptr nz;
+        std::string error;
+        if (!SpinAPI::NuclearZeeman::CreateInteraction(
+                "NZ",nucleus,nuclearField,
+                nz,error))
+            return false;
+
+        auto up=
+            std::make_shared<SpinAPI::State>(
+                "Up","spin(E)=|1/2>;");
+
+        auto system=
+            std::make_shared<SpinAPI::SpinSystem>(
+                "PhysicalV51");
+        system->Add(electron);
+        system->Add(nucleus);
+        system->Add(b0);
+        system->Add(hfc);
+        system->Add(nz);
+        system->Add(up);
+
+        if (!system->ValidateInteractions().empty() ||
+            !up->ParseFromSystem(*system) ||
+            !SpinAPI::NuclearZeeman::
+                ValidateInteraction(
+                    nucleus,nz,error))
+            return false;
+
+        OneNucleusHybridPartition partition;
+        partition.system=system;
+        partition.exactCoreSpins={electron};
+        partition.exactCoreInteractions={b0};
+        partition.exactCoreFieldInteractions={b0};
+        partition.detectionTerms={{electron,b0}};
+        partition.perturbativeNucleus=nucleus;
+        partition.perturbativeHyperfine=hfc;
+        partition.perturbativeNuclearInteractions={nz};
+        partition.perturbativeNuclearFieldInteractions={nz};
+        partition.exactCoreState=up;
+
+        OneNucleusHybridPoint point;
+        if (!HybridNuclearResonancePreparation::
+                BuildPoint(
+                    partition,
+                    GRC_IdentityOrientation(),
+                    fieldT,point,error))
+            return false;
+
+        const arma::cx_mat iz=
+            arma::conv_to<arma::cx_mat>::from(
+                nucleus->Sz());
+        const arma::cx_mat expectedDerivative=
+            nz->Prefactor()*iz;
+        const arma::cx_mat actualDerivative(
+            point.hybrid.nuclearDHdB);
+        const arma::cx_mat expectedHamiltonian=
+            fieldT*expectedDerivative;
+
+        const double scale=std::max({
+            1.0,
+            arma::norm(expectedDerivative,"fro"),
+            arma::norm(expectedHamiltonian,"fro")
+        });
+
+        return
+            point.hybrid.nuclearDimension==8 &&
+            nz->Prefactor()<0.0 &&
+            arma::norm(
+                actualDerivative-
+                expectedDerivative,"fro") <=
+                1.0e-13*scale &&
+            arma::norm(
+                point.hybrid.nuclearHamiltonian-
+                expectedHamiltonian,"fro") <=
+                1.0e-13*scale;
+    }
+
     bool GRC_HybridPointNear(
         const RunSection::General::Resonance::OneNucleusHybridPoint &a,
         const RunSection::General::Resonance::OneNucleusHybridPoint &b,
@@ -3439,6 +3743,10 @@ void AddGeneralResonanceCoreTests(std::vector<test_case> &cases)
     cases.push_back(test_case("General resonance core field Jacobian and transition detection",GRC_TestFieldJacobianAndDetector));
     cases.push_back(test_case("General resonance core resolves degenerate field slopes",GRC_TestDegenerateFieldJacobian));
     cases.push_back(test_case("General resonance Hamiltonian adapter preserves full/secular distinction",GRC_TestHamiltonianAdapterPreservesApproximation));
+    cases.push_back(test_case("General resonance R2F 51V isotope registry and bare nuclear gamma",GRC_TestNuclearZeemanV51Constants));
+    cases.push_back(test_case("General resonance R2F isotope-aware nuclear Zeeman signed Hamiltonian",GRC_TestNuclearZeemanSignedHamiltonian));
+    cases.push_back(test_case("General resonance R2F isotope-aware nuclear Zeeman fails closed",GRC_TestNuclearZeemanFailsClosed));
+    cases.push_back(test_case("General resonance R2F physical 51V nuclear Zeeman hybrid preparation",GRC_TestNuclearZeemanHybridPreparation));
     cases.push_back(test_case("General resonance R2E-B ZFS hybrid partition point parity",GRC_TestHybridPreparationZfsPointParity));
     cases.push_back(test_case("General resonance R2E-B promoted exact-core partition point parity",GRC_TestHybridPreparationExactCorePointParity));
     cases.push_back(test_case("General resonance R2E-B partition finite-difference solver parity",GRC_TestHybridPreparationFieldResponseParity));
