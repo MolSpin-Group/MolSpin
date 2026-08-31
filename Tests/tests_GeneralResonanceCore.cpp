@@ -10,6 +10,7 @@
 #include "HybridNuclearResonanceSolver.h"
 #include "ResonanceFieldJacobian.h"
 #include "ResonanceLineshape.h"
+#include "ResonanceMagneticMomentBuilder.h"
 #include "ResonanceSpectrumEvaluator.h"
 #include "ResonanceTransitionDetector.h"
 #include "ResonanceTransitionMoments.h"
@@ -114,28 +115,36 @@ namespace
         return rho.is_finite();
     }
 
-    bool GRC_TransverseOperators(const SpinAPI::system_ptr &system, SpinAPI::SpinSpace &space,
-                                 arma::cx_mat &muX, arma::cx_mat &muY)
+    bool GRC_TransverseOperators(
+        const SpinAPI::system_ptr &system,
+        SpinAPI::SpinSpace &space,
+        const RunSection::General::HS::HSOrientation &orientation,
+        arma::cx_mat &muX,arma::cx_mat &muY)
     {
+        using namespace RunSection::General::Resonance;
+
         auto spin = system->spins_find("E");
         auto zeeman = system->interactions_find("B0");
-        if (spin == nullptr || zeeman == nullptr) return false;
-
-        arma::cx_mat Sx, Sy, Sz;
-        if (!space.CreateOperator(arma::conv_to<arma::cx_mat>::from(spin->Sx()), spin, Sx) ||
-            !space.CreateOperator(arma::conv_to<arma::cx_mat>::from(spin->Sy()), spin, Sy) ||
-            !space.CreateOperator(arma::conv_to<arma::cx_mat>::from(spin->Sz()), spin, Sz))
+        if (spin == nullptr || zeeman == nullptr)
             return false;
 
-        arma::mat g = zeeman->IgnoreTensors()
-            ? arma::eye<arma::mat>(3,3)
-            : arma::conv_to<arma::mat>::from(spin->GetTensor().LabFrame());
-        double prefactor = zeeman->Prefactor();
-        if (zeeman->AddCommonPrefactor()) prefactor *= GRC_MU_B_OVER_HBAR;
+        std::string error;
+        return ResonanceMagneticMomentBuilder::BuildTransverse(
+            space,
+            {{spin,zeeman}},
+            orientation.frameToLab,
+            true,
+            muX,muY,error);
+    }
 
-        muX = prefactor * (g(0,0)*Sx + g(1,0)*Sy + g(2,0)*Sz);
-        muY = prefactor * (g(0,1)*Sx + g(1,1)*Sy + g(2,1)*Sz);
-        return muX.is_finite() && muY.is_finite();
+    bool GRC_TransverseOperators(
+        const SpinAPI::system_ptr &system,
+        SpinAPI::SpinSpace &space,
+        arma::cx_mat &muX,arma::cx_mat &muY)
+    {
+        return GRC_TransverseOperators(
+            system,space,GRC_IdentityOrientation(),
+            muX,muY);
     }
 
     bool GRC_ParseLegacyColumns(const std::string &data, std::vector<double> &fields,
@@ -239,7 +248,8 @@ namespace
             if (!hbuilder.BuildFieldDerivative(orientation, {"B0"}, fieldT, dHdB, error)) return false;
 
             arma::cx_mat rho, muX, muY;
-            if (!GRC_Density(system, space, rho) || !GRC_TransverseOperators(system, space, muX, muY))
+            if (!GRC_Density(system, space, rho) || !GRC_TransverseOperators(
+                system,space,orientation, muX, muY))
                 return false;
 
             RunSection::General::Resonance::SpectrumRequest request;
@@ -817,7 +827,7 @@ namespace
                 orientation,{"B0","NZ"},fieldT,fullDHdB,error) ||
             !GRC_Density(system,fullSpace,fullRho) ||
             !GRC_TransverseOperators(
-                system,fullSpace,fullMuX,fullMuY) ||
+                system,fullSpace,orientation,fullMuX,fullMuY) ||
             !ExactResonanceSolver::Generate(
                 fullH,fullRho,fullDHdB,fullMuX,fullMuY,
                 request,result.exact,error))
@@ -838,7 +848,7 @@ namespace
                 orientation,{"B0"},fieldT,coreDHdB,error) ||
             !GRC_Density(system,coreSpace,coreRho) ||
             !GRC_TransverseOperators(
-                system,coreSpace,coreMuX,coreMuY) ||
+                system,coreSpace,orientation,coreMuX,coreMuY) ||
             !ExactResonanceSolver::Generate(
                 coreH,coreRho,coreDHdB,coreMuX,coreMuY,
                 request,result.core,error))
@@ -1166,7 +1176,7 @@ namespace
             !GRC_Density(
                 system,coreSpace,point.coreDensity) ||
             !GRC_TransverseOperators(
-                system,coreSpace,
+                system,coreSpace,orientation,
                 point.coreMuX,point.coreMuY))
             return false;
 
@@ -1241,7 +1251,7 @@ namespace
                 orientation,{"B0","NZ"},fieldT,dHdB,error) ||
             !GRC_Density(system,fullSpace,rho) ||
             !GRC_TransverseOperators(
-                system,fullSpace,muX,muY))
+                system,fullSpace,orientation,muX,muY))
             return false;
 
         SpectrumRequest request;
@@ -1289,48 +1299,263 @@ namespace
         return weighted;
     }
 
-    double GRC_StrongSlopeError(
-        const RunSection::General::Resonance::ResonanceLineSet &reference,
+    struct GRC_ZfsHybridProductLabel
+    {
+        arma::uword core = 0;
+        arma::uword nuclear = 0;
+    };
+
+    bool GRC_PartialCoreExpectationOracle(
+        const arma::cx_mat &operatorCoreNuclear,
+        const arma::cx_vec &coreState,
+        arma::uword nuclearDimension,
+        arma::cx_mat &out)
+    {
+        out.reset();
+        const arma::uword coreDimension=coreState.n_elem;
+        if (coreDimension==0 || nuclearDimension==0 ||
+            operatorCoreNuclear.n_rows !=
+                coreDimension*nuclearDimension ||
+            operatorCoreNuclear.n_cols !=
+                coreDimension*nuclearDimension)
+            return false;
+
+        out.zeros(nuclearDimension,nuclearDimension);
+        for (arma::uword i=0;i<coreDimension;++i)
+        {
+            for (arma::uword j=0;j<coreDimension;++j)
+            {
+                const arma::cx_double weight=
+                    std::conj(coreState(i))*coreState(j);
+                if (std::abs(weight)==0.0)
+                    continue;
+
+                const arma::uword r0=i*nuclearDimension;
+                const arma::uword c0=j*nuclearDimension;
+                out += weight*operatorCoreNuclear.submat(
+                    r0,c0,
+                    r0+nuclearDimension-1,
+                    c0+nuclearDimension-1);
+            }
+        }
+
+        out=0.5*(out+out.t());
+        return out.is_finite();
+    }
+
+    double GRC_ZfsStateOverlapSlopeError(
+        const GRC_ZfsHybridModel &model,
+        const RunSection::General::HS::HSOrientation &orientation,
+        double hyperfineScale,double fieldT,
+        const RunSection::General::Resonance::ResonanceLineSet &exact,
         const RunSection::General::Resonance::ResonanceLineSet &candidate,
         std::size_t count)
     {
-        // Validation-only branch identity:
-        //   1) select the strongest exact reference transitions;
-        //   2) retain hybrid candidates with comparable transition strength;
-        //   3) choose the unique nearest-frequency candidate;
-        //   4) compare dOmega/dB only after branch identity is established.
-        //
-        // We do not use dOmega/dB in matching because it is the quantity
-        // under validation. The multiplicative weight window is symmetric:
-        // 1/1.25 = 0.8. A branch outside this generous window is not treated
-        // as the same strong transition in this perturbative validation gate.
-        constexpr double minimumWeightRatio = 0.80;
-        constexpr double maximumWeightRatio = 1.25;
-        constexpr double maximumFrequencyMismatch = 5.0e-2;
-        constexpr double ambiguityTolerance = 1.0e-8;
+        using namespace RunSection::General::Resonance;
 
-        const auto referenceLines =
-            GRC_StrongestSlopeLines(reference,count);
-        if (referenceLines.size()!=count)
+        constexpr double minimumStateOverlap=0.80;
+        constexpr double stateAmbiguityGap=0.10;
+        constexpr double componentFrequencyTolerance=1.0e-8;
+
+        auto system=
+            GRC_BuildZfsHybridSystem(
+                model,fieldT,hyperfineScale);
+        if (system==nullptr)
             return -1.0;
 
-        std::vector<GRC_WeightedSlopeLine> candidateLines;
-        for (const auto &line:candidate.lines)
+        SpinAPI::SpinSpace fullSpace(*system);
+        fullSpace.UseSuperoperatorSpace(false);
+        fullSpace.UseFullTensorRotation(true);
+
+        const auto fullPlan=
+            GRC_H0Plan({"B0","ZFS","A","NZ"});
+        GeneralResonanceHamiltonian fullBuilder(
+            fullPlan,fullSpace);
+
+        arma::sp_cx_mat fullH,fullDHdB;
+        std::string error;
+        if (!fullBuilder.Build(
+                orientation,fullH,error) ||
+            !fullBuilder.BuildFieldDerivative(
+                orientation,{"B0","NZ"},fieldT,
+                fullDHdB,error))
+            return -1.0;
+
+        arma::vec exactEnergies,exactDEdB;
+        arma::cx_mat exactEigenvectors;
+        if (!arma::eig_sym(
+                exactEnergies,exactEigenvectors,
+                arma::cx_mat(fullH)) ||
+            !ResonanceFieldJacobian::ResolveDegenerateSubspaces(
+                exactEnergies,exactEigenvectors,
+                fullDHdB,exactDEdB,error))
+            return -1.0;
+
+        OneNucleusHybridPoint point;
+        if (!GRC_BuildZfsHybridPoint(
+                model,orientation,hyperfineScale,
+                fieldT,point,error))
+            return -1.0;
+
+        arma::vec coreEnergies,coreDEdB;
+        arma::cx_mat coreEigenvectors;
+        if (!arma::eig_sym(
+                coreEnergies,coreEigenvectors,
+                arma::cx_mat(point.coreHamiltonian)) ||
+            !ResonanceFieldJacobian::ResolveDegenerateSubspaces(
+                coreEnergies,coreEigenvectors,
+                point.coreDHdB,coreDEdB,error))
+            return -1.0;
+
+        const arma::uword coreDimension=
+            coreEnergies.n_elem;
+        const arma::uword nuclearDimension=
+            point.hybrid.nuclearDimension;
+        const arma::uword fullDimension=
+            coreDimension*nuclearDimension;
+
+        if (nuclearDimension<2 ||
+            exactEigenvectors.n_rows!=fullDimension ||
+            exactEigenvectors.n_cols!=fullDimension)
+            return -1.0;
+
+        std::vector<arma::vec> nuclearEnergies(
+            coreDimension);
+        std::vector<arma::cx_mat> nuclearEigenvectors(
+            coreDimension);
+
+        for (arma::uword a=0;a<coreDimension;++a)
         {
-            const double weight=GRC_LineWeight(line);
-            if (weight>1.0e-16)
-                candidateLines.push_back(
-                    {weight,line.omega,line.dOmegaDB});
+            arma::cx_mat projected;
+            if (!GRC_PartialCoreExpectationOracle(
+                    point.hybrid.hyperfineCoreNuclear,
+                    coreEigenvectors.col(a),
+                    nuclearDimension,projected))
+                return -1.0;
+
+            arma::cx_mat effective=
+                point.hybrid.nuclearHamiltonian+projected;
+            effective=0.5*(effective+effective.t());
+
+            if (!arma::eig_sym(
+                    nuclearEnergies[a],
+                    nuclearEigenvectors[a],
+                    effective))
+                return -1.0;
+
+            arma::vec nuclearDEdB;
+            if (!ResonanceFieldJacobian::ResolveDegenerateSubspaces(
+                    nuclearEnergies[a],
+                    nuclearEigenvectors[a],
+                    point.hybrid.nuclearDHdB,
+                    nuclearDEdB,error))
+                return -1.0;
         }
-        if (candidateLines.size()<count)
-            return -1.0;
 
-        std::vector<std::size_t> used;
-        used.reserve(count);
+        arma::cx_mat productStates(
+            fullDimension,fullDimension,arma::fill::zeros);
+        std::vector<GRC_ZfsHybridProductLabel> productLabels(
+            fullDimension);
 
-        double result=0.0;
-        for (const auto &referenceLine:referenceLines)
+        for (arma::uword a=0;a<coreDimension;++a)
         {
+            for (arma::uword r=0;r<nuclearDimension;++r)
+            {
+                const arma::uword j=
+                    a*nuclearDimension+r;
+                productStates.col(j)=arma::kron(
+                    coreEigenvectors.col(a),
+                    nuclearEigenvectors[a].col(r));
+                productLabels[j]={a,r};
+            }
+        }
+
+        std::vector<GRC_ZfsHybridProductLabel>
+            exactToProduct(fullDimension);
+        std::vector<bool> productUsed(
+            fullDimension,false);
+
+        for (arma::uword i=0;i<fullDimension;++i)
+        {
+            double best=-1.0;
+            double second=-1.0;
+            arma::uword bestIndex=0;
+
+            for (arma::uword j=0;j<fullDimension;++j)
+            {
+                const double overlap=
+                    std::norm(arma::cdot(
+                        exactEigenvectors.col(i),
+                        productStates.col(j)));
+
+                if (overlap>best)
+                {
+                    second=best;
+                    best=overlap;
+                    bestIndex=j;
+                }
+                else if (overlap>second)
+                {
+                    second=overlap;
+                }
+            }
+
+            if (!std::isfinite(best) ||
+                best<minimumStateOverlap ||
+                (second>=0.0 &&
+                 best-second<stateAmbiguityGap) ||
+                productUsed[bestIndex])
+                return -1.0;
+
+            productUsed[bestIndex]=true;
+            exactToProduct[i]=productLabels[bestIndex];
+        }
+
+        std::vector<const ResonanceLine *> referenceLines;
+        referenceLines.reserve(exact.lines.size());
+        for (const auto &line:exact.lines)
+        {
+            if (GRC_LineWeight(line)>1.0e-16)
+                referenceLines.push_back(&line);
+        }
+
+        std::sort(
+            referenceLines.begin(),referenceLines.end(),
+            [](const ResonanceLine *a,
+               const ResonanceLine *b)
+            {
+                return GRC_LineWeight(*a)>
+                    GRC_LineWeight(*b);
+            });
+
+        if (referenceLines.size()<count)
+            return -1.0;
+        referenceLines.resize(count);
+
+        std::vector<bool> candidateUsed(
+            candidate.lines.size(),false);
+        double result=0.0;
+
+        for (const auto *referenceLine:referenceLines)
+        {
+            if (referenceLine->lower>=exactToProduct.size() ||
+                referenceLine->upper>=exactToProduct.size())
+                return -1.0;
+
+            const auto lower=
+                exactToProduct[referenceLine->lower];
+            const auto upper=
+                exactToProduct[referenceLine->upper];
+
+            if (lower.core>=upper.core)
+                return -1.0;
+
+            const double expectedOmega=
+                coreEnergies(upper.core)-
+                coreEnergies(lower.core)+
+                nuclearEnergies[upper.core](upper.nuclear)-
+                nuclearEnergies[lower.core](lower.nuclear);
+
             double bestDifference=
                 std::numeric_limits<double>::infinity();
             double secondDifference=
@@ -1338,21 +1563,19 @@ namespace
             std::size_t bestIndex=0;
             bool found=false;
 
-            for (std::size_t j=0;j<candidateLines.size();++j)
+            for (std::size_t j=0;
+                 j<candidate.lines.size();++j)
             {
-                if (std::find(used.begin(),used.end(),j)!=used.end())
+                if (candidateUsed[j])
                     continue;
 
-                const double weightRatio=
-                    candidateLines[j].weight/referenceLine.weight;
-                if (weightRatio<minimumWeightRatio ||
-                    weightRatio>maximumWeightRatio)
+                const auto &line=candidate.lines[j];
+                if (line.lower!=lower.core ||
+                    line.upper!=upper.core)
                     continue;
 
                 const double difference=
-                    std::abs(
-                        candidateLines[j].omega-referenceLine.omega);
-
+                    std::abs(line.omega-expectedOmega);
                 if (difference<bestDifference)
                 {
                     secondDifference=bestDifference;
@@ -1368,19 +1591,18 @@ namespace
 
             if (!found ||
                 !std::isfinite(bestDifference) ||
-                bestDifference>maximumFrequencyMismatch)
+                bestDifference>componentFrequencyTolerance ||
+                (std::isfinite(secondDifference) &&
+                 secondDifference-bestDifference<
+                    componentFrequencyTolerance))
                 return -1.0;
 
-            if (std::isfinite(secondDifference) &&
-                secondDifference-bestDifference<ambiguityTolerance)
-                return -1.0;
-
-            used.push_back(bestIndex);
+            candidateUsed[bestIndex]=true;
             result=std::max(
                 result,
                 std::abs(
-                    referenceLine.slope-
-                    candidateLines[bestIndex].slope));
+                    referenceLine->dOmegaDB-
+                    candidate.lines[bestIndex].dOmegaDB));
         }
 
         return result;
@@ -1477,9 +1699,12 @@ namespace
             return false;
 
         const double rawError=
-            GRC_StrongSlopeError(exact,uncorrected,8);
+            GRC_ZfsStateOverlapSlopeError(
+                model,orientation,0.60,fieldT,
+                exact,uncorrected,8);
         const double correctedError=
-            GRC_StrongSlopeError(
+            GRC_ZfsStateOverlapSlopeError(
+                model,orientation,0.60,fieldT,
                 exact,finiteDifference,8);
 
         return rawError>0.0 &&
@@ -1517,10 +1742,12 @@ namespace
             return false;
 
         const double strongError=
-            GRC_StrongSlopeError(
+            GRC_ZfsStateOverlapSlopeError(
+                model,orientation,0.60,fieldT,
                 exactStrong,hybridStrong,8);
         const double weakError=
-            GRC_StrongSlopeError(
+            GRC_ZfsStateOverlapSlopeError(
+                model,orientation,0.30,fieldT,
                 exactWeak,hybridWeak,8);
 
         if (!(strongError>0.0) ||
@@ -1622,9 +1849,13 @@ namespace
             return false;
 
         const double rawError=
-            GRC_StrongSlopeError(exact,uncorrected,8);
+            GRC_ZfsStateOverlapSlopeError(
+                model,orientation,0.50,fieldT,
+                exact,uncorrected,8);
         const double correctedError=
-            GRC_StrongSlopeError(exact,corrected,8);
+            GRC_ZfsStateOverlapSlopeError(
+                model,orientation,0.50,fieldT,
+                exact,corrected,8);
 
         return rawError>0.0 &&
                correctedError>=0.0 &&
@@ -1825,7 +2056,7 @@ namespace
             !GRC_Density(
                 system,coreSpace,point.coreDensity) ||
             !GRC_TransverseOperators(
-                system,coreSpace,
+                system,coreSpace,orientation,
                 point.coreMuX,point.coreMuY))
             return false;
 
@@ -1916,7 +2147,7 @@ namespace
                 fieldT,dHdB,error) ||
             !GRC_Density(system,fullSpace,rho) ||
             !GRC_TransverseOperators(
-                system,fullSpace,muX,muY))
+                system,fullSpace,orientation,muX,muY))
             return false;
 
         SpectrumRequest request;
@@ -2093,6 +2324,282 @@ namespace
                 <= 1.0e-9*scale;
     }
 
+    struct GRC_ExactCoreHybridProductLabel
+    {
+        arma::uword core = 0;
+        arma::uword nuclear = 0;
+    };
+
+    double GRC_ExactCoreStateOverlapSlopeError(
+        const GRC_ExactCorePromotionModel &model,
+        const RunSection::General::HS::HSOrientation &orientation,
+        double perturbativeScale,double fieldT,
+        const RunSection::General::Resonance::ResonanceLineSet &exact,
+        const RunSection::General::Resonance::ResonanceLineSet &candidate,
+        std::size_t count)
+    {
+        using namespace RunSection::General::Resonance;
+
+        // Validation-only oracle for the nondegenerate synthetic R2D gate.
+        // Exact strong-line intensity selects which exact transitions matter,
+        // but exact<->hybrid identity is determined solely from wavefunctions.
+        constexpr double minimumStateOverlap=0.80;
+        constexpr double stateAmbiguityGap=0.10;
+        constexpr double componentFrequencyTolerance=1.0e-8;
+
+        auto system=
+            GRC_BuildExactCorePromotionSystem(
+                model,fieldT,perturbativeScale);
+        if (system==nullptr)
+            return -1.0;
+
+        SpinAPI::SpinSpace fullSpace(*system);
+        fullSpace.UseSuperoperatorSpace(false);
+        fullSpace.UseFullTensorRotation(true);
+
+        const auto fullPlan=
+            GRC_H0Plan({
+                "B0","Aexact","Apert","NZexact","NZpert"});
+        GeneralResonanceHamiltonian fullBuilder(
+            fullPlan,fullSpace);
+
+        arma::sp_cx_mat fullH,fullDHdB;
+        std::string error;
+        if (!fullBuilder.Build(
+                orientation,fullH,error) ||
+            !fullBuilder.BuildFieldDerivative(
+                orientation,
+                {"B0","NZexact","NZpert"},
+                fieldT,fullDHdB,error))
+            return -1.0;
+
+        arma::vec exactEnergies,exactDEdB;
+        arma::cx_mat exactEigenvectors;
+        if (!arma::eig_sym(
+                exactEnergies,exactEigenvectors,
+                arma::cx_mat(fullH)) ||
+            !ResonanceFieldJacobian::ResolveDegenerateSubspaces(
+                exactEnergies,exactEigenvectors,
+                fullDHdB,exactDEdB,error))
+            return -1.0;
+
+        OneNucleusHybridPoint point;
+        if (!GRC_BuildExactCorePromotionPoint(
+                model,orientation,perturbativeScale,
+                fieldT,false,point,error))
+            return -1.0;
+
+        arma::vec coreEnergies,coreDEdB;
+        arma::cx_mat coreEigenvectors;
+        if (!arma::eig_sym(
+                coreEnergies,coreEigenvectors,
+                arma::cx_mat(point.coreHamiltonian)) ||
+            !ResonanceFieldJacobian::ResolveDegenerateSubspaces(
+                coreEnergies,coreEigenvectors,
+                point.coreDHdB,coreDEdB,error))
+            return -1.0;
+
+        const arma::uword coreDimension=
+            coreEnergies.n_elem;
+        const arma::uword nuclearDimension=
+            point.hybrid.nuclearDimension;
+        const arma::uword fullDimension=
+            coreDimension*nuclearDimension;
+
+        if (nuclearDimension<2 ||
+            exactEigenvectors.n_rows!=fullDimension ||
+            exactEigenvectors.n_cols!=fullDimension)
+            return -1.0;
+
+        std::vector<arma::vec> nuclearEnergies(
+            coreDimension);
+        std::vector<arma::cx_mat> nuclearEigenvectors(
+            coreDimension);
+
+        for (arma::uword a=0;a<coreDimension;++a)
+        {
+            arma::cx_mat projected;
+            if (!GRC_PartialCoreExpectationOracle(
+                    point.hybrid.hyperfineCoreNuclear,
+                    coreEigenvectors.col(a),
+                    nuclearDimension,projected))
+                return -1.0;
+
+            arma::cx_mat effective=
+                point.hybrid.nuclearHamiltonian+projected;
+            effective=0.5*(effective+effective.t());
+
+            if (!arma::eig_sym(
+                    nuclearEnergies[a],
+                    nuclearEigenvectors[a],
+                    effective))
+                return -1.0;
+
+            arma::vec nuclearDEdB;
+            if (!ResonanceFieldJacobian::ResolveDegenerateSubspaces(
+                    nuclearEnergies[a],
+                    nuclearEigenvectors[a],
+                    point.hybrid.nuclearDHdB,
+                    nuclearDEdB,error))
+                return -1.0;
+        }
+
+        arma::cx_mat productStates(
+            fullDimension,fullDimension,arma::fill::zeros);
+        std::vector<GRC_ExactCoreHybridProductLabel>
+            productLabels(fullDimension);
+
+        for (arma::uword a=0;a<coreDimension;++a)
+        {
+            for (arma::uword r=0;r<nuclearDimension;++r)
+            {
+                const arma::uword j=
+                    a*nuclearDimension+r;
+                productStates.col(j)=arma::kron(
+                    coreEigenvectors.col(a),
+                    nuclearEigenvectors[a].col(r));
+                productLabels[j]={a,r};
+            }
+        }
+
+        std::vector<GRC_ExactCoreHybridProductLabel>
+            exactToProduct(fullDimension);
+        std::vector<bool> productUsed(
+            fullDimension,false);
+
+        for (arma::uword i=0;i<fullDimension;++i)
+        {
+            double best=-1.0;
+            double second=-1.0;
+            arma::uword bestIndex=0;
+
+            for (arma::uword j=0;j<fullDimension;++j)
+            {
+                const double overlap=
+                    std::norm(arma::cdot(
+                        exactEigenvectors.col(i),
+                        productStates.col(j)));
+
+                if (overlap>best)
+                {
+                    second=best;
+                    best=overlap;
+                    bestIndex=j;
+                }
+                else if (overlap>second)
+                {
+                    second=overlap;
+                }
+            }
+
+            if (!std::isfinite(best) ||
+                best<minimumStateOverlap ||
+                (second>=0.0 &&
+                 best-second<stateAmbiguityGap) ||
+                productUsed[bestIndex])
+                return -1.0;
+
+            productUsed[bestIndex]=true;
+            exactToProduct[i]=productLabels[bestIndex];
+        }
+
+        std::vector<const ResonanceLine *> referenceLines;
+        referenceLines.reserve(exact.lines.size());
+        for (const auto &line:exact.lines)
+        {
+            if (GRC_LineWeight(line)>1.0e-16)
+                referenceLines.push_back(&line);
+        }
+
+        std::sort(
+            referenceLines.begin(),referenceLines.end(),
+            [](const ResonanceLine *a,
+               const ResonanceLine *b)
+            {
+                return GRC_LineWeight(*a)>
+                    GRC_LineWeight(*b);
+            });
+
+        if (referenceLines.size()<count)
+            return -1.0;
+        referenceLines.resize(count);
+
+        std::vector<bool> candidateUsed(
+            candidate.lines.size(),false);
+        double result=0.0;
+
+        for (const auto *referenceLine:referenceLines)
+        {
+            if (referenceLine->lower>=exactToProduct.size() ||
+                referenceLine->upper>=exactToProduct.size())
+                return -1.0;
+
+            const auto lower=
+                exactToProduct[referenceLine->lower];
+            const auto upper=
+                exactToProduct[referenceLine->upper];
+
+            if (lower.core>=upper.core)
+                return -1.0;
+
+            const double expectedOmega=
+                coreEnergies(upper.core)-
+                coreEnergies(lower.core)+
+                nuclearEnergies[upper.core](upper.nuclear)-
+                nuclearEnergies[lower.core](lower.nuclear);
+
+            double bestDifference=
+                std::numeric_limits<double>::infinity();
+            double secondDifference=
+                std::numeric_limits<double>::infinity();
+            std::size_t bestIndex=0;
+            bool found=false;
+
+            for (std::size_t j=0;
+                 j<candidate.lines.size();++j)
+            {
+                if (candidateUsed[j])
+                    continue;
+
+                const auto &line=candidate.lines[j];
+                if (line.lower!=lower.core ||
+                    line.upper!=upper.core)
+                    continue;
+
+                const double difference=
+                    std::abs(line.omega-expectedOmega);
+                if (difference<bestDifference)
+                {
+                    secondDifference=bestDifference;
+                    bestDifference=difference;
+                    bestIndex=j;
+                    found=true;
+                }
+                else if (difference<secondDifference)
+                {
+                    secondDifference=difference;
+                }
+            }
+
+            if (!found ||
+                !std::isfinite(bestDifference) ||
+                bestDifference>componentFrequencyTolerance ||
+                (std::isfinite(secondDifference) &&
+                 secondDifference-bestDifference<
+                    componentFrequencyTolerance))
+                return -1.0;
+
+            candidateUsed[bestIndex]=true;
+            result=std::max(
+                result,
+                std::abs(
+                    referenceLine->dOmegaDB-
+                    candidate.lines[bestIndex].dOmegaDB));
+        }
+
+        return result;
+    }
+
     bool GRC_TestHybridExactCorePromotionFieldResponse()
     {
         using namespace RunSection::General::Resonance;
@@ -2143,9 +2650,13 @@ namespace
             return false;
 
         const double rawError =
-            GRC_StrongSlopeError(exact,incomplete,8);
+            GRC_ExactCoreStateOverlapSlopeError(
+                model,orientation,0.60,fieldT,
+                exact,incomplete,8);
         const double correctedError =
-            GRC_StrongSlopeError(exact,corrected,8);
+            GRC_ExactCoreStateOverlapSlopeError(
+                model,orientation,0.60,fieldT,
+                exact,corrected,8);
 
         return rawError>0.0 &&
                correctedError>=0.0 &&
@@ -2180,10 +2691,12 @@ namespace
             return false;
 
         const double strongError =
-            GRC_StrongSlopeError(
+            GRC_ExactCoreStateOverlapSlopeError(
+                model,orientation,0.60,fieldT,
                 exactStrong,hybridStrong,8);
         const double weakError =
-            GRC_StrongSlopeError(
+            GRC_ExactCoreStateOverlapSlopeError(
+                model,orientation,0.30,fieldT,
                 exactWeak,hybridWeak,8);
 
         if (!(strongError>0.0) ||
@@ -2192,6 +2705,203 @@ namespace
 
         const double ratio=strongError/weakError;
         return ratio>2.8 && ratio<5.5;
+    }
+
+    bool GRC_TestMagneticMomentBuilderMatchesSpinAPIZeemanAxes()
+    {
+        using namespace RunSection::General::Resonance;
+
+        auto electron = std::make_shared<SpinAPI::Spin>(
+            "E",
+            "type=electron;spin=1/2;"
+            "tensor=anisotropic(1.91 2.07 2.31);");
+
+        const std::string frame =
+            "orientation=0.27,0.58,-0.31;"
+            "ignoretensors=false;"
+            "commonprefactor=true;prefactor=1.0;";
+
+        auto b0 = std::make_shared<SpinAPI::Interaction>(
+            "B0",
+            "type=zeeman;spins=E;field=0 0 0.34;" +
+            frame);
+        auto bx = std::make_shared<SpinAPI::Interaction>(
+            "Bx",
+            "type=zeeman;spins=E;field=1 0 0;" +
+            frame);
+        auto by = std::make_shared<SpinAPI::Interaction>(
+            "By",
+            "type=zeeman;spins=E;field=0 1 0;" +
+            frame);
+
+        auto system = std::make_shared<SpinAPI::SpinSystem>(
+            "MomentAxes");
+        system->Add(electron);
+        system->Add(b0);
+        system->Add(bx);
+        system->Add(by);
+        if (!system->ValidateInteractions().empty())
+            return false;
+
+        SpinAPI::SpinSpace space(
+            std::vector<SpinAPI::spin_ptr>{electron});
+        space.UseSuperoperatorSpace(false);
+        space.UseFullTensorRotation(true);
+
+        const auto orientation =
+            GRC_Orientation(0.41,0.73,-0.22);
+
+        arma::cx_mat muX,muY;
+        std::string error;
+        if (!ResonanceMagneticMomentBuilder::BuildTransverse(
+                space,{{electron,b0}},
+                orientation.frameToLab,true,
+                muX,muY,error))
+            return false;
+
+        arma::mat rotation=orientation.frameToLab;
+        arma::sp_cx_mat hx,hy;
+        if (!space.InteractionOperatorRotatedZYZ(
+                bx,rotation,hx) ||
+            !space.InteractionOperatorRotatedZYZ(
+                by,rotation,hy))
+            return false;
+
+        const arma::cx_mat hxDense(hx);
+        const arma::cx_mat hyDense(hy);
+        const double scale=std::max({
+            1.0,arma::norm(hxDense,"fro"),
+            arma::norm(hyDense,"fro")
+        });
+
+        return
+            arma::norm(muX-hxDense,"fro") <= 1.0e-13*scale &&
+            arma::norm(muY-hyDense,"fro") <= 1.0e-13*scale;
+    }
+
+    bool GRC_TestMagneticMomentBuilderOrientationContract()
+    {
+        using namespace RunSection::General::Resonance;
+
+        auto electron = std::make_shared<SpinAPI::Spin>(
+            "E",
+            "type=electron;spin=1/2;"
+            "tensor=anisotropic(1.88 2.11 2.37);");
+        auto anisotropic = std::make_shared<SpinAPI::Interaction>(
+            "B0",
+            "type=zeeman;spins=E;field=0 0 0.34;"
+            "orientation=-0.19,0.62,0.28;"
+            "ignoretensors=false;"
+            "commonprefactor=true;prefactor=1.0;");
+        auto ignoreTensor = std::make_shared<SpinAPI::Interaction>(
+            "Biso",
+            "type=zeeman;spins=E;field=0 0 0.34;"
+            "orientation=-0.19,0.62,0.28;"
+            "ignoretensors=true;"
+            "commonprefactor=true;prefactor=1.0;");
+
+        auto system = std::make_shared<SpinAPI::SpinSystem>(
+            "MomentOrientation");
+        system->Add(electron);
+        system->Add(anisotropic);
+        system->Add(ignoreTensor);
+        if (!system->ValidateInteractions().empty())
+            return false;
+
+        SpinAPI::SpinSpace space(
+            std::vector<SpinAPI::spin_ptr>{electron});
+        space.UseSuperoperatorSpace(false);
+        space.UseFullTensorRotation(true);
+
+        const arma::mat identity =
+            arma::eye<arma::mat>(3,3);
+        const auto orientation =
+            GRC_Orientation(-0.36,0.81,0.47);
+
+        arma::cx_mat ax0,ay0,ax1,ay1;
+        arma::cx_mat ix0,iy0,ix1,iy1;
+        std::string error;
+
+        if (!ResonanceMagneticMomentBuilder::BuildTransverse(
+                space,{{electron,anisotropic}},
+                identity,true,ax0,ay0,error) ||
+            !ResonanceMagneticMomentBuilder::BuildTransverse(
+                space,{{electron,anisotropic}},
+                orientation.frameToLab,true,
+                ax1,ay1,error) ||
+            !ResonanceMagneticMomentBuilder::BuildTransverse(
+                space,{{electron,ignoreTensor}},
+                identity,true,ix0,iy0,error) ||
+            !ResonanceMagneticMomentBuilder::BuildTransverse(
+                space,{{electron,ignoreTensor}},
+                orientation.frameToLab,true,
+                ix1,iy1,error))
+            return false;
+
+        const double anisotropicShift =
+            arma::norm(ax1-ax0,"fro") +
+            arma::norm(ay1-ay0,"fro");
+        const double isotropicScale=std::max({
+            1.0,
+            arma::norm(ix0,"fro"),
+            arma::norm(iy0,"fro")
+        });
+
+        return anisotropicShift > 1.0e-3 &&
+            arma::norm(ix1-ix0,"fro") <=
+                1.0e-13*isotropicScale &&
+            arma::norm(iy1-iy0,"fro") <=
+                1.0e-13*isotropicScale;
+    }
+
+    bool GRC_TestMagneticMomentBuilderFailsClosedOnOwnership()
+    {
+        using namespace RunSection::General::Resonance;
+
+        auto e1 = std::make_shared<SpinAPI::Spin>(
+            "E1","type=electron;spin=1/2;"
+            "tensor=isotropic(2.0);");
+        auto e2 = std::make_shared<SpinAPI::Spin>(
+            "E2","type=electron;spin=1/2;"
+            "tensor=isotropic(2.0);");
+        auto b1 = std::make_shared<SpinAPI::Interaction>(
+            "B1",
+            "type=zeeman;spins=E1;field=0 0 0.34;"
+            "ignoretensors=false;"
+            "commonprefactor=true;prefactor=1.0;");
+
+        auto system = std::make_shared<SpinAPI::SpinSystem>(
+            "MomentOwnership");
+        system->Add(e1);
+        system->Add(e2);
+        system->Add(b1);
+        if (!system->ValidateInteractions().empty())
+            return false;
+
+        SpinAPI::SpinSpace space(
+            std::vector<SpinAPI::spin_ptr>{e1});
+        space.UseSuperoperatorSpace(false);
+
+        arma::cx_mat muX,muY;
+        std::string error;
+
+        if (ResonanceMagneticMomentBuilder::BuildTransverse(
+                space,{{e2,b1}},
+                arma::eye<arma::mat>(3,3),true,
+                muX,muY,error))
+            return false;
+        if (error !=
+            "resonance magnetic-moment detection spin is outside the supplied SpinSpace")
+            return false;
+
+        if (ResonanceMagneticMomentBuilder::BuildTransverse(
+                space,{{e1,nullptr}},
+                arma::eye<arma::mat>(3,3),true,
+                muX,muY,error))
+            return false;
+
+        return error ==
+            "resonance magnetic-moment term contains a null spin or interaction";
     }
 
     bool GRC_TestExactLineBackendSeam()
@@ -2319,6 +3029,9 @@ void AddGeneralResonanceCoreTests(std::vector<test_case> &cases)
     cases.push_back(test_case("General resonance core field Jacobian and transition detection",GRC_TestFieldJacobianAndDetector));
     cases.push_back(test_case("General resonance core resolves degenerate field slopes",GRC_TestDegenerateFieldJacobian));
     cases.push_back(test_case("General resonance Hamiltonian adapter preserves full/secular distinction",GRC_TestHamiltonianAdapterPreservesApproximation));
+    cases.push_back(test_case("General resonance magnetic moment matches oriented SpinAPI Zeeman x/y derivatives",GRC_TestMagneticMomentBuilderMatchesSpinAPIZeemanAxes));
+    cases.push_back(test_case("General resonance magnetic moment orientation contract",GRC_TestMagneticMomentBuilderOrientationContract));
+    cases.push_back(test_case("General resonance magnetic moment ownership fails closed",GRC_TestMagneticMomentBuilderFailsClosedOnOwnership));
     cases.push_back(test_case("General resonance exact solver line-backend seam parity",GRC_TestExactLineBackendSeam));
     cases.push_back(test_case("General resonance R2A one-I=7/2 hybrid zero-coupling limit",GRC_TestHybridI72ZeroLimit));
     cases.push_back(test_case("General resonance R2A one-I=7/2 first-order A^2 error scaling",GRC_TestHybridI72FirstOrderScaling));
