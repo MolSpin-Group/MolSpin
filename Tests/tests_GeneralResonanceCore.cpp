@@ -7,6 +7,7 @@
 //////////////////////////////////////////////////////////////////////////////
 #include "GeneralResonanceHamiltonian.h"
 #include "ExactResonanceSolver.h"
+#include "HybridNuclearResonanceSolver.h"
 #include "ResonanceFieldJacobian.h"
 #include "ResonanceLineshape.h"
 #include "ResonanceSpectrumEvaluator.h"
@@ -378,6 +379,639 @@ namespace
         return std::abs(HfullDense(0,1))>1.0e-6 && std::abs(dFullDense(0,1))>1.0e-6;
     }
 
+    struct GRC_I72Comparison
+    {
+        RunSection::General::Resonance::ResonanceLineSet core;
+        RunSection::General::Resonance::ResonanceLineSet exact;
+        RunSection::General::Resonance::ResonanceLineSet hybrid;
+    };
+
+    SpinAPI::system_ptr GRC_BuildI72System(double fieldT, double hyperfine)
+    {
+        std::ostringstream eprops;
+        eprops << std::setprecision(17)
+               << "type=electron;spin=1/2;tensor=isotropic(2.0023);";
+        auto electron = std::make_shared<SpinAPI::Spin>("E",eprops.str());
+        auto nucleus = std::make_shared<SpinAPI::Spin>(
+            "V","type=nucleus;spin=7/2;tensor=isotropic(1);");
+
+        std::ostringstream bprops;
+        bprops << std::setprecision(17)
+               << "type=zeeman;spins=E;field=0 0 " << fieldT
+               << ";ignoretensors=false;commonprefactor=true;prefactor=1.0;";
+        auto field = std::make_shared<SpinAPI::Interaction>("B0",bprops.str());
+
+        std::ostringstream aprops;
+        aprops << std::setprecision(17)
+               << "type=hyperfine;group1=E;group2=V;tensor=isotropic("
+               << hyperfine
+               << ");ignoretensors=true;commonprefactor=false;prefactor=1.0;";
+        auto hfc = std::make_shared<SpinAPI::Interaction>("A",aprops.str());
+
+        // ^51V gamma/(2*pi) is about 11.2 MHz/T. The synthetic benchmark uses
+        // 0.0703 rad/ns/T explicitly because the current generic SpinAPI common
+        // prefactor is electronic; nuclear Zeeman must not reuse mu_B/hbar.
+        std::ostringstream nzprops;
+        nzprops << std::setprecision(17)
+                << "type=zeeman;spins=V;field=0 0 " << fieldT
+                << ";ignoretensors=true;commonprefactor=false;"
+                   "prefactor=0.0703;";
+        auto nuclearZeeman =
+            std::make_shared<SpinAPI::Interaction>("NZ",nzprops.str());
+
+        auto up = std::make_shared<SpinAPI::State>(
+            "Up","spin(E)=|1/2>;");
+
+        auto system = std::make_shared<SpinAPI::SpinSystem>("I72");
+        system->Add(electron);
+        system->Add(nucleus);
+        system->Add(field);
+        system->Add(hfc);
+        system->Add(nuclearZeeman);
+        system->Add(up);
+        system->SetProperties(
+            std::make_shared<MSDParser::ObjectParser>(
+                "properties","initialstate=Up;"));
+
+        if (!system->ValidateInteractions().empty())
+            return nullptr;
+        if (!up->ParseFromSystem(*system))
+            return nullptr;
+        return system;
+    }
+
+    RunSection::General::HS::HSExecutionPlan GRC_H0Plan(
+        const std::vector<std::string> &names)
+    {
+        RunSection::General::HS::HSExecutionPlan plan;
+        plan.dynamics = RunSection::General::HS::Dynamics::Static;
+        plan.calculation =
+            RunSection::General::HS::Calculation::TimeEvolution;
+        plan.sampling = RunSection::General::HS::Sampling::Direct;
+        plan.orientation =
+            RunSection::General::HS::OrientationMode::Explicit;
+        plan.approximation = SpinAPI::HamiltonianApproximation::Full;
+        plan.hasH0List = true;
+        plan.h0List = names;
+        return plan;
+    }
+
+    bool GRC_BuildI72Comparison(double frequencyGHz, double hyperfine,
+        bool qualifyProjection, GRC_I72Comparison &result)
+    {
+        using namespace RunSection::General::Resonance;
+
+        const double omega = 2.0*arma::datum::pi*frequencyGHz;
+        const double fieldT =
+            omega/(GRC_MU_B_OVER_HBAR*2.0023);
+        auto system = GRC_BuildI72System(fieldT,hyperfine);
+        if (system == nullptr)
+            return false;
+
+        auto electron = system->spins_find("E");
+        auto nucleus = system->spins_find("V");
+        auto b0 = system->interactions_find("B0");
+        auto hfc = system->interactions_find("A");
+        auto nz = system->interactions_find("NZ");
+        if (electron == nullptr || nucleus == nullptr ||
+            b0 == nullptr || hfc == nullptr || nz == nullptr)
+            return false;
+
+        const auto orientation = GRC_IdentityOrientation();
+        arma::mat rotation = orientation.frameToLab;
+        std::string error;
+
+        SpectrumRequest request;
+        request.microwaveFrequencyGHz = frequencyGHz;
+        request.linewidth_mT = 0.10;
+        request.lineshape = Lineshape::Gaussian;
+        request.populationThreshold = 1.0e-15;
+        request.minimumSlope = 1.0e-15;
+
+        // Complete exact electron+nucleus reference.
+        SpinAPI::SpinSpace fullSpace(*system);
+        fullSpace.UseSuperoperatorSpace(false);
+        fullSpace.UseFullTensorRotation(true);
+        const auto fullPlan = GRC_H0Plan({"B0","A","NZ"});
+        GeneralResonanceHamiltonian fullBuilder(fullPlan,fullSpace);
+
+        arma::sp_cx_mat fullH,fullDHdB;
+        arma::cx_mat fullRho,fullMuX,fullMuY;
+        if (!fullBuilder.Build(orientation,fullH,error) ||
+            !fullBuilder.BuildFieldDerivative(
+                orientation,{"B0","NZ"},fieldT,fullDHdB,error) ||
+            !GRC_Density(system,fullSpace,fullRho) ||
+            !GRC_TransverseOperators(
+                system,fullSpace,fullMuX,fullMuY) ||
+            !ExactResonanceSolver::Generate(
+                fullH,fullRho,fullDHdB,fullMuX,fullMuY,
+                request,result.exact,error))
+            return false;
+
+        // Exact electronic/core problem. The perturbative nucleus is absent.
+        SpinAPI::SpinSpace coreSpace(
+            std::vector<SpinAPI::spin_ptr>{electron});
+        coreSpace.Add(b0);
+        coreSpace.UseSuperoperatorSpace(false);
+        coreSpace.UseFullTensorRotation(true);
+        const auto corePlan = GRC_H0Plan({"B0"});
+        GeneralResonanceHamiltonian coreBuilder(corePlan,coreSpace);
+
+        arma::sp_cx_mat coreH,coreDHdB;
+        arma::cx_mat coreRho,coreMuX,coreMuY;
+        if (!coreBuilder.Build(orientation,coreH,error) ||
+            !coreBuilder.BuildFieldDerivative(
+                orientation,{"B0"},fieldT,coreDHdB,error) ||
+            !GRC_Density(system,coreSpace,coreRho) ||
+            !GRC_TransverseOperators(
+                system,coreSpace,coreMuX,coreMuY) ||
+            !ExactResonanceSolver::Generate(
+                coreH,coreRho,coreDHdB,coreMuX,coreMuY,
+                request,result.core,error))
+            return false;
+
+        // SpinAPI owns hyperfine tensor rotation and prefactors. The
+        // perturbative nucleus is deliberately the final Kronecker factor.
+        SpinAPI::SpinSpace pairSpace(
+            std::vector<SpinAPI::spin_ptr>{electron,nucleus});
+        pairSpace.UseSuperoperatorSpace(false);
+        pairSpace.UseFullTensorRotation(true);
+        arma::sp_cx_mat hyperfinePair;
+        if (!pairSpace.InteractionOperatorRotatedZYZ(
+                hfc,rotation,hyperfinePair))
+            return false;
+
+        // One-nucleus explicit Hamiltonian/field derivative.
+        SpinAPI::SpinSpace nuclearSpace(nucleus);
+        nuclearSpace.UseSuperoperatorSpace(false);
+        nuclearSpace.UseFullTensorRotation(true);
+        arma::sp_cx_mat nuclearH;
+        if (!nuclearSpace.InteractionOperatorRotatedZYZ(
+                nz,rotation,nuclearH))
+            return false;
+
+        OneNucleusHybridRequest hybrid;
+        hybrid.hyperfineCoreNuclear = arma::cx_mat(hyperfinePair);
+        hybrid.nuclearHamiltonian = arma::cx_mat(nuclearH);
+        hybrid.nuclearDHdB = nuclearH/fieldT;
+        hybrid.nuclearDimension =
+            static_cast<arma::uword>(nucleus->Multiplicity());
+        hybrid.overlapThreshold = 1.0e-14;
+        hybrid.fieldIndependentProjection = qualifyProjection;
+
+        return HybridNuclearResonanceSolver::GenerateFirstOrder(
+            coreH,coreRho,coreDHdB,coreMuX,coreMuY,
+            hybrid,request,result.hybrid,error);
+    }
+
+    double GRC_LineWeight(
+        const RunSection::General::Resonance::ResonanceLine &line)
+    {
+        return std::abs(line.populationDifference)*
+               line.moment.perpendicular;
+    }
+
+    std::vector<double> GRC_StrongestFrequencies(
+        const RunSection::General::Resonance::ResonanceLineSet &set,
+        std::size_t count)
+    {
+        std::vector<std::pair<double,double>> weighted;
+        for (const auto &line : set.lines)
+        {
+            const double weight = GRC_LineWeight(line);
+            if (weight > 1.0e-16)
+                weighted.push_back({weight,line.omega});
+        }
+        std::sort(weighted.begin(),weighted.end(),
+            [](const auto &a,const auto &b)
+            {
+                return a.first>b.first;
+            });
+        if (weighted.size()>count)
+            weighted.resize(count);
+
+        std::vector<double> result;
+        for (const auto &item : weighted)
+            result.push_back(item.second);
+        std::sort(result.begin(),result.end());
+        return result;
+    }
+
+    double GRC_StrongLineFrequencyError(
+        const RunSection::General::Resonance::ResonanceLineSet &exact,
+        const RunSection::General::Resonance::ResonanceLineSet &hybrid,
+        std::size_t count)
+    {
+        const auto e = GRC_StrongestFrequencies(exact,count);
+        const auto h = GRC_StrongestFrequencies(hybrid,count);
+        if (e.size()!=count || h.size()!=count)
+            return -1.0;
+
+        double error = 0.0;
+        for (std::size_t i=0;i<count;++i)
+            error = std::max(error,std::abs(e[i]-h[i]));
+        return error;
+    }
+
+    bool GRC_TestHybridI72ZeroLimit()
+    {
+        GRC_I72Comparison data;
+        if (!GRC_BuildI72Comparison(9.5,0.0,true,data))
+            return false;
+        if (!data.hybrid.fieldJacobianQualified)
+            return false;
+
+        const auto core = GRC_StrongestFrequencies(data.core,1);
+        const auto hybrid = GRC_StrongestFrequencies(data.hybrid,8);
+        if (core.size()!=1 || hybrid.size()!=8)
+            return false;
+        for (double omega : hybrid)
+            if (std::abs(omega-core.front())>1.0e-12)
+                return false;
+
+        double coreWeight=0.0,hybridWeight=0.0;
+        for (const auto &line:data.core.lines)
+            coreWeight += GRC_LineWeight(line);
+        for (const auto &line:data.hybrid.lines)
+            hybridWeight += GRC_LineWeight(line);
+
+        return std::abs(coreWeight-hybridWeight) <=
+            1.0e-12*std::max(1.0,std::abs(coreWeight));
+    }
+
+    bool GRC_TestHybridI72FirstOrderScaling()
+    {
+        GRC_I72Comparison strong,weak;
+        if (!GRC_BuildI72Comparison(9.5,0.40,true,strong) ||
+            !GRC_BuildI72Comparison(9.5,0.20,true,weak))
+            return false;
+
+        const double eStrong =
+            GRC_StrongLineFrequencyError(strong.exact,strong.hybrid,8);
+        const double eWeak =
+            GRC_StrongLineFrequencyError(weak.exact,weak.hybrid,8);
+        if (!(eStrong>0.0) || !(eWeak>0.0))
+            return false;
+
+        const double ratio=eStrong/eWeak;
+        return ratio>3.5 && ratio<4.5;
+    }
+
+    bool GRC_TestHybridI72HighFieldImproves()
+    {
+        GRC_I72Comparison xband,wband;
+        if (!GRC_BuildI72Comparison(9.5,0.40,true,xband) ||
+            !GRC_BuildI72Comparison(94.0,0.40,true,wband))
+            return false;
+
+        const double eX =
+            GRC_StrongLineFrequencyError(xband.exact,xband.hybrid,8);
+        const double eW =
+            GRC_StrongLineFrequencyError(wband.exact,wband.hybrid,8);
+        return eX>0.0 && eW>0.0 && eW<0.2*eX;
+    }
+
+    bool GRC_TestHybridUnqualifiedJacobianFailsClosed()
+    {
+        using namespace RunSection::General::Resonance;
+        GRC_I72Comparison data;
+        if (!GRC_BuildI72Comparison(9.5,0.40,false,data))
+            return false;
+        if (data.hybrid.fieldJacobianQualified)
+            return false;
+
+        SpectrumRequest request;
+        request.microwaveFrequencyGHz=9.5;
+        request.linewidth_mT=0.1;
+        SpectrumPoint point;
+        std::string error;
+        if (ResonanceSpectrumEvaluator::Evaluate(
+                data.hybrid,request,point,error))
+            return false;
+        return error ==
+            "resonance line set does not have a qualified field Jacobian";
+    }
+
+    struct GRC_AnisotropicI72Model
+    {
+        double gx = 1.94;
+        double gy = 2.08;
+        double gz = 2.31;
+        double ax = 0.22;
+        double ay = 0.37;
+        double az = 0.61;
+        double aAlpha = 0.37;
+        double aBeta = 0.58;
+        double aGamma = -0.29;
+        double bAlpha = 0.0;
+        double bBeta = 0.0;
+        double bGamma = 0.0;
+    };
+
+    SpinAPI::system_ptr GRC_BuildAnisotropicI72System(
+        const GRC_AnisotropicI72Model &model,
+        double fieldT, double hyperfineScale)
+    {
+        std::ostringstream eprops;
+        eprops << std::setprecision(17)
+               << "type=electron;spin=1/2;tensor=anisotropic("
+               << model.gx << " " << model.gy << " " << model.gz << ");";
+        auto electron = std::make_shared<SpinAPI::Spin>("E",eprops.str());
+        auto nucleus = std::make_shared<SpinAPI::Spin>(
+            "V","type=nucleus;spin=7/2;tensor=isotropic(1);");
+
+        std::ostringstream bprops;
+        bprops << std::setprecision(17)
+               << "type=zeeman;spins=E;field=0 0 " << fieldT
+               << ";orientation=" << model.bAlpha << ","
+               << model.bBeta << "," << model.bGamma
+               << ";ignoretensors=false;commonprefactor=true;prefactor=1.0;";
+        auto field = std::make_shared<SpinAPI::Interaction>("B0",bprops.str());
+
+        std::ostringstream aprops;
+        aprops << std::setprecision(17)
+               << "type=hyperfine;group1=E;group2=V;tensor=anisotropic("
+               << hyperfineScale*model.ax << " "
+               << hyperfineScale*model.ay << " "
+               << hyperfineScale*model.az << ");orientation="
+               << model.aAlpha << "," << model.aBeta << "," << model.aGamma
+               << ";ignoretensors=true;commonprefactor=false;prefactor=1.0;";
+        auto hfc = std::make_shared<SpinAPI::Interaction>("A",aprops.str());
+
+        std::ostringstream nzprops;
+        nzprops << std::setprecision(17)
+                << "type=zeeman;spins=V;field=0 0 " << fieldT
+                << ";ignoretensors=true;commonprefactor=false;"
+                   "prefactor=0.0703;";
+        auto nuclearZeeman =
+            std::make_shared<SpinAPI::Interaction>("NZ",nzprops.str());
+
+        auto up = std::make_shared<SpinAPI::State>(
+            "Up","spin(E)=|1/2>;");
+
+        auto system = std::make_shared<SpinAPI::SpinSystem>("I72Aniso");
+        system->Add(electron);
+        system->Add(nucleus);
+        system->Add(field);
+        system->Add(hfc);
+        system->Add(nuclearZeeman);
+        system->Add(up);
+        system->SetProperties(
+            std::make_shared<MSDParser::ObjectParser>(
+                "properties","initialstate=Up;"));
+
+        if (!system->ValidateInteractions().empty())
+            return nullptr;
+        if (!up->ParseFromSystem(*system))
+            return nullptr;
+        return system;
+    }
+
+    bool GRC_BuildAnisotropicI72Comparison(
+        double frequencyGHz, double hyperfineScale,
+        const GRC_AnisotropicI72Model &model,
+        const RunSection::General::HS::HSOrientation &orientation,
+        GRC_I72Comparison &result)
+    {
+        using namespace RunSection::General::Resonance;
+
+        const double omega = 2.0*arma::datum::pi*frequencyGHz;
+        const double fieldT =
+            omega/(GRC_MU_B_OVER_HBAR*model.gz);
+
+        auto system =
+            GRC_BuildAnisotropicI72System(model,fieldT,hyperfineScale);
+        if (system == nullptr)
+            return false;
+
+        auto electron = system->spins_find("E");
+        auto nucleus = system->spins_find("V");
+        auto b0 = system->interactions_find("B0");
+        auto hfc = system->interactions_find("A");
+        auto nz = system->interactions_find("NZ");
+        if (electron == nullptr || nucleus == nullptr ||
+            b0 == nullptr || hfc == nullptr || nz == nullptr)
+            return false;
+
+        arma::mat rotation = orientation.frameToLab;
+        std::string error;
+
+        SpectrumRequest request;
+        request.microwaveFrequencyGHz = frequencyGHz;
+        request.linewidth_mT = 0.10;
+        request.lineshape = Lineshape::Gaussian;
+        request.populationThreshold = 1.0e-15;
+        request.minimumSlope = 1.0e-15;
+
+        SpinAPI::SpinSpace fullSpace(*system);
+        fullSpace.UseSuperoperatorSpace(false);
+        fullSpace.UseFullTensorRotation(true);
+        const auto fullPlan = GRC_H0Plan({"B0","A","NZ"});
+        GeneralResonanceHamiltonian fullBuilder(fullPlan,fullSpace);
+
+        arma::sp_cx_mat fullH,fullDHdB;
+        arma::cx_mat fullRho,fullMuX,fullMuY;
+        if (!fullBuilder.Build(orientation,fullH,error) ||
+            !fullBuilder.BuildFieldDerivative(
+                orientation,{"B0","NZ"},fieldT,fullDHdB,error) ||
+            !GRC_Density(system,fullSpace,fullRho) ||
+            !GRC_TransverseOperators(
+                system,fullSpace,fullMuX,fullMuY) ||
+            !ExactResonanceSolver::Generate(
+                fullH,fullRho,fullDHdB,fullMuX,fullMuY,
+                request,result.exact,error))
+            return false;
+
+        SpinAPI::SpinSpace coreSpace(
+            std::vector<SpinAPI::spin_ptr>{electron});
+        coreSpace.Add(b0);
+        coreSpace.UseSuperoperatorSpace(false);
+        coreSpace.UseFullTensorRotation(true);
+        const auto corePlan = GRC_H0Plan({"B0"});
+        GeneralResonanceHamiltonian coreBuilder(corePlan,coreSpace);
+
+        arma::sp_cx_mat coreH,coreDHdB;
+        arma::cx_mat coreRho,coreMuX,coreMuY;
+        if (!coreBuilder.Build(orientation,coreH,error) ||
+            !coreBuilder.BuildFieldDerivative(
+                orientation,{"B0"},fieldT,coreDHdB,error) ||
+            !GRC_Density(system,coreSpace,coreRho) ||
+            !GRC_TransverseOperators(
+                system,coreSpace,coreMuX,coreMuY) ||
+            !ExactResonanceSolver::Generate(
+                coreH,coreRho,coreDHdB,coreMuX,coreMuY,
+                request,result.core,error))
+            return false;
+
+        SpinAPI::SpinSpace pairSpace(
+            std::vector<SpinAPI::spin_ptr>{electron,nucleus});
+        pairSpace.UseSuperoperatorSpace(false);
+        pairSpace.UseFullTensorRotation(true);
+        arma::sp_cx_mat hyperfinePair;
+        if (!pairSpace.InteractionOperatorRotatedZYZ(
+                hfc,rotation,hyperfinePair))
+            return false;
+
+        SpinAPI::SpinSpace nuclearSpace(nucleus);
+        nuclearSpace.UseSuperoperatorSpace(false);
+        nuclearSpace.UseFullTensorRotation(true);
+        arma::sp_cx_mat nuclearH;
+        if (!nuclearSpace.InteractionOperatorRotatedZYZ(
+                nz,rotation,nuclearH))
+            return false;
+
+        OneNucleusHybridRequest hybrid;
+        hybrid.hyperfineCoreNuclear = arma::cx_mat(hyperfinePair);
+        hybrid.nuclearHamiltonian = arma::cx_mat(nuclearH);
+        hybrid.nuclearDHdB = nuclearH/fieldT;
+        hybrid.nuclearDimension =
+            static_cast<arma::uword>(nucleus->Multiplicity());
+        hybrid.overlapThreshold = 1.0e-14;
+        hybrid.fieldIndependentProjection = true;
+
+        return HybridNuclearResonanceSolver::GenerateFirstOrder(
+            coreH,coreRho,coreDHdB,coreMuX,coreMuY,
+            hybrid,request,result.hybrid,error);
+    }
+
+    RunSection::General::HS::HSOrientation GRC_Orientation(
+        double alpha,double beta,double gamma)
+    {
+        RunSection::General::HS::HSOrientation orientation;
+        orientation.alpha=alpha;
+        orientation.beta=beta;
+        orientation.gamma=gamma;
+        orientation.weight=1.0;
+        SpinAPI::CreateZYZRotationMatrix(
+            alpha,beta,gamma,orientation.frameToLab);
+        return orientation;
+    }
+
+    bool GRC_TestHybridAnisotropicA2ScalingAtArbitraryOrientation()
+    {
+        GRC_AnisotropicI72Model model;
+        const auto orientation=GRC_Orientation(0.43,0.71,-0.33);
+
+        GRC_I72Comparison strong,weak;
+        if (!GRC_BuildAnisotropicI72Comparison(
+                9.5,1.0,model,orientation,strong) ||
+            !GRC_BuildAnisotropicI72Comparison(
+                9.5,0.5,model,orientation,weak))
+            return false;
+
+        const double eStrong =
+            GRC_StrongLineFrequencyError(strong.exact,strong.hybrid,8);
+        const double eWeak =
+            GRC_StrongLineFrequencyError(weak.exact,weak.hybrid,8);
+        if (!(eStrong>0.0) || !(eWeak>0.0))
+            return false;
+
+        const double ratio=eStrong/eWeak;
+        if (!(ratio>3.2 && ratio<4.8))
+            return false;
+
+        GRC_I72Comparison identity;
+        if (!GRC_BuildAnisotropicI72Comparison(
+                9.5,1.0,model,GRC_IdentityOrientation(),identity))
+            return false;
+        const auto a=GRC_StrongestFrequencies(strong.hybrid,8);
+        const auto b=GRC_StrongestFrequencies(identity.hybrid,8);
+        if (a.size()!=8 || b.size()!=8)
+            return false;
+
+        double orientationShift=0.0;
+        for (std::size_t i=0;i<8;++i)
+            orientationShift=std::max(
+                orientationShift,std::abs(a[i]-b[i]));
+        return orientationShift>1.0e-4;
+    }
+
+    bool GRC_TestHybridAnisotropicXWImprovement()
+    {
+        GRC_AnisotropicI72Model model;
+        const auto orientation=GRC_Orientation(-0.27,0.83,0.52);
+
+        GRC_I72Comparison xband,wband;
+        if (!GRC_BuildAnisotropicI72Comparison(
+                9.5,1.0,model,orientation,xband) ||
+            !GRC_BuildAnisotropicI72Comparison(
+                94.0,1.0,model,orientation,wband))
+            return false;
+
+        const double eX =
+            GRC_StrongLineFrequencyError(xband.exact,xband.hybrid,8);
+        const double eW =
+            GRC_StrongLineFrequencyError(wband.exact,wband.hybrid,8);
+        return eX>0.0 && eW>0.0 && eW<0.25*eX;
+    }
+
+    bool GRC_TestHybridNonCoaxialTensorFrameIsActive()
+    {
+        GRC_AnisotropicI72Model noncoaxial;
+        GRC_AnisotropicI72Model coaxial=noncoaxial;
+        coaxial.aAlpha=0.0;
+        coaxial.aBeta=0.0;
+        coaxial.aGamma=0.0;
+
+        const auto orientation=GRC_Orientation(0.31,0.64,-0.41);
+        GRC_I72Comparison a,b;
+        if (!GRC_BuildAnisotropicI72Comparison(
+                9.5,1.0,noncoaxial,orientation,a) ||
+            !GRC_BuildAnisotropicI72Comparison(
+                9.5,1.0,coaxial,orientation,b))
+            return false;
+
+        const auto fa=GRC_StrongestFrequencies(a.hybrid,8);
+        const auto fb=GRC_StrongestFrequencies(b.hybrid,8);
+        if (fa.size()!=8 || fb.size()!=8)
+            return false;
+
+        double shift=0.0;
+        for (std::size_t i=0;i<8;++i)
+            shift=std::max(shift,std::abs(fa[i]-fb[i]));
+        return shift>1.0e-4;
+    }
+
+    bool GRC_TestHybridRigidZFramePowderComposition()
+    {
+        const double phi=0.39;
+        const double aRelative=0.24;
+
+        GRC_AnisotropicI72Model powderModel;
+        powderModel.aAlpha=aRelative;
+        powderModel.aBeta=0.0;
+        powderModel.aGamma=0.0;
+
+        GRC_AnisotropicI72Model frameModel=powderModel;
+        frameModel.bAlpha=-phi;
+        frameModel.aAlpha=aRelative-phi;
+
+        GRC_I72Comparison powder,frame;
+        if (!GRC_BuildAnisotropicI72Comparison(
+                9.5,1.0,powderModel,
+                GRC_Orientation(phi,0.0,0.0),powder) ||
+            !GRC_BuildAnisotropicI72Comparison(
+                9.5,1.0,frameModel,
+                GRC_IdentityOrientation(),frame))
+            return false;
+
+        const auto ep=GRC_StrongestFrequencies(powder.exact,8);
+        const auto ef=GRC_StrongestFrequencies(frame.exact,8);
+        const auto hp=GRC_StrongestFrequencies(powder.hybrid,8);
+        const auto hf=GRC_StrongestFrequencies(frame.hybrid,8);
+        if (ep.size()!=8 || ef.size()!=8 ||
+            hp.size()!=8 || hf.size()!=8)
+            return false;
+
+        double exactError=0.0,hybridError=0.0;
+        for (std::size_t i=0;i<8;++i)
+        {
+            exactError=std::max(exactError,std::abs(ep[i]-ef[i]));
+            hybridError=std::max(hybridError,std::abs(hp[i]-hf[i]));
+        }
+        return exactError<1.0e-11 && hybridError<1.0e-11;
+    }
+
     bool GRC_TestExactLineBackendSeam()
     {
         using namespace RunSection::General::Resonance;
@@ -420,7 +1054,7 @@ namespace
         if (!ExactResonanceSolver::Generate(
                 H,rho,dHdB,muX,muY,request,lines,error))
             return false;
-        if (lines.lines.empty())
+        if (lines.lines.empty() || !lines.fieldJacobianQualified)
             return false;
 
         // Backend-neutral lines must not depend on the experimental
@@ -431,7 +1065,8 @@ namespace
         if (!ExactResonanceSolver::Generate(
                 H,rho,dHdB,muX,muY,otherFrequency,linesW,error))
             return false;
-        if (linesW.lines.size() != lines.lines.size())
+        if (linesW.lines.size() != lines.lines.size() ||
+            !linesW.fieldJacobianQualified)
             return false;
         for (size_t i=0; i<lines.lines.size(); ++i)
         {
@@ -503,6 +1138,14 @@ void AddGeneralResonanceCoreTests(std::vector<test_case> &cases)
     cases.push_back(test_case("General resonance core resolves degenerate field slopes",GRC_TestDegenerateFieldJacobian));
     cases.push_back(test_case("General resonance Hamiltonian adapter preserves full/secular distinction",GRC_TestHamiltonianAdapterPreservesApproximation));
     cases.push_back(test_case("General resonance exact solver line-backend seam parity",GRC_TestExactLineBackendSeam));
+    cases.push_back(test_case("General resonance R2A one-I=7/2 hybrid zero-coupling limit",GRC_TestHybridI72ZeroLimit));
+    cases.push_back(test_case("General resonance R2A one-I=7/2 first-order A^2 error scaling",GRC_TestHybridI72FirstOrderScaling));
+    cases.push_back(test_case("General resonance R2A one-I=7/2 perturbation improves from X to W band",GRC_TestHybridI72HighFieldImproves));
+    cases.push_back(test_case("General resonance R2A unqualified hybrid Jacobian fails closed",GRC_TestHybridUnqualifiedJacobianFailsClosed));
+    cases.push_back(test_case("General resonance R2A anisotropic non-coaxial A^2 scaling at arbitrary orientation",GRC_TestHybridAnisotropicA2ScalingAtArbitraryOrientation));
+    cases.push_back(test_case("General resonance R2A anisotropic perturbation improves from X to W band",GRC_TestHybridAnisotropicXWImprovement));
+    cases.push_back(test_case("General resonance R2A non-coaxial hyperfine tensor frame is active",GRC_TestHybridNonCoaxialTensorFrameIsActive));
+    cases.push_back(test_case("General resonance R2A rigid z-frame/powder composition covariance",GRC_TestHybridRigidZFramePowderComposition));
     cases.push_back(test_case("General resonance core frozen legacy isotropic-g sweep parity",GRC_TestLegacyParityIsotropicG));
     cases.push_back(test_case("General resonance core frozen legacy axial-g sweep parity",GRC_TestLegacyParityAxialG));
     cases.push_back(test_case("General resonance core frozen legacy hyperfine sweep parity",GRC_TestLegacyParityHyperfine));

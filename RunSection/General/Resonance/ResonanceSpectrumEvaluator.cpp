@@ -99,6 +99,11 @@ namespace RunSection::General::Resonance
         spectrum = SpectrumPoint{};
         if (!ValidateRequest(request, error))
             return false;
+        if (!lines.fieldJacobianQualified)
+        {
+            error = "resonance line set does not have a qualified field Jacobian";
+            return false;
+        }
 
         const double omegaMw = 2.0 * arma::datum::pi * request.microwaveFrequencyGHz;
 

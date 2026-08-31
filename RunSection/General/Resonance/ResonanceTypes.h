@@ -58,6 +58,12 @@ namespace RunSection::General::Resonance
     struct ResonanceLineSet
     {
         std::vector<ResonanceLine> lines;
+
+        // A line provider may know transition frequencies/intensities before a
+        // complete field derivative has been qualified. Spectrum evaluation
+        // must reject such a set rather than silently use an approximate
+        // dB/domega. ExactResonanceSolver always sets this true.
+        bool fieldJacobianQualified = false;
     };
 
     struct SpectrumRequest

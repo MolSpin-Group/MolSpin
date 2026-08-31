@@ -35,6 +35,7 @@ namespace RunSection::General::Resonance
         {
             error.clear();
             lineSet.lines.clear();
+            lineSet.fieldJacobianQualified = true;
 
             const arma::uword dim = hamiltonian.n_rows;
             if (dim == 0 || hamiltonian.n_cols != dim)
