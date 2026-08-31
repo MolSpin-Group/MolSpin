@@ -19,6 +19,9 @@
 
 #include "ActionAddVector.h"
 #include "TaskStaticHSResonanceSpectra.h"
+#include "ExactResonanceSolver.h"
+#include "ResonanceSpectrumEvaluator.h"
+#include "ResonanceTypes.h"
 #include "ObjectParser.h"
 #include "Settings.h"
 #include "Spin.h"
@@ -104,9 +107,6 @@ namespace RunSection
 		{
 			this->WriteHeader(this->Data());
 		}
-
-		// Excitation angular frequency (rad/ns)
-		const double omega_mw = 2.0 * arma::datum::pi * this->mwFrequencyGHz;
 
 		// Loop through all SpinSystems
 		auto systems = this->SpinSystems();
@@ -567,8 +567,18 @@ namespace RunSection
 			for (const auto &inter : zeemanInteractions)
 				zeelist.push_back(inter->Name());
 
-			const arma::cx_double I(0.0, 1.0);
 			const size_t spin_count = detectSpins.size();
+
+			General::Resonance::SpectrumRequest resonanceRequest;
+			resonanceRequest.microwaveFrequencyGHz = this->mwFrequencyGHz;
+			resonanceRequest.linewidth_mT = lwB_mT;
+			resonanceRequest.lineshape =
+				(this->lineshape == "lorentzian")
+				? General::Resonance::Lineshape::Lorentzian
+				: General::Resonance::Lineshape::Gaussian;
+			resonanceRequest.populationThreshold = 1.0e-15;
+			resonanceRequest.minimumSlope = 1.0e-15;
+			resonanceRequest.maximumDBdOmega = 1.0e5;
 
 			// For one powder orientation we:
 			// 1. rotate the static Hamiltonian and the initial state,
@@ -644,28 +654,13 @@ namespace RunSection
 					if (!have_eig)
 						continue;
 
-					// Armadillo's complex transpose is already Hermitian. Applying conj()
-					// first would produce U^T instead of U^dagger and corrupt complex
-					// eigenbasis populations and transition moments.
-					const arma::cx_mat Udag = eigvec.t();
-					const arma::cx_mat rho_eig = Udag * rho_oriented * eigvec;
-					const arma::vec rho_diag = arma::real(rho_eig.diag());
-
-					// The Zeeman-only Hamiltonian determines how quickly a transition
-					// moves in field when its energy changes. This Jacobian turns an
-					// energy-domain resonance condition into a field-swept intensity.
+					// Task retains Hamiltonian construction and optional Mz-block
+					// diagonalization. General Resonance owns subsequent Jacobian and
+					// transition physics.
 					arma::sp_cx_mat Hz_sp;
 					if (!space_local.BaseHamiltonianRotatedZYZ(zeelist, Rot, Hz_sp))
 						continue;
 					arma::sp_cx_mat dHdB_sp = Hz_sp / Bmag; // rad/ns/T
-					// For Hermitian dHdB, Re(<n|dHdB|n> - <m|dHdB|m>) gives d(En-Em)/dB.
-					// Compute diagonal expectations once per orientation to avoid O(N^4) mat-vecs in the transition loop.
-					arma::cx_mat dHdB_ev = dHdB_sp * eigvec;
-					arma::vec dHdB_diag(spaceDim);
-					for (arma::uword i = 0; i < spaceDim; ++i)
-					{
-						dHdB_diag(i) = std::real(arma::cdot(eigvec.col(i), dHdB_ev.col(i)));
-					}
 
 					std::vector<arma::cx_mat> mux_list(spin_count);
 					std::vector<arma::cx_mat> muy_list(spin_count);
@@ -699,100 +694,49 @@ namespace RunSection
 					if (!tensor_dim_ok)
 						continue;
 
-					// Transition moments are evaluated in the instantaneous eigenbasis.
-					arma::cx_mat muxT_eig = Udag * muxT * eigvec;
-					arma::cx_mat muyT_eig = Udag * muyT * eigvec;
-					std::vector<arma::cx_mat> mux_eig(spin_count);
-					std::vector<arma::cx_mat> muy_eig(spin_count);
+					std::vector<General::Resonance::ResonanceDetectionOperator> detectionChannels;
+					detectionChannels.reserve(spin_count);
 					for (size_t i = 0; i < spin_count; ++i)
 					{
-						mux_eig[i] = Udag * mux_list[i] * eigvec;
-						muy_eig[i] = Udag * muy_list[i] * eigvec;
+						General::Resonance::ResonanceDetectionOperator channel;
+						channel.x = mux_list[i];
+						channel.y = muy_list[i];
+						detectionChannels.push_back(std::move(channel));
 					}
 
-					const arma::uword dim = eigval.n_elem;
-					if (dim != spaceDim)
+					General::Resonance::ResonanceLineSet resonanceLines;
+					std::string resonanceError;
+					if (!General::Resonance::ExactResonanceSolver::Generate(
+							eigval, eigvec, rho_oriented, dHdB_sp,
+							muxT, muyT, resonanceRequest,
+							resonanceLines, resonanceError, detectionChannels))
 						continue;
 
-					double loc_total_x = 0.0;
-					double loc_total_y = 0.0;
-					double loc_total_perp = 0.0;
-					double loc_cross_x = 0.0;
-					double loc_cross_y = 0.0;
+					General::Resonance::SpectrumPoint resonancePoint;
+					if (!General::Resonance::ResonanceSpectrumEvaluator::Evaluate(
+							resonanceLines, resonanceRequest, resonancePoint, resonanceError))
+						continue;
+					if (resonancePoint.channels.size() != spin_count)
+						continue;
+
+					const double loc_total_x = resonancePoint.totalX;
+					const double loc_total_y = resonancePoint.totalY;
+					const double loc_total_perp = resonancePoint.totalPerpendicular;
+					const double loc_cross_x = resonancePoint.crossX;
+					const double loc_cross_y = resonancePoint.crossY;
 					std::vector<double> loc_spin_x(spin_count, 0.0);
 					std::vector<double> loc_spin_y(spin_count, 0.0);
 					std::vector<double> loc_spin_perp(spin_count, 0.0);
 					std::vector<double> loc_spin_p(spin_count, 0.0);
 					std::vector<double> loc_spin_m(spin_count, 0.0);
-
-					for (arma::uword m = 0; m < dim; ++m)
+					for (size_t i = 0; i < spin_count; ++i)
 					{
-						const double rho_mm = rho_diag(m);
-						for (arma::uword n = m + 1; n < dim; ++n)
-						{
-
-								// Positive absorption corresponds to lower-state population minus upper-state population.
-								const double population = rho_mm - rho_diag(n);
-							if (std::abs(population) < 1e-15)
-								continue;
-
-							const double deltaOmega = (eigval(n) - eigval(m)) - omega_mw; // rad/ns
-							const double abs_domega_dB = std::abs(dHdB_diag(n) - dHdB_diag(m));
-							if (!std::isfinite(abs_domega_dB) || abs_domega_dB < 1e-15)
-								continue;
-
-							const double dBdE = 1.0 / abs_domega_dB; // T / (rad/ns)
-							// Jacobian safeguard: the 1/g factor (dB/dE) can diverge when
-							// d(E_n-E_m)/dB \approx 0 (near avoided crossings / degeneracies).
-							// Skip these transitions to avoid unphysical spikes.
-							if (dBdE > 1e5)
-								continue;
-
-							const double deltaB = deltaOmega * dBdE; // T
-							const double deltaB_mT = 1.0e3 * deltaB;
-
-							const double L = this->LineshapeValue(deltaB_mT, lwB_mT);
-							if (L == 0.0)
-								continue;
-
-							// The spectral weight is the product of the field Jacobian and
-							// the chosen lineshape evaluated at the field detuning.
-							const double wField = dBdE * L;
-
-							const double ITx = std::norm(muxT_eig(m, n));
-							const double ITy = std::norm(muyT_eig(m, n));
-							double I_sum_x = 0.0;
-							double I_sum_y = 0.0;
-
-							for (size_t i = 0; i < spin_count; ++i)
-							{
-								const arma::cx_double muix = mux_eig[i](m, n);
-								const arma::cx_double muiy = muy_eig[i](m, n);
-								const double Iix = std::norm(muix);
-								const double Iiy = std::norm(muiy);
-
-								I_sum_x += Iix;
-								I_sum_y += Iiy;
-
-								loc_spin_x[i] += population * Iix * wField;
-								loc_spin_y[i] += population * Iiy * wField;
-								loc_spin_perp[i] += population * 0.5 * (Iix + Iiy) * wField;
-
-								const arma::cx_double mup = muix + I * muiy;
-								const arma::cx_double mum = muix - I * muiy;
-								loc_spin_p[i] += population * std::norm(mup) * wField;
-								loc_spin_m[i] += population * std::norm(mum) * wField;
-							}
-
-							const double ICx = ITx - I_sum_x;
-							const double ICy = ITy - I_sum_y;
-
-							loc_total_x += population * ITx * wField;
-							loc_total_y += population * ITy * wField;
-							loc_total_perp += population * 0.5 * (ITx + ITy) * wField;
-							loc_cross_x += population * ICx * wField;
-							loc_cross_y += population * ICy * wField;
-						}
+						const auto &channel = resonancePoint.channels[i];
+						loc_spin_x[i] = channel.x;
+						loc_spin_y[i] = channel.y;
+						loc_spin_perp[i] = channel.perpendicular;
+						loc_spin_p[i] = channel.plus;
+						loc_spin_m[i] = channel.minus;
 					}
 
 					acc_total_x += w * loc_total_x;

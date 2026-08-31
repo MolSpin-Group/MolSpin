@@ -343,6 +343,19 @@ void AddTaskStaticHSResonanceSpectraTests(std::vector<test_case> &cases)
 		return normalizedRms < 1e-10;
 	}));
 
+	cases.push_back(test_case("Resonance spectra canonical uncached Mz block equivalence", []() {
+		std::vector<double> blocked;
+		std::vector<double> full;
+		if (!RunComplexTripletSweep(false, "exact", true, blocked, 0.0, 1) ||
+			!RunComplexTripletSweep(false, "exact", false, full, 0.0, 1))
+			return false;
+		const double normalizedRms = NormalizedRms(blocked, full);
+		if (normalizedRms >= 1e-12)
+			std::cerr << "Canonical uncached Mz-block/full normalized RMS mismatch: "
+					  << normalizedRms << std::endl;
+		return normalizedRms < 1e-12;
+	}));
+
 	cases.push_back(test_case("Resonance spectra Mz block equivalence", []() {
 		std::vector<double> blocked;
 		std::vector<double> full;
