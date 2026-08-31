@@ -99,6 +99,11 @@ namespace RunSection::General::Resonance
         arma::sp_cx_mat coreDHdB;
         arma::cx_mat coreMuX;
         arma::cx_mat coreMuY;
+
+        // Optional ordered decomposition of the total transverse detection
+        // operators. If present, it must sum back to coreMuX/coreMuY.
+        std::vector<ResonanceDetectionOperator> coreDetectionChannels;
+
         HybridNuclearResonanceRequest hybrid;
     };
 
@@ -136,6 +141,8 @@ namespace RunSection::General::Resonance
             arma::vec corePopulations;
             arma::cx_mat muXEigen;
             arma::cx_mat muYEigen;
+            std::vector<ResonanceDetectionOperator>
+                detectionChannelsEigen;
             std::vector<NuclearManifold> nuclear;
             arma::uword nuclearDimension = 0;
             double overlapThreshold = 0.0;
@@ -346,6 +353,54 @@ namespace RunSection::General::Resonance
                 error = "hybrid core operator dimensions do not match";
                 return false;
             }
+            if (!point.coreDetectionChannels.empty())
+            {
+                arma::cx_mat sumX(
+                    coreDimension,coreDimension,
+                    arma::fill::zeros);
+                arma::cx_mat sumY(
+                    coreDimension,coreDimension,
+                    arma::fill::zeros);
+
+                for (const auto &channel:
+                     point.coreDetectionChannels)
+                {
+                    if (channel.x.n_rows!=coreDimension ||
+                        channel.x.n_cols!=coreDimension ||
+                        channel.y.n_rows!=coreDimension ||
+                        channel.y.n_cols!=coreDimension ||
+                        !channel.x.is_finite() ||
+                        !channel.y.is_finite())
+                    {
+                        error =
+                            "hybrid resolved detection channel dimensions do not match the core";
+                        return false;
+                    }
+                    sumX+=channel.x;
+                    sumY+=channel.y;
+                }
+
+                const double scale=std::max({
+                    1.0,
+                    arma::norm(point.coreMuX,"fro"),
+                    arma::norm(point.coreMuY,"fro"),
+                    arma::norm(sumX,"fro"),
+                    arma::norm(sumY,"fro")
+                });
+
+                if (arma::norm(
+                        sumX-point.coreMuX,"fro")>
+                        1.0e-12*scale ||
+                    arma::norm(
+                        sumY-point.coreMuY,"fro")>
+                        1.0e-12*scale)
+                {
+                    error =
+                        "hybrid resolved detection channels do not sum to total transverse operators";
+                    return false;
+                }
+            }
+
             if (nuclearDimension < 2 ||
                 nucleus.nuclearHamiltonian.n_rows != nuclearDimension ||
                 nucleus.nuclearHamiltonian.n_cols != nuclearDimension ||
@@ -415,7 +470,11 @@ namespace RunSection::General::Resonance
             if (!ResonanceTransitionMoments::Transform(
                     solution.coreEigenvectors,
                     point.coreMuX,point.coreMuY,
-                    solution.muXEigen,solution.muYEigen,error))
+                    solution.muXEigen,solution.muYEigen,error) ||
+                !ResonanceTransitionMoments::TransformChannels(
+                    solution.coreEigenvectors,
+                    point.coreDetectionChannels,
+                    solution.detectionChannelsEigen,error))
                 return false;
 
             IndependentNucleusSolution nucleus;
@@ -437,7 +496,8 @@ namespace RunSection::General::Resonance
 
         static bool BuildComponents(const PointSolution &solution,
             const SpectrumRequest &request, bool applyAnalyticSlope,
-            std::vector<HybridComponent> &components)
+            std::vector<HybridComponent> &components,
+            std::string &error)
         {
             components.clear();
             const arma::uword coreDimension =
@@ -455,10 +515,24 @@ namespace RunSection::General::Resonance
                     const double corePopulationDifference =
                         solution.corePopulations(lower)-
                         solution.corePopulations(upper);
-                    const TransitionMoment coreMoment =
-                        ResonanceTransitionMoments::Evaluate(
-                            solution.muXEigen,solution.muYEigen,
-                            lower,upper);
+                    TransitionMoment coreMoment;
+                    if (solution.detectionChannelsEigen.empty())
+                    {
+                        coreMoment =
+                            ResonanceTransitionMoments::Evaluate(
+                                solution.muXEigen,
+                                solution.muYEigen,
+                                lower,upper);
+                    }
+                    else if (!ResonanceTransitionMoments::EvaluateResolved(
+                            solution.muXEigen,
+                            solution.muYEigen,
+                            solution.detectionChannelsEigen,
+                            lower,upper,
+                            coreMoment,error))
+                    {
+                        return false;
+                    }
 
                     for (arma::uword r=0; r<nuclearDimension; ++r)
                     {
@@ -495,12 +569,9 @@ namespace RunSection::General::Resonance
                                 solution.nuclear[lower].energies(r);
                             component.line.populationDifference =
                                 populationDifference;
-                            component.line.moment.x =
-                                coreMoment.x*overlapWeight;
-                            component.line.moment.y =
-                                coreMoment.y*overlapWeight;
-                            component.line.moment.perpendicular =
-                                coreMoment.perpendicular*overlapWeight;
+                            component.line.moment =
+                                ResonanceTransitionMoments::Scale(
+                                    coreMoment,overlapWeight);
 
                             if (applyAnalyticSlope)
                             {
@@ -723,6 +794,8 @@ namespace RunSection::General::Resonance
                 point.coreMuX;
             firstPoint.coreMuY =
                 point.coreMuY;
+            firstPoint.coreDetectionChannels =
+                point.coreDetectionChannels;
             firstPoint.hybrid.nuclei = {
                 point.hybrid.nuclei.front()};
 
@@ -837,11 +910,25 @@ namespace RunSection::General::Resonance
                         request.populationThreshold)
                         continue;
 
-                    const TransitionMoment coreMoment =
-                        ResonanceTransitionMoments::Evaluate(
+                    TransitionMoment coreMoment;
+                    if (solution.core.
+                            detectionChannelsEigen.empty())
+                    {
+                        coreMoment =
+                            ResonanceTransitionMoments::Evaluate(
+                                solution.core.muXEigen,
+                                solution.core.muYEigen,
+                                lower,upper);
+                    }
+                    else if (!ResonanceTransitionMoments::EvaluateResolved(
                             solution.core.muXEigen,
                             solution.core.muYEigen,
-                            lower,upper);
+                            solution.core.detectionChannelsEigen,
+                            lower,upper,
+                            coreMoment,error))
+                    {
+                        return false;
+                    }
 
                     std::vector<MultiPartialComponent>
                         partials(1);
@@ -1090,15 +1177,10 @@ namespace RunSection::General::Resonance
                             partial.nuclearShift;
                         output.line.populationDifference =
                             populationDifference;
-                        output.line.moment.x =
-                            coreMoment.x*
-                            partial.overlapWeight;
-                        output.line.moment.y =
-                            coreMoment.y*
-                            partial.overlapWeight;
-                        output.line.moment.perpendicular =
-                            coreMoment.perpendicular*
-                            partial.overlapWeight;
+                        output.line.moment =
+                            ResonanceTransitionMoments::Scale(
+                                coreMoment,
+                                partial.overlapWeight);
                         output.lowerNuclear =
                             partial.lowerNuclear;
                         output.upperNuclear =
@@ -1109,13 +1191,8 @@ namespace RunSection::General::Resonance
                             !std::isfinite(
                                 output.line.
                                     populationDifference) ||
-                            !std::isfinite(
-                                output.line.moment.x) ||
-                            !std::isfinite(
-                                output.line.moment.y) ||
-                            !std::isfinite(
-                                output.line.moment.
-                                    perpendicular))
+                            !ResonanceTransitionMoments::IsFinite(
+                                output.line.moment))
                         {
                             error =
                                 "non-finite independent multi-nucleus resonance line";
@@ -1294,12 +1371,7 @@ namespace RunSection::General::Resonance
 
     private:
         static bool GenerateMultiNucleusFirstOrder(
-            const arma::sp_cx_mat &coreHamiltonian,
-            const arma::cx_mat &coreDensity,
-            const arma::sp_cx_mat &coreDHdB,
-            const arma::cx_mat &coreMuX,
-            const arma::cx_mat &coreMuY,
-            const HybridNuclearResonanceRequest &hybrid,
+            const HybridNuclearResonancePoint &point,
             const SpectrumRequest &request,
             ResonanceLineSet &lineSet,
             HybridNuclearResonanceReport &report,
@@ -1311,20 +1383,6 @@ namespace RunSection::General::Resonance
             report =
                 HybridNuclearResonanceReport{};
 
-            HybridNuclearResonancePoint point;
-            point.coreHamiltonian =
-                coreHamiltonian;
-            point.coreDensity =
-                coreDensity;
-            point.coreDHdB =
-                coreDHdB;
-            point.coreMuX =
-                coreMuX;
-            point.coreMuY =
-                coreMuY;
-            point.hybrid =
-                hybrid;
-
             IndependentMultiPointSolution solution;
             if (!SolveIndependentMultiPoint(
                     point,request,
@@ -1334,7 +1392,7 @@ namespace RunSection::General::Resonance
             std::vector<IndependentMultiComponent>
                 components;
             if (!BuildIndependentMultiComponents(
-                    solution,hybrid,request,
+                    solution,point.hybrid,request,
                     components,report,error))
                 return false;
 
@@ -1581,28 +1639,16 @@ namespace RunSection::General::Resonance
         }
 
         static bool GenerateSingleNucleusFirstOrder(
-            const arma::sp_cx_mat &coreHamiltonian,
-            const arma::cx_mat &coreDensity,
-            const arma::sp_cx_mat &coreDHdB,
-            const arma::cx_mat &coreMuX,
-            const arma::cx_mat &coreMuY,
-            const HybridNuclearResonanceNucleus &hybrid,
+            const HybridNuclearResonancePoint &point,
             const SpectrumRequest &request,
             ResonanceLineSet &lineSet,
             std::string &error)
         {
-            HybridNuclearResonancePoint point;
-            point.coreHamiltonian = coreHamiltonian;
-            point.coreDensity = coreDensity;
-            point.coreDHdB = coreDHdB;
-            point.coreMuX = coreMuX;
-            point.coreMuY = coreMuY;
-            point.hybrid.nuclei = {hybrid};
-
             error.clear();
             lineSet.lines.clear();
             lineSet.fieldJacobianQualified =
-                hybrid.fieldIndependentProjection;
+                point.hybrid.nuclei.front().
+                    fieldIndependentProjection;
 
             PointSolution solution;
             if (!SolvePoint(point,request,solution,error))
@@ -1610,7 +1656,7 @@ namespace RunSection::General::Resonance
 
             std::vector<HybridComponent> components;
             if (!BuildComponents(
-                    solution,request,true,components))
+                    solution,request,true,components,error))
                 return false;
 
             for (const auto &component : components)
@@ -1678,7 +1724,7 @@ namespace RunSection::General::Resonance
 
             std::vector<HybridComponent> components;
             if (!BuildComponents(
-                    center,request,false,components))
+                    center,request,false,components,error))
                 return false;
 
             const double h = fieldResponse.fieldStepT;
@@ -1814,12 +1860,7 @@ namespace RunSection::General::Resonance
 
                 const bool ok =
                     GenerateSingleNucleusFirstOrder(
-                        point.coreHamiltonian,
-                        point.coreDensity,
-                        point.coreDHdB,
-                        point.coreMuX,
-                        point.coreMuY,
-                        nucleus,
+                        point,
                         request,lineSet,error);
                 if (!ok)
                     return false;
@@ -1837,12 +1878,7 @@ namespace RunSection::General::Resonance
             }
 
             return GenerateMultiNucleusFirstOrder(
-                point.coreHamiltonian,
-                point.coreDensity,
-                point.coreDHdB,
-                point.coreMuX,
-                point.coreMuY,
-                point.hybrid,
+                point,
                 request,lineSet,report,error);
         }
 

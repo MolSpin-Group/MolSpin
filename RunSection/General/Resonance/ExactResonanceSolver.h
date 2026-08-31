@@ -18,6 +18,7 @@
 #include "ResonanceTransitionMoments.h"
 #include "ResonanceTypes.h"
 
+#include <algorithm>
 #include <armadillo>
 #include <string>
 #include <vector>
@@ -31,7 +32,8 @@ namespace RunSection::General::Resonance
             const arma::cx_mat &density, const arma::sp_cx_mat &dHdB,
             const arma::cx_mat &muX, const arma::cx_mat &muY,
             const SpectrumRequest &request, ResonanceLineSet &lineSet,
-            std::string &error)
+            std::string &error,
+            const std::vector<ResonanceDetectionOperator> &detectionChannels = {})
         {
             error.clear();
             lineSet.lines.clear();
@@ -54,6 +56,51 @@ namespace RunSection::General::Resonance
             {
                 error = "resonance operator dimension does not match the Hamiltonian";
                 return false;
+            }
+
+            if (!detectionChannels.empty())
+            {
+                arma::cx_mat sumX(
+                    dim,dim,arma::fill::zeros);
+                arma::cx_mat sumY(
+                    dim,dim,arma::fill::zeros);
+
+                for (const auto &channel:detectionChannels)
+                {
+                    if (channel.x.n_rows!=dim ||
+                        channel.x.n_cols!=dim ||
+                        channel.y.n_rows!=dim ||
+                        channel.y.n_cols!=dim ||
+                        !channel.x.is_finite() ||
+                        !channel.y.is_finite())
+                    {
+                        error =
+                            "resolved resonance detection channel dimensions do not match the Hamiltonian";
+                        return false;
+                    }
+                    sumX+=channel.x;
+                    sumY+=channel.y;
+                }
+
+                const double scale=std::max({
+                    1.0,
+                    arma::norm(muX,"fro"),
+                    arma::norm(muY,"fro"),
+                    arma::norm(sumX,"fro"),
+                    arma::norm(sumY,"fro")
+                });
+
+                if (arma::norm(
+                        sumX-muX,"fro")>
+                        1.0e-12*scale ||
+                    arma::norm(
+                        sumY-muY,"fro")>
+                        1.0e-12*scale)
+                {
+                    error =
+                        "resolved resonance detection channels do not sum to total transverse operators";
+                    return false;
+                }
             }
 
             arma::vec energies;
@@ -90,6 +137,13 @@ namespace RunSection::General::Resonance
                     muXEigen, muYEigen, error))
                 return false;
 
+            std::vector<ResonanceDetectionOperator>
+                detectionChannelsEigen;
+            if (!ResonanceTransitionMoments::TransformChannels(
+                    eigenvectors,detectionChannels,
+                    detectionChannelsEigen,error))
+                return false;
+
             lineSet.lines.reserve(transitions.size());
             for (const auto &transition : transitions)
             {
@@ -100,8 +154,21 @@ namespace RunSection::General::Resonance
                 line.populationDifference = transition.populationDifference;
                 line.dOmegaDB = transition.dOmegaDB;
                 line.dBdOmega = transition.dBdOmega;
-                line.moment = ResonanceTransitionMoments::Evaluate(
-                    muXEigen, muYEigen, transition.lower, transition.upper);
+                if (detectionChannelsEigen.empty())
+                {
+                    line.moment =
+                        ResonanceTransitionMoments::Evaluate(
+                            muXEigen,muYEigen,
+                            transition.lower,transition.upper);
+                }
+                else if (!ResonanceTransitionMoments::EvaluateResolved(
+                        muXEigen,muYEigen,
+                        detectionChannelsEigen,
+                        transition.lower,transition.upper,
+                        line.moment,error))
+                {
+                    return false;
+                }
                 lineSet.lines.push_back(line);
             }
 

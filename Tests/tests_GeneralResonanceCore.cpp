@@ -4008,6 +4008,436 @@ namespace
         return true;
     }
 
+    bool GRC_R2INear(
+        double a,double b,double tolerance)
+    {
+        const double scale=std::max({
+            1.0,std::abs(a),std::abs(b)});
+        return std::abs(a-b)<=tolerance*scale;
+    }
+
+    bool GRC_TestR2IBuilderResolvedChannelSum()
+    {
+        using namespace RunSection::General::Resonance;
+
+        auto e1=std::make_shared<SpinAPI::Spin>(
+            "E1",
+            "type=electron;spin=1/2;"
+            "tensor=anisotropic(1.91 2.07 2.31);");
+        auto e2=std::make_shared<SpinAPI::Spin>(
+            "E2",
+            "type=electron;spin=1/2;"
+            "tensor=anisotropic(1.97 2.04 2.22);");
+
+        auto b1=std::make_shared<SpinAPI::Interaction>(
+            "B1",
+            "type=zeeman;spins=E1;field=0 0 0.34;"
+            "orientation=0.27,0.58,-0.31;"
+            "ignoretensors=false;"
+            "commonprefactor=true;prefactor=1.0;");
+        auto b2=std::make_shared<SpinAPI::Interaction>(
+            "B2",
+            "type=zeeman;spins=E2;field=0 0 0.34;"
+            "orientation=-0.19,0.46,0.38;"
+            "ignoretensors=false;"
+            "commonprefactor=true;prefactor=1.0;");
+
+        auto system=std::make_shared<SpinAPI::SpinSystem>(
+            "R2IBuilder");
+        system->Add(e1); system->Add(e2);
+        system->Add(b1); system->Add(b2);
+        if (!system->ValidateInteractions().empty())
+            return false;
+
+        SpinAPI::SpinSpace space(
+            std::vector<SpinAPI::spin_ptr>{e1,e2});
+        space.UseSuperoperatorSpace(false);
+        space.UseFullTensorRotation(true);
+
+        const auto orientation=
+            GRC_Orientation(0.41,0.73,-0.22);
+
+        std::vector<ResonanceDetectionOperator> channels;
+        arma::cx_mat totalX,totalY;
+        std::string error;
+
+        if (!ResonanceMagneticMomentBuilder::
+                BuildTransverseChannels(
+                    space,{{e1,b1},{e2,b2}},
+                    orientation.frameToLab,true,
+                    channels,error) ||
+            !ResonanceMagneticMomentBuilder::
+                BuildTransverse(
+                    space,{{e1,b1},{e2,b2}},
+                    orientation.frameToLab,true,
+                    totalX,totalY,error) ||
+            channels.size()!=2)
+            return false;
+
+        arma::cx_mat sumX(
+            totalX.n_rows,totalX.n_cols,
+            arma::fill::zeros);
+        arma::cx_mat sumY(
+            totalY.n_rows,totalY.n_cols,
+            arma::fill::zeros);
+        for (const auto &channel:channels)
+        {
+            sumX+=channel.x;
+            sumY+=channel.y;
+        }
+
+        arma::cx_mat oneX,oneY;
+        if (!ResonanceMagneticMomentBuilder::
+                BuildTransverse(
+                    space,{{e1,b1}},
+                    orientation.frameToLab,true,
+                    oneX,oneY,error))
+            return false;
+
+        const double scale=std::max({
+            1.0,arma::norm(totalX,"fro"),
+            arma::norm(totalY,"fro")
+        });
+
+        return
+            arma::norm(sumX-totalX,"fro")<=
+                1.0e-13*scale &&
+            arma::norm(sumY-totalY,"fro")<=
+                1.0e-13*scale &&
+            arma::norm(
+                channels[0].x-oneX,"fro")<=
+                1.0e-13*scale &&
+            arma::norm(
+                channels[0].y-oneY,"fro")<=
+                1.0e-13*scale;
+    }
+
+    bool GRC_TestR2ITransitionMomentDecomposition()
+    {
+        using namespace RunSection::General::Resonance;
+
+        ResonanceDetectionOperator a,b;
+        a.x.zeros(2,2); a.y.zeros(2,2);
+        b.x.zeros(2,2); b.y.zeros(2,2);
+
+        a.x(0,1)=arma::cx_double(1.0,0.30);
+        a.y(0,1)=arma::cx_double(0.20,-0.40);
+        b.x(0,1)=arma::cx_double(-0.35,0.15);
+        b.y(0,1)=arma::cx_double(0.55,0.25);
+
+        const arma::cx_mat totalX=a.x+b.x;
+        const arma::cx_mat totalY=a.y+b.y;
+
+        TransitionMoment moment;
+        std::string error;
+        if (!ResonanceTransitionMoments::EvaluateResolved(
+                totalX,totalY,{a,b},0,1,
+                moment,error) ||
+            moment.channels.size()!=2)
+            return false;
+
+        const arma::cx_double I(0.0,1.0);
+        const auto ax=a.x(0,1);
+        const auto ay=a.y(0,1);
+        const auto bx=b.x(0,1);
+        const auto by=b.y(0,1);
+
+        const double totalIX=std::norm(ax+bx);
+        const double totalIY=std::norm(ay+by);
+        const double sumIX=std::norm(ax)+std::norm(bx);
+        const double sumIY=std::norm(ay)+std::norm(by);
+
+        return
+            ResonanceTransitionMoments::IsFinite(moment) &&
+            GRC_R2INear(moment.x,totalIX,1.0e-14) &&
+            GRC_R2INear(moment.y,totalIY,1.0e-14) &&
+            GRC_R2INear(
+                moment.crossX,
+                totalIX-sumIX,1.0e-14) &&
+            GRC_R2INear(
+                moment.crossY,
+                totalIY-sumIY,1.0e-14) &&
+            GRC_R2INear(
+                moment.channels[0].plus,
+                std::norm(ax+I*ay),1.0e-14) &&
+            GRC_R2INear(
+                moment.channels[0].minus,
+                std::norm(ax-I*ay),1.0e-14) &&
+            GRC_R2INear(
+                moment.channels[1].plus,
+                std::norm(bx+I*by),1.0e-14) &&
+            GRC_R2INear(
+                moment.channels[1].minus,
+                std::norm(bx-I*by),1.0e-14);
+    }
+
+    bool GRC_TestR2IExactResolvedLineParity()
+    {
+        using namespace RunSection::General::Resonance;
+
+        arma::cx_mat H(2,2,arma::fill::zeros);
+        H(1,1)=60.0;
+        arma::cx_mat rho(2,2,arma::fill::zeros);
+        rho(0,0)=1.0;
+        arma::cx_mat derivative(2,2,arma::fill::zeros);
+        derivative(1,1)=175.0;
+
+        ResonanceDetectionOperator a,b;
+        a.x.zeros(2,2); a.y.zeros(2,2);
+        b.x.zeros(2,2); b.y.zeros(2,2);
+        a.x(0,1)=arma::cx_double(0.7,0.2);
+        a.x(1,0)=std::conj(a.x(0,1));
+        a.y(0,1)=arma::cx_double(0.1,-0.3);
+        a.y(1,0)=std::conj(a.y(0,1));
+        b.x(0,1)=arma::cx_double(-0.2,0.4);
+        b.x(1,0)=std::conj(b.x(0,1));
+        b.y(0,1)=arma::cx_double(0.5,0.15);
+        b.y(1,0)=std::conj(b.y(0,1));
+
+        const arma::cx_mat totalX=a.x+b.x;
+        const arma::cx_mat totalY=a.y+b.y;
+
+        SpectrumRequest request;
+        request.microwaveFrequencyGHz=9.5;
+        request.linewidth_mT=0.1;
+        request.populationThreshold=1.0e-15;
+        request.minimumSlope=1.0e-15;
+
+        ResonanceLineSet frozen,resolved;
+        std::string error;
+        if (!ExactResonanceSolver::Generate(
+                arma::sp_cx_mat(H),rho,
+                arma::sp_cx_mat(derivative),
+                totalX,totalY,request,
+                frozen,error) ||
+            !ExactResonanceSolver::Generate(
+                arma::sp_cx_mat(H),rho,
+                arma::sp_cx_mat(derivative),
+                totalX,totalY,request,
+                resolved,error,{a,b}) ||
+            frozen.lines.size()!=1 ||
+            resolved.lines.size()!=1)
+            return false;
+
+        const auto &x=frozen.lines.front();
+        const auto &y=resolved.lines.front();
+
+        return
+            y.moment.channels.size()==2 &&
+            x.lower==y.lower &&
+            x.upper==y.upper &&
+            GRC_R2INear(x.omega,y.omega,1.0e-14) &&
+            GRC_R2INear(
+                x.populationDifference,
+                y.populationDifference,1.0e-14) &&
+            GRC_R2INear(
+                x.dOmegaDB,y.dOmegaDB,1.0e-14) &&
+            GRC_R2INear(
+                x.dBdOmega,y.dBdOmega,1.0e-14) &&
+            GRC_R2INear(
+                x.moment.x,y.moment.x,1.0e-14) &&
+            GRC_R2INear(
+                x.moment.y,y.moment.y,1.0e-14) &&
+            GRC_R2INear(
+                x.moment.perpendicular,
+                y.moment.perpendicular,1.0e-14);
+    }
+
+    bool GRC_R2IBuildSpectatorPoint(
+        std::size_t nucleusCount,
+        RunSection::General::Resonance::
+            HybridNuclearResonancePoint &point)
+    {
+        using namespace RunSection::General::Resonance;
+
+        if (nucleusCount==0)
+            return false;
+
+        arma::cx_mat sx,sy,sz,id;
+        GRC_R2GA_SpinHalfOperators(
+            sx,sy,sz,id);
+
+        point=HybridNuclearResonancePoint{};
+        point.coreHamiltonian=
+            arma::sp_cx_mat(60.0*sz);
+        point.coreDensity.zeros(2,2);
+        point.coreDensity(1,1)=1.0;
+        point.coreDHdB=
+            arma::sp_cx_mat(175.0*sz);
+
+        ResonanceDetectionOperator a,b;
+        a.x=0.65*sx;
+        a.y=0.25*sy;
+        b.x=0.35*sx;
+        b.y=0.75*sy;
+        point.coreDetectionChannels={a,b};
+        point.coreMuX=a.x+b.x;
+        point.coreMuY=a.y+b.y;
+
+        for (std::size_t k=0;k<nucleusCount;++k)
+        {
+            HybridNuclearResonanceNucleus nucleus;
+            nucleus.hyperfineCoreNuclear.zeros(4,4);
+            nucleus.nuclearHamiltonian.zeros(2,2);
+            nucleus.nuclearDHdB=
+                arma::sp_cx_mat(2,2);
+            nucleus.nuclearDimension=2;
+            nucleus.overlapThreshold=1.0e-14;
+            point.hybrid.nuclei.push_back(nucleus);
+        }
+        return true;
+    }
+
+    bool GRC_TestR2IHybridResolvedScaling()
+    {
+        using namespace RunSection::General::Resonance;
+
+        HybridNuclearResonancePoint point;
+        if (!GRC_R2IBuildSpectatorPoint(1,point))
+            return false;
+
+        point.hybrid.nuclei.front().
+            fieldIndependentProjection=true;
+
+        SpectrumRequest request;
+        request.microwaveFrequencyGHz=9.5;
+        request.linewidth_mT=0.1;
+        request.populationThreshold=1.0e-15;
+        request.minimumSlope=1.0e-15;
+
+        ResonanceLineSet lines;
+        HybridNuclearResonanceReport report;
+        std::string error;
+        if (!HybridNuclearResonanceSolver::
+                GenerateFirstOrder(
+                    point,request,lines,
+                    report,error) ||
+            !lines.fieldJacobianQualified ||
+            lines.lines.empty())
+            return false;
+
+        for (const auto &line:lines.lines)
+        {
+            if (line.moment.channels.size()!=2 ||
+                !ResonanceTransitionMoments::
+                    IsFinite(line.moment))
+                return false;
+
+            const double sumX=
+                line.moment.channels[0].x+
+                line.moment.channels[1].x;
+            const double sumY=
+                line.moment.channels[0].y+
+                line.moment.channels[1].y;
+
+            if (!GRC_R2INear(
+                    line.moment.crossX,
+                    line.moment.x-sumX,
+                    1.0e-13) ||
+                !GRC_R2INear(
+                    line.moment.crossY,
+                    line.moment.y-sumY,
+                    1.0e-13))
+                return false;
+        }
+        return true;
+    }
+
+    bool GRC_TestR2IMergedSpectatorChannelConservation()
+    {
+        using namespace RunSection::General::Resonance;
+
+        HybridNuclearResonancePoint one,two;
+        if (!GRC_R2IBuildSpectatorPoint(1,one) ||
+            !GRC_R2IBuildSpectatorPoint(2,two))
+            return false;
+
+        one.hybrid.mergeFrequencyToleranceRadNs=1.0e-12;
+        two.hybrid.mergeFrequencyToleranceRadNs=1.0e-12;
+
+        SpectrumRequest request;
+        request.microwaveFrequencyGHz=9.5;
+        request.linewidth_mT=0.1;
+        request.populationThreshold=1.0e-15;
+
+        ResonanceLineSet a,b;
+        HybridNuclearResonanceReport ra,rb;
+        std::string error;
+        if (!HybridNuclearResonanceSolver::
+                GenerateFirstOrder(
+                    one,request,a,ra,error) ||
+            !HybridNuclearResonanceSolver::
+                GenerateFirstOrder(
+                    two,request,b,rb,error) ||
+            !rb.mergingApplied)
+            return false;
+
+        const auto x=
+            GRC_R2GA_SortedFixedFieldLines(a);
+        const auto y=
+            GRC_R2GA_SortedFixedFieldLines(b);
+        if (x.size()!=y.size() || x.empty())
+            return false;
+
+        for (std::size_t i=0;i<x.size();++i)
+        {
+            if (x[i].moment.channels.size()!=2 ||
+                y[i].moment.channels.size()!=2)
+                return false;
+
+            const double scale=std::max({
+                1.0,
+                std::abs(
+                    x[i].populationDifference*
+                    x[i].moment.x),
+                std::abs(
+                    y[i].populationDifference*
+                    y[i].moment.x)
+            });
+
+            const auto weightedNear=
+                [&](double xv,double yv)
+                {
+                    return std::abs(
+                        x[i].populationDifference*xv-
+                        y[i].populationDifference*yv)
+                        <=2.0e-12*scale;
+                };
+
+            if (!weightedNear(
+                    x[i].moment.x,
+                    y[i].moment.x) ||
+                !weightedNear(
+                    x[i].moment.y,
+                    y[i].moment.y) ||
+                !weightedNear(
+                    x[i].moment.crossX,
+                    y[i].moment.crossX) ||
+                !weightedNear(
+                    x[i].moment.crossY,
+                    y[i].moment.crossY))
+                return false;
+
+            for (std::size_t k=0;k<2;++k)
+            {
+                if (!weightedNear(
+                        x[i].moment.channels[k].x,
+                        y[i].moment.channels[k].x) ||
+                    !weightedNear(
+                        x[i].moment.channels[k].y,
+                        y[i].moment.channels[k].y) ||
+                    !weightedNear(
+                        x[i].moment.channels[k].plus,
+                        y[i].moment.channels[k].plus) ||
+                    !weightedNear(
+                        x[i].moment.channels[k].minus,
+                        y[i].moment.channels[k].minus))
+                    return false;
+            }
+        }
+        return true;
+    }
+
     bool GRC_LineSetsNear(
         const RunSection::General::Resonance::ResonanceLineSet &a,
         const RunSection::General::Resonance::ResonanceLineSet &b,
@@ -5574,6 +6004,11 @@ void AddGeneralResonanceCoreTests(std::vector<test_case> &cases)
     cases.push_back(test_case("General resonance core field Jacobian and transition detection",GRC_TestFieldJacobianAndDetector));
     cases.push_back(test_case("General resonance core resolves degenerate field slopes",GRC_TestDegenerateFieldJacobian));
     cases.push_back(test_case("General resonance Hamiltonian adapter preserves full/secular distinction",GRC_TestHamiltonianAdapterPreservesApproximation));
+    cases.push_back(test_case("General resonance R2I resolved detection builder sum contract",GRC_TestR2IBuilderResolvedChannelSum));
+    cases.push_back(test_case("General resonance R2I transition-moment channel decomposition",GRC_TestR2ITransitionMomentDecomposition));
+    cases.push_back(test_case("General resonance R2I exact resolved-line total parity",GRC_TestR2IExactResolvedLineParity));
+    cases.push_back(test_case("General resonance R2I hybrid resolved-channel scaling",GRC_TestR2IHybridResolvedScaling));
+    cases.push_back(test_case("General resonance R2I merged spectator channel conservation",GRC_TestR2IMergedSpectatorChannelConservation));
     cases.push_back(test_case("General resonance R2H canonical one/multi cardinality contract",GRC_TestR2HCanonicalCardinalityContract));
     cases.push_back(test_case("General resonance R2H physical two-51V canonical point parity",GRC_TestR2HCanonicalTwoV51PointParity));
     cases.push_back(test_case("General resonance R2H physical two-51V canonical field-response parity",GRC_TestR2HCanonicalTwoV51FieldResponseParity));

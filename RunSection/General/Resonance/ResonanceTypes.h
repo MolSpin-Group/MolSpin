@@ -35,11 +35,41 @@ namespace RunSection::General::Resonance
         double detuningField_mT = 0.0;       // mT
     };
 
-    struct TransitionMoment
+    // One transverse detection operator before transformation to the
+    // instantaneous Hamiltonian eigenbasis. The ordered channel list is owned
+    // by the caller, normally one channel per resolved detection spin.
+    struct ResonanceDetectionOperator
+    {
+        arma::cx_mat x;
+        arma::cx_mat y;
+    };
+
+    // Intensity decomposition for one resolved detection channel. Circular
+    // channels follow the historical StaticHS-Resonance-Spectra convention:
+    // plus=|mu_x+i mu_y|^2 and minus=|mu_x-i mu_y|^2.
+    struct TransitionMomentChannel
     {
         double x = 0.0;
         double y = 0.0;
         double perpendicular = 0.0;
+        double plus = 0.0;
+        double minus = 0.0;
+    };
+
+    struct TransitionMoment
+    {
+        // Coherent total intensities.
+        double x = 0.0;
+        double y = 0.0;
+        double perpendicular = 0.0;
+
+        // Coherent total minus the incoherent channel sum. These reproduce the
+        // historical cross_x/cross_y definition used by StaticHS resonance.
+        double crossX = 0.0;
+        double crossY = 0.0;
+
+        // Ordered per-detection-channel intensities.
+        std::vector<TransitionMomentChannel> channels;
     };
 
     // Backend-neutral unbroadened resonance line at one field/orientation.

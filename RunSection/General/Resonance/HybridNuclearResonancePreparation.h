@@ -651,15 +651,28 @@ namespace RunSection::General::Resonance
                 return false;
             }
 
-            if (!ResonanceMagneticMomentBuilder::BuildTransverse(
-                    coreSpace,
-                    partition.detectionTerms,
-                    orientation.frameToLab,
-                    partition.fullTensorRotation,
-                    point.coreMuX,
-                    point.coreMuY,
-                    error))
+            if (!ResonanceMagneticMomentBuilder::
+                    BuildTransverseChannels(
+                        coreSpace,
+                        partition.detectionTerms,
+                        orientation.frameToLab,
+                        partition.fullTensorRotation,
+                        point.coreDetectionChannels,
+                        error))
                 return false;
+
+            const arma::uword coreDimension=
+                coreSpace.HilbertSpaceDimensions();
+            point.coreMuX.zeros(
+                coreDimension,coreDimension);
+            point.coreMuY.zeros(
+                coreDimension,coreDimension);
+            for (const auto &channel:
+                 point.coreDetectionChannels)
+            {
+                point.coreMuX+=channel.x;
+                point.coreMuY+=channel.y;
+            }
 
             point.hybrid.minimumCumulativeOverlapWeight=
                 partition.minimumCumulativeOverlapWeight;

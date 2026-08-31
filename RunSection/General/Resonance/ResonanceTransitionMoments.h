@@ -27,6 +27,24 @@ namespace RunSection::General::Resonance
 
         static TransitionMoment Evaluate(const arma::cx_mat &_muXEigen,
             const arma::cx_mat &_muYEigen, arma::uword _lower, arma::uword _upper);
+
+        static bool TransformChannels(
+            const arma::cx_mat &_eigenvectors,
+            const std::vector<ResonanceDetectionOperator> &_channels,
+            std::vector<ResonanceDetectionOperator> &_channelsEigen,
+            std::string &_error);
+
+        static bool EvaluateResolved(
+            const arma::cx_mat &_muXEigen,
+            const arma::cx_mat &_muYEigen,
+            const std::vector<ResonanceDetectionOperator> &_channelsEigen,
+            arma::uword _lower, arma::uword _upper,
+            TransitionMoment &_result,std::string &_error);
+
+        static TransitionMoment Scale(
+            const TransitionMoment &_moment,double _factor);
+
+        static bool IsFinite(const TransitionMoment &_moment);
     };
 }
 
