@@ -1580,6 +1580,17 @@ namespace RunSection
 												 : (1.0 / static_cast<double>(gamma_points));
 
 		const double lwB_mT = std::abs(this->linewidth_mT);
+		General::Resonance::SpectrumRequest resonanceRequest;
+		resonanceRequest.microwaveFrequencyGHz = this->mwFrequencyGHz;
+		resonanceRequest.linewidth_mT = lwB_mT;
+		resonanceRequest.lineshape =
+			(this->lineshape == "lorentzian")
+			? General::Resonance::Lineshape::Lorentzian
+			: General::Resonance::Lineshape::Gaussian;
+		resonanceRequest.populationThreshold = 1.0e-15;
+		resonanceRequest.minimumSlope = 1.0e-15;
+		resonanceRequest.maximumDBdOmega = 1.0e5;
+
 		double lineWindow = 0.0;
 		if (useApproxCache || useResfieldsCache)
 		{
@@ -1759,6 +1770,7 @@ namespace RunSection
 				arma::cx_mat Hz = arma::cx_mat(Hz_sp);
 				const double invField0 = 1.0 / field_T[0];
 				arma::cx_mat dHdB = Hz * invField0;
+				const arma::sp_cx_mat dHdB_sp = Hz_sp * invField0;
 
 				std::vector<arma::cx_mat> mux_list(spin_count);
 				std::vector<arma::cx_mat> muy_list(spin_count);
@@ -2054,6 +2066,24 @@ namespace RunSection
 				}
 				else
 				{
+					arma::cx_mat muxT =
+						arma::zeros<arma::cx_mat>(spaceDim, spaceDim);
+					arma::cx_mat muyT =
+						arma::zeros<arma::cx_mat>(spaceDim, spaceDim);
+					std::vector<General::Resonance::ResonanceDetectionOperator>
+						detectionChannels;
+					detectionChannels.reserve(spin_count);
+					for (size_t i = 0; i < spin_count; ++i)
+					{
+						muxT += mux_list[i];
+						muyT += muy_list[i];
+
+						General::Resonance::ResonanceDetectionOperator channel;
+						channel.x = mux_list[i];
+						channel.y = muy_list[i];
+						detectionChannels.push_back(std::move(channel));
+					}
+
 					for (unsigned int step = 0; step < steps; ++step)
 					{
 						arma::vec eigval;
@@ -2061,135 +2091,70 @@ namespace RunSection
 						bool have_eig = false;
 						if (can_block)
 						{
-							const double scale = field_T[step] * invField0;
-							arma::sp_cx_mat H_sp = Hstatic_sp + scale * Hz_sp;
-							have_eig = EigSymBlockMz(H_sp, mzBlocks.blocks, eigval, eigvec);
+							const double scale =
+								field_T[step] * invField0;
+							arma::sp_cx_mat H_sp =
+								Hstatic_sp + scale * Hz_sp;
+							have_eig = EigSymBlockMz(
+								H_sp, mzBlocks.blocks,
+								eigval, eigvec);
 						}
 						else
 						{
-							arma::cx_mat H = Hstatic + field_T[step] * dHdB;
-							have_eig = arma::eig_sym(eigval, eigvec, H);
+							arma::cx_mat H =
+								Hstatic + field_T[step] * dHdB;
+							have_eig =
+								arma::eig_sym(eigval, eigvec, H);
 						}
 						if (!have_eig)
 							continue;
 
-						// Armadillo's complex transpose is already Hermitian. Applying conj()
-						// first would produce U^T instead of U^dagger and corrupt complex
-						// eigenbasis populations and transition moments.
-						const arma::cx_mat Udag = eigvec.t();
-						const arma::cx_mat rho_eig = Udag * rho_oriented * eigvec;
-						const arma::vec rho_diag = arma::real(rho_eig.diag());
-
-						arma::cx_mat dHdB_ev = dHdB * eigvec;
-						arma::vec dHdB_diag(dim);
-						for (arma::uword i = 0; i < dim; ++i)
+						General::Resonance::ResonanceLineSet resonanceLines;
+						std::string resonanceError;
+						if (!General::Resonance::ExactResonanceSolver::Generate(
+								eigval, eigvec, rho_oriented, dHdB_sp,
+								muxT, muyT, resonanceRequest,
+								resonanceLines, resonanceError,
+								detectionChannels))
 						{
-							dHdB_diag(i) = std::real(arma::cdot(eigvec.col(i), dHdB_ev.col(i)));
+							continue;
 						}
 
-						arma::cx_mat muxT = arma::zeros<arma::cx_mat>(spaceDim, spaceDim);
-						arma::cx_mat muyT = arma::zeros<arma::cx_mat>(spaceDim, spaceDim);
-						for (size_t i = 0; i < spin_count; ++i)
+						General::Resonance::SpectrumPoint resonancePoint;
+						if (!General::Resonance::ResonanceSpectrumEvaluator::Evaluate(
+								resonanceLines, resonanceRequest,
+								resonancePoint, resonanceError))
 						{
-							muxT += mux_list[i];
-							muyT += muy_list[i];
+							continue;
 						}
+						if (resonancePoint.channels.size() != spin_count)
+							continue;
 
-						arma::cx_mat muxT_eig = Udag * muxT * eigvec;
-						arma::cx_mat muyT_eig = Udag * muyT * eigvec;
-						std::vector<arma::cx_mat> mux_eig(spin_count);
-						std::vector<arma::cx_mat> muy_eig(spin_count);
-						for (size_t i = 0; i < spin_count; ++i)
-						{
-							mux_eig[i] = Udag * mux_list[i] * eigvec;
-							muy_eig[i] = Udag * muy_list[i] * eigvec;
-						}
-
-						double loc_total_x = 0.0;
-						double loc_total_y = 0.0;
-						double loc_total_perp = 0.0;
-						double loc_cross_x = 0.0;
-						double loc_cross_y = 0.0;
-						std::vector<double> loc_spin_x(spin_count, 0.0);
-						std::vector<double> loc_spin_y(spin_count, 0.0);
-						std::vector<double> loc_spin_perp(spin_count, 0.0);
-						std::vector<double> loc_spin_p(spin_count, 0.0);
-						std::vector<double> loc_spin_m(spin_count, 0.0);
-
-						for (const auto &trans : transitions)
-						{
-							const auto m = trans.first;
-							const auto n = trans.second;
-
-							const double population = rho_diag(m) - rho_diag(n);
-
-							if (std::abs(population) < 1e-15)
-								continue;
-
-							const double deltaOmega = (eigval(n) - eigval(m)) - omega_mw;
-							const double abs_domega_dB = std::abs(dHdB_diag(n) - dHdB_diag(m));
-							if (!std::isfinite(abs_domega_dB) || abs_domega_dB < 1e-15)
-								continue;
-
-							const double dBdE = 1.0 / abs_domega_dB;
-							if (dBdE > 1e5)
-								continue;
-
-							const double deltaB_mT = 1.0e3 * (deltaOmega * dBdE);
-							const double L = this->LineshapeValue(deltaB_mT, lwB_mT);
-							if (L == 0.0)
-								continue;
-
-							const double wField = dBdE * L;
-
-							const double ITx = std::norm(muxT_eig(m, n));
-							const double ITy = std::norm(muyT_eig(m, n));
-							double I_sum_x = 0.0;
-							double I_sum_y = 0.0;
-
-							for (size_t i = 0; i < spin_count; ++i)
-							{
-								const arma::cx_double muix = mux_eig[i](m, n);
-								const arma::cx_double muiy = muy_eig[i](m, n);
-								const double Iix = std::norm(muix);
-								const double Iiy = std::norm(muiy);
-
-								I_sum_x += Iix;
-								I_sum_y += Iiy;
-
-								loc_spin_x[i] += population * Iix * wField;
-								loc_spin_y[i] += population * Iiy * wField;
-								loc_spin_perp[i] += population * 0.5 * (Iix + Iiy) * wField;
-
-								const arma::cx_double mup = muix + I * muiy;
-								const arma::cx_double mum = muix - I * muiy;
-								loc_spin_p[i] += population * std::norm(mup) * wField;
-								loc_spin_m[i] += population * std::norm(mum) * wField;
-							}
-
-							const double ICx = ITx - I_sum_x;
-							const double ICy = ITy - I_sum_y;
-
-							loc_total_x += population * ITx * wField;
-							loc_total_y += population * ITy * wField;
-							loc_total_perp += population * 0.5 * (ITx + ITy) * wField;
-							loc_cross_x += population * ICx * wField;
-							loc_cross_y += population * ICy * wField;
-						}
-
-						_cache.total_x[step] += w * loc_total_x;
-						_cache.total_y[step] += w * loc_total_y;
-						_cache.total_perp[step] += w * loc_total_perp;
-						_cache.cross_x[step] += w * loc_cross_x;
-						_cache.cross_y[step] += w * loc_cross_y;
+						_cache.total_x[step] +=
+							w * resonancePoint.totalX;
+						_cache.total_y[step] +=
+							w * resonancePoint.totalY;
+						_cache.total_perp[step] +=
+							w * resonancePoint.totalPerpendicular;
+						_cache.cross_x[step] +=
+							w * resonancePoint.crossX;
+						_cache.cross_y[step] +=
+							w * resonancePoint.crossY;
 
 						for (size_t i = 0; i < spin_count; ++i)
 						{
-							_cache.spin_x[i][step] += w * loc_spin_x[i];
-							_cache.spin_y[i][step] += w * loc_spin_y[i];
-							_cache.spin_perp[i][step] += w * loc_spin_perp[i];
-							_cache.spin_p[i][step] += w * loc_spin_p[i];
-							_cache.spin_m[i][step] += w * loc_spin_m[i];
+							const auto &channel =
+								resonancePoint.channels[i];
+							_cache.spin_x[i][step] +=
+								w * channel.x;
+							_cache.spin_y[i][step] +=
+								w * channel.y;
+							_cache.spin_perp[i][step] +=
+								w * channel.perpendicular;
+							_cache.spin_p[i][step] +=
+								w * channel.plus;
+							_cache.spin_m[i][step] +=
+								w * channel.minus;
 						}
 					}
 				}
