@@ -3236,6 +3236,696 @@ namespace
         return ratio>3.0 && ratio<5.0;
     }
 
+    bool GRC_R2GB_LineResponseNear(
+        const RunSection::General::Resonance::ResonanceLine &a,
+        const RunSection::General::Resonance::ResonanceLine &b,
+        double tolerance,
+        bool requireCoreLabels=true)
+    {
+        if (requireCoreLabels &&
+            (a.lower!=b.lower ||
+             a.upper!=b.upper))
+            return false;
+
+        const double scale=std::max({
+            1.0,
+            std::abs(a.omega),std::abs(b.omega),
+            std::abs(a.populationDifference),
+            std::abs(b.populationDifference),
+            std::abs(a.dOmegaDB),std::abs(b.dOmegaDB),
+            std::abs(a.dBdOmega),std::abs(b.dBdOmega),
+            std::abs(a.moment.x),std::abs(b.moment.x),
+            std::abs(a.moment.y),std::abs(b.moment.y),
+            std::abs(a.moment.perpendicular),
+            std::abs(b.moment.perpendicular)
+        });
+
+        return
+            std::abs(a.omega-b.omega)<=
+                tolerance*scale &&
+            std::abs(
+                a.populationDifference-
+                b.populationDifference)<=
+                tolerance*scale &&
+            std::abs(
+                a.dOmegaDB-b.dOmegaDB)<=
+                tolerance*scale &&
+            std::abs(
+                a.dBdOmega-b.dBdOmega)<=
+                tolerance*scale &&
+            std::abs(
+                a.moment.x-b.moment.x)<=
+                tolerance*scale &&
+            std::abs(
+                a.moment.y-b.moment.y)<=
+                tolerance*scale &&
+            std::abs(
+                a.moment.perpendicular-
+                b.moment.perpendicular)<=
+                tolerance*scale;
+    }
+
+    std::vector<RunSection::General::Resonance::ResonanceLine>
+    GRC_R2GB_SortedResponseLines(
+        const RunSection::General::Resonance::ResonanceLineSet &set,
+        bool useCoreLabels=true)
+    {
+        auto lines=set.lines;
+        std::sort(
+            lines.begin(),lines.end(),
+            [=](const auto &a,const auto &b)
+            {
+                if (useCoreLabels &&
+                    a.lower!=b.lower)
+                    return a.lower<b.lower;
+                if (useCoreLabels &&
+                    a.upper!=b.upper)
+                    return a.upper<b.upper;
+                if (a.omega!=b.omega)
+                    return a.omega<b.omega;
+                if (a.moment.perpendicular!=
+                    b.moment.perpendicular)
+                    return
+                        a.moment.perpendicular<
+                        b.moment.perpendicular;
+                if (a.dOmegaDB!=b.dOmegaDB)
+                    return a.dOmegaDB<b.dOmegaDB;
+                return
+                    a.populationDifference<
+                    b.populationDifference;
+            });
+        return lines;
+    }
+
+    bool GRC_R2GB_BuildZfsMultiPoint(
+        const GRC_ZfsHybridModel &model,
+        const RunSection::General::HS::HSOrientation &orientation,
+        const std::vector<double> &scales,
+        bool reverseOrder,double fieldT,
+        RunSection::General::Resonance::
+            IndependentMultiNucleusHybridPoint &point,
+        std::string &error)
+    {
+        using namespace RunSection::General::Resonance;
+
+        if (scales.empty())
+        {
+            error =
+                "R2G-B synthetic scale list is empty";
+            return false;
+        }
+
+        std::vector<OneNucleusHybridPoint>
+            one(scales.size());
+        for (std::size_t k=0;
+             k<scales.size();++k)
+        {
+            if (!GRC_BuildZfsHybridPoint(
+                    model,orientation,
+                    scales[k],fieldT,
+                    one[k],error))
+                return false;
+        }
+
+        point =
+            IndependentMultiNucleusHybridPoint{};
+        point.coreHamiltonian =
+            one.front().coreHamiltonian;
+        point.coreDensity =
+            one.front().coreDensity;
+        point.coreDHdB =
+            one.front().coreDHdB;
+        point.coreMuX =
+            one.front().coreMuX;
+        point.coreMuY =
+            one.front().coreMuY;
+
+        if (reverseOrder)
+        {
+            for (auto it=one.rbegin();
+                 it!=one.rend();++it)
+                point.hybrid.nuclei.push_back(
+                    it->hybrid);
+        }
+        else
+        {
+            for (const auto &entry:one)
+                point.hybrid.nuclei.push_back(
+                    entry.hybrid);
+        }
+
+        return true;
+    }
+
+    RunSection::General::Resonance::
+        IndependentMultiNucleusHybridFieldResponseRequest
+    GRC_R2GB_Response(double fieldT,double stepT)
+    {
+        using namespace RunSection::General::Resonance;
+        IndependentMultiNucleusHybridFieldResponseRequest
+            response;
+        response.fieldT=fieldT;
+        response.fieldStepT=stepT;
+        response.minimumCoreStateOverlap=0.85;
+        response.minimumNuclearStateOverlap=0.85;
+        response.jacobianRelativeTolerance=5.0e-4;
+        response.jacobianAbsoluteTolerance=2.0e-4;
+        return response;
+    }
+
+    bool GRC_TestR2GBMultiNucleusN1FieldResponseParity()
+    {
+        using namespace RunSection::General::Resonance;
+
+        GRC_ZfsHybridModel model;
+        const auto orientation=
+            GRC_Orientation(0.27,0.76,-0.34);
+        const double frequency=9.5;
+        const double fieldT=
+            2.0*arma::datum::pi*frequency/
+            (GRC_MU_B_OVER_HBAR*model.gz);
+
+        OneNucleusHybridPointProvider oneProvider=
+            [&](double field,
+                OneNucleusHybridPoint &point,
+                std::string &error)
+            {
+                return GRC_BuildZfsHybridPoint(
+                    model,orientation,0.53,
+                    field,point,error);
+            };
+
+        IndependentMultiNucleusHybridPointProvider
+            multiProvider=
+            [&](double field,
+                IndependentMultiNucleusHybridPoint &point,
+                std::string &error)
+            {
+                return GRC_R2GB_BuildZfsMultiPoint(
+                    model,orientation,{0.53},
+                    false,field,point,error);
+            };
+
+        OneNucleusHybridFieldResponseRequest oneResponse;
+        oneResponse.fieldT=fieldT;
+        oneResponse.fieldStepT=1.0e-4;
+        oneResponse.minimumCoreStateOverlap=0.85;
+        oneResponse.minimumNuclearStateOverlap=0.85;
+        oneResponse.jacobianRelativeTolerance=5.0e-4;
+        oneResponse.jacobianAbsoluteTolerance=2.0e-4;
+
+        const auto multiResponse=
+            GRC_R2GB_Response(
+                fieldT,1.0e-4);
+
+        SpectrumRequest request;
+        request.microwaveFrequencyGHz=frequency;
+        request.linewidth_mT=0.10;
+        request.populationThreshold=1.0e-15;
+        request.minimumSlope=1.0e-15;
+
+        ResonanceLineSet one,multi;
+        IndependentMultiNucleusHybridReport report;
+        std::string error;
+
+        if (!HybridNuclearResonanceSolver::
+                GenerateFirstOrderFiniteDifference(
+                    oneProvider,oneResponse,
+                    request,one,error) ||
+            !HybridNuclearResonanceSolver::
+                GenerateIndependentFirstOrderFiniteDifference(
+                    multiProvider,multiResponse,
+                    request,multi,report,error))
+            return false;
+
+        if (!one.fieldJacobianQualified ||
+            !multi.fieldJacobianQualified ||
+            report.nucleusCount!=1 ||
+            report.productNuclearDimension!=8 ||
+            report.largestDiagonalizedNuclearDimension!=8)
+            return false;
+
+        const auto a=
+            GRC_R2GB_SortedResponseLines(one);
+        const auto b=
+            GRC_R2GB_SortedResponseLines(multi);
+        if (a.size()!=b.size() || a.empty())
+            return false;
+
+        for (std::size_t i=0;i<a.size();++i)
+        {
+            if (!GRC_R2GB_LineResponseNear(
+                    a[i],b[i],2.0e-12))
+                return false;
+        }
+        return true;
+    }
+
+    bool GRC_TestR2GBMultiNucleusPermutationInvariant()
+    {
+        using namespace RunSection::General::Resonance;
+
+        GRC_ZfsHybridModel model;
+        const auto orientation=
+            GRC_Orientation(-0.29,0.72,0.38);
+        const double frequency=9.5;
+        const double fieldT=
+            2.0*arma::datum::pi*frequency/
+            (GRC_MU_B_OVER_HBAR*model.gz);
+
+        const auto makeProvider=
+            [&](bool reverse)
+            {
+                return IndependentMultiNucleusHybridPointProvider(
+                    [&,reverse](
+                        double field,
+                        IndependentMultiNucleusHybridPoint &point,
+                        std::string &error)
+                    {
+                        return GRC_R2GB_BuildZfsMultiPoint(
+                            model,orientation,
+                            {0.43,0.67},
+                            reverse,field,
+                            point,error);
+                    });
+            };
+
+        const auto response=
+            GRC_R2GB_Response(
+                fieldT,1.0e-4);
+
+        SpectrumRequest request;
+        request.microwaveFrequencyGHz=frequency;
+        request.linewidth_mT=0.10;
+        request.populationThreshold=1.0e-15;
+        request.minimumSlope=1.0e-15;
+
+        ResonanceLineSet ab,ba;
+        IndependentMultiNucleusHybridReport
+            reportAB,reportBA;
+        std::string error;
+
+        if (!HybridNuclearResonanceSolver::
+                GenerateIndependentFirstOrderFiniteDifference(
+                    makeProvider(false),response,
+                    request,ab,reportAB,error) ||
+            !HybridNuclearResonanceSolver::
+                GenerateIndependentFirstOrderFiniteDifference(
+                    makeProvider(true),response,
+                    request,ba,reportBA,error))
+            return false;
+
+        if (!ab.fieldJacobianQualified ||
+            !ba.fieldJacobianQualified ||
+            reportAB.productNuclearDimension!=64 ||
+            reportBA.productNuclearDimension!=64 ||
+            reportAB.largestDiagonalizedNuclearDimension!=8 ||
+            reportBA.largestDiagonalizedNuclearDimension!=8)
+            return false;
+
+        const auto a=
+            GRC_R2GB_SortedResponseLines(ab);
+        const auto b=
+            GRC_R2GB_SortedResponseLines(ba);
+        if (a.size()!=b.size() || a.empty())
+            return false;
+
+        for (std::size_t i=0;i<a.size();++i)
+        {
+            if (!GRC_R2GB_LineResponseNear(
+                    a[i],b[i],5.0e-10))
+                return false;
+        }
+        return true;
+    }
+
+    bool GRC_TestR2GBMultiNucleusStepConvergence()
+    {
+        using namespace RunSection::General::Resonance;
+
+        GRC_ZfsHybridModel model;
+        const auto orientation=
+            GRC_Orientation(0.24,0.70,-0.45);
+        const double frequency=9.5;
+        const double fieldT=
+            2.0*arma::datum::pi*frequency/
+            (GRC_MU_B_OVER_HBAR*model.gz);
+
+        IndependentMultiNucleusHybridPointProvider provider=
+            [&](double field,
+                IndependentMultiNucleusHybridPoint &point,
+                std::string &error)
+            {
+                return GRC_R2GB_BuildZfsMultiPoint(
+                    model,orientation,
+                    {0.48,0.61},
+                    false,field,point,error);
+            };
+
+        SpectrumRequest request;
+        request.microwaveFrequencyGHz=frequency;
+        request.linewidth_mT=0.10;
+        request.populationThreshold=1.0e-15;
+        request.minimumSlope=1.0e-15;
+
+        ResonanceLineSet coarse,fine;
+        IndependentMultiNucleusHybridReport
+            coarseReport,fineReport;
+        std::string error;
+
+        if (!HybridNuclearResonanceSolver::
+                GenerateIndependentFirstOrderFiniteDifference(
+                    provider,
+                    GRC_R2GB_Response(
+                        fieldT,1.6e-4),
+                    request,coarse,
+                    coarseReport,error) ||
+            !HybridNuclearResonanceSolver::
+                GenerateIndependentFirstOrderFiniteDifference(
+                    provider,
+                    GRC_R2GB_Response(
+                        fieldT,0.8e-4),
+                    request,fine,
+                    fineReport,error))
+            return false;
+
+        const auto a=
+            GRC_StrongestSlopeLines(
+                coarse,16);
+        const auto b=
+            GRC_StrongestSlopeLines(
+                fine,16);
+
+        if (a.size()!=16 ||
+            b.size()!=16)
+            return false;
+
+        double relative=0.0;
+        for (std::size_t i=0;i<16;++i)
+        {
+            const double scale=
+                std::max(
+                    1.0,
+                    std::abs(b[i].slope));
+            relative=std::max(
+                relative,
+                std::abs(
+                    a[i].slope-
+                    b[i].slope)/scale);
+        }
+
+        return
+            coarse.fieldJacobianQualified &&
+            fine.fieldJacobianQualified &&
+            relative<3.0e-4;
+    }
+
+    bool GRC_TestR2GBMultiNucleusMergingFailsClosed()
+    {
+        using namespace RunSection::General::Resonance;
+
+        GRC_ZfsHybridModel model;
+        const auto orientation=
+            GRC_Orientation(-0.18,0.66,0.33);
+        const double frequency=9.5;
+        const double fieldT=
+            2.0*arma::datum::pi*frequency/
+            (GRC_MU_B_OVER_HBAR*model.gz);
+
+        IndependentMultiNucleusHybridPointProvider provider=
+            [&](double field,
+                IndependentMultiNucleusHybridPoint &point,
+                std::string &error)
+            {
+                if (!GRC_R2GB_BuildZfsMultiPoint(
+                        model,orientation,
+                        {0.45,0.58},
+                        false,field,
+                        point,error))
+                    return false;
+                point.hybrid.
+                    mergeFrequencyToleranceRadNs=
+                    1.0e-9;
+                return true;
+            };
+
+        SpectrumRequest request;
+        request.microwaveFrequencyGHz=frequency;
+        request.linewidth_mT=0.10;
+        request.populationThreshold=1.0e-15;
+        request.minimumSlope=1.0e-15;
+
+        ResonanceLineSet lines;
+        IndependentMultiNucleusHybridReport report;
+        std::string error;
+
+        if (HybridNuclearResonanceSolver::
+                GenerateIndependentFirstOrderFiniteDifference(
+                    provider,
+                    GRC_R2GB_Response(
+                        fieldT,1.0e-4),
+                    request,lines,
+                    report,error))
+            return false;
+
+        return
+            !lines.fieldJacobianQualified &&
+            error ==
+                "multi-nucleus field response requires unmerged center components";
+    }
+
+    bool GRC_R2GB_BuildConditionalI12Point(
+        double fieldT,
+        RunSection::General::Resonance::
+            IndependentMultiNucleusHybridPoint &point)
+    {
+        using namespace RunSection::General::Resonance;
+
+        arma::cx_mat sx,sy,sz,id;
+        GRC_R2GA_SpinHalfOperators(
+            sx,sy,sz,id);
+
+        constexpr double gammaE=175.0;
+        constexpr double gamma1=-0.071;
+        constexpr double gamma2=-0.053;
+        constexpr double q1=0.024;
+        constexpr double q2=-0.031;
+        constexpr double a1=0.32;
+        constexpr double a2=-0.21;
+
+        point=
+            IndependentMultiNucleusHybridPoint{};
+        point.coreHamiltonian=
+            arma::sp_cx_mat(
+                gammaE*fieldT*sz);
+        point.coreDensity.zeros(2,2);
+        point.coreDensity(1,1)=1.0;
+        point.coreDHdB=
+            arma::sp_cx_mat(gammaE*sz);
+        point.coreMuX=sx;
+        point.coreMuY=sy;
+
+        OneNucleusHybridRequest first,second;
+        first.hyperfineCoreNuclear=
+            a1*arma::kron(sz,sz);
+        second.hyperfineCoreNuclear=
+            a2*arma::kron(sz,sz);
+
+        first.nuclearHamiltonian=
+            gamma1*fieldT*sz+
+            q1*sx;
+        second.nuclearHamiltonian=
+            gamma2*fieldT*sz+
+            q2*sx;
+
+        first.nuclearDHdB=
+            arma::sp_cx_mat(
+                gamma1*sz);
+        second.nuclearDHdB=
+            arma::sp_cx_mat(
+                gamma2*sz);
+
+        first.nuclearDimension=2;
+        second.nuclearDimension=2;
+        first.overlapThreshold=1.0e-14;
+        second.overlapThreshold=1.0e-14;
+
+        point.hybrid.nuclei={
+            first,second};
+        return true;
+    }
+
+    bool GRC_R2GB_BuildConditionalI12ExactLines(
+        double fieldT,
+        const RunSection::General::Resonance::
+            SpectrumRequest &request,
+        RunSection::General::Resonance::
+            ResonanceLineSet &lines)
+    {
+        using namespace RunSection::General::Resonance;
+
+        arma::cx_mat sx,sy,sz,id;
+        GRC_R2GA_SpinHalfOperators(
+            sx,sy,sz,id);
+
+        constexpr double gammaE=175.0;
+        constexpr double gamma1=-0.071;
+        constexpr double gamma2=-0.053;
+        constexpr double q1=0.024;
+        constexpr double q2=-0.031;
+        constexpr double a1=0.32;
+        constexpr double a2=-0.21;
+
+        const arma::cx_mat coreH=
+            gammaE*fieldT*sz;
+        const arma::cx_mat n1=
+            gamma1*fieldT*sz+
+            q1*sx;
+        const arma::cx_mat n2=
+            gamma2*fieldT*sz+
+            q2*sx;
+
+        const arma::cx_mat fullH=
+            arma::kron(
+                arma::kron(coreH,id),id)+
+            arma::kron(
+                arma::kron(id,n1),id)+
+            arma::kron(
+                arma::kron(id,id),n2)+
+            a1*arma::kron(
+                arma::kron(sz,sz),id)+
+            a2*arma::kron(
+                sz,arma::kron(id,sz));
+
+        arma::cx_mat coreDensity(
+            2,2,arma::fill::zeros);
+        coreDensity(1,1)=1.0;
+        const arma::cx_mat fullDensity=
+            arma::kron(
+                arma::kron(
+                    coreDensity,0.5*id),
+                0.5*id);
+
+        const arma::cx_mat derivative=
+            gammaE*arma::kron(
+                arma::kron(sz,id),id)+
+            gamma1*arma::kron(
+                arma::kron(id,sz),id)+
+            gamma2*arma::kron(
+                id,arma::kron(id,sz));
+
+        const arma::cx_mat muX=
+            arma::kron(
+                arma::kron(sx,id),id);
+        const arma::cx_mat muY=
+            arma::kron(
+                arma::kron(sy,id),id);
+
+        std::string error;
+        return ExactResonanceSolver::Generate(
+            arma::sp_cx_mat(fullH),
+            fullDensity,
+            arma::sp_cx_mat(derivative),
+            muX,muY,
+            request,lines,error);
+    }
+
+    bool GRC_TestR2GBConditionalTwoI12ExactFieldResponseParity()
+    {
+        using namespace RunSection::General::Resonance;
+
+        const double fieldT=0.34;
+
+        SpectrumRequest request;
+        request.microwaveFrequencyGHz=9.5;
+        request.linewidth_mT=0.10;
+        request.populationThreshold=1.0e-14;
+        request.minimumSlope=1.0e-12;
+
+        ResonanceLineSet exact,hybrid;
+        if (!GRC_R2GB_BuildConditionalI12ExactLines(
+                fieldT,request,exact))
+            return false;
+
+        IndependentMultiNucleusHybridPointProvider provider=
+            [](double field,
+               IndependentMultiNucleusHybridPoint &point,
+               std::string &error)
+            {
+                error.clear();
+                return
+                    GRC_R2GB_BuildConditionalI12Point(
+                        field,point);
+            };
+
+        auto response=
+            GRC_R2GB_Response(
+                fieldT,1.0e-4);
+        response.minimumCoreStateOverlap=0.99;
+        response.minimumNuclearStateOverlap=0.95;
+        response.jacobianRelativeTolerance=1.0e-7;
+        response.jacobianAbsoluteTolerance=1.0e-7;
+
+        IndependentMultiNucleusHybridReport report;
+        std::string error;
+        if (!HybridNuclearResonanceSolver::
+                GenerateIndependentFirstOrderFiniteDifference(
+                    provider,response,
+                    request,hybrid,
+                    report,error))
+            return false;
+
+        if (!exact.fieldJacobianQualified ||
+            !hybrid.fieldJacobianQualified ||
+            report.productNuclearDimension!=4 ||
+            report.largestDiagonalizedNuclearDimension!=2 ||
+            report.maximumDiscardedNuclearWeightFraction>
+                1.0e-12)
+            return false;
+
+        auto a=
+            GRC_R2GB_SortedResponseLines(
+                exact,false);
+        auto b=
+            GRC_R2GB_SortedResponseLines(
+                hybrid,false);
+
+        a.erase(
+            std::remove_if(
+                a.begin(),a.end(),
+                [](const auto &line)
+                {
+                    return
+                        GRC_LineWeight(line)<=
+                        1.0e-14;
+                }),
+            a.end());
+        b.erase(
+            std::remove_if(
+                b.begin(),b.end(),
+                [](const auto &line)
+                {
+                    return
+                        GRC_LineWeight(line)<=
+                        1.0e-14;
+                }),
+            b.end());
+
+        if (a.size()!=b.size() ||
+            a.empty())
+            return false;
+
+        for (std::size_t i=0;i<a.size();++i)
+        {
+            if (!GRC_R2GB_LineResponseNear(
+                    a[i],b[i],
+                    2.0e-6,false))
+                return false;
+        }
+
+        return true;
+    }
+
     bool GRC_TestNuclearZeemanV51Constants()
     {
         SpinAPI::NuclearIsotopeData a,b,c;
@@ -4270,6 +4960,11 @@ void AddGeneralResonanceCoreTests(std::vector<test_case> &cases)
     cases.push_back(test_case("General resonance core field Jacobian and transition detection",GRC_TestFieldJacobianAndDetector));
     cases.push_back(test_case("General resonance core resolves degenerate field slopes",GRC_TestDegenerateFieldJacobian));
     cases.push_back(test_case("General resonance Hamiltonian adapter preserves full/secular distinction",GRC_TestHamiltonianAdapterPreservesApproximation));
+    cases.push_back(test_case("General resonance R2G-B multi-nucleus N=1 finite-difference parity",GRC_TestR2GBMultiNucleusN1FieldResponseParity));
+    cases.push_back(test_case("General resonance R2G-B multi-nucleus field-response permutation invariance",GRC_TestR2GBMultiNucleusPermutationInvariant));
+    cases.push_back(test_case("General resonance R2G-B multi-nucleus finite-difference step convergence",GRC_TestR2GBMultiNucleusStepConvergence));
+    cases.push_back(test_case("General resonance R2G-B merged field-response branches fail closed",GRC_TestR2GBMultiNucleusMergingFailsClosed));
+    cases.push_back(test_case("General resonance R2G-B conditional two-I=1/2 exact field-response parity",GRC_TestR2GBConditionalTwoI12ExactFieldResponseParity));
     cases.push_back(test_case("General resonance R2G-A independent multi-nucleus N=1 parity",GRC_TestR2GAMultiNucleusN1Parity));
     cases.push_back(test_case("General resonance R2G-A independent multi-nucleus permutation invariance",GRC_TestR2GAMultiNucleusPermutationInvariant));
     cases.push_back(test_case("General resonance R2G-A spectator nucleus and transition-weight conservation",GRC_TestR2GAMultiNucleusSpectatorAndWeightConservation));

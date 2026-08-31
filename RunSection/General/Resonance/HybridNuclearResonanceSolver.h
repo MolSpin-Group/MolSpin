@@ -16,6 +16,15 @@
 //     * h versus h/2 derivative convergence;
 //     * fail-closed behavior when state tracking/convergence is not qualified.
 //
+//   R2G-A:
+//     * independent first-order composition of several perturbative nuclei;
+//     * no dense product nuclear Hamiltonian;
+//     * explicit pruning, component-cap, merging and discarded-weight accounting.
+//   R2G-B:
+//     * finite-difference field response for independent multi-nuclear branches;
+//     * one common exact-core tracking map plus one conditional-state map per nucleus;
+//     * h versus h/2 convergence before fieldJacobianQualified=true.
+//
 // The solver does NOT parse g/A/D tensors. Hamiltonian matrices are generated
 // upstream through SpinAPI/GeneralResonanceHamiltonian so tensor frames, powder
 // rotations, units and prefactors remain owned by SpinAPI.
@@ -102,6 +111,32 @@ namespace RunSection::General::Resonance
         bool mergingApplied = false;
     };
 
+    struct IndependentMultiNucleusHybridPoint
+    {
+        arma::sp_cx_mat coreHamiltonian;
+        arma::cx_mat coreDensity;
+        arma::sp_cx_mat coreDHdB;
+        arma::cx_mat coreMuX;
+        arma::cx_mat coreMuY;
+        IndependentMultiNucleusHybridRequest hybrid;
+    };
+
+    using IndependentMultiNucleusHybridPointProvider =
+        std::function<bool(
+            double,
+            IndependentMultiNucleusHybridPoint &,
+            std::string &)>;
+
+    struct IndependentMultiNucleusHybridFieldResponseRequest
+    {
+        double fieldT = 0.0;
+        double fieldStepT = 1.0e-4;
+        double minimumCoreStateOverlap = 0.90;
+        double minimumNuclearStateOverlap = 0.90;
+        double jacobianRelativeTolerance = 1.0e-4;
+        double jacobianAbsoluteTolerance = 1.0e-5;
+    };
+
     class HybridNuclearResonanceSolver
     {
     private:
@@ -143,6 +178,31 @@ namespace RunSection::General::Resonance
         {
             double nuclearShift = 0.0;
             double overlapWeight = 1.0;
+            std::vector<arma::uword> lowerNuclear;
+            std::vector<arma::uword> upperNuclear;
+        };
+
+        struct IndependentMultiComponent
+        {
+            ResonanceLine line;
+            std::vector<arma::uword> lowerNuclear;
+            std::vector<arma::uword> upperNuclear;
+        };
+
+        struct IndependentMultiPointSolution
+        {
+            PointSolution core;
+            std::vector<IndependentNucleusSolution> factors;
+            std::size_t productNuclearDimension = 1;
+            std::size_t largestDiagonalizedNuclearDimension = 0;
+        };
+
+        struct IndependentMultiTrackingMaps
+        {
+            std::vector<arma::uword> core;
+            std::vector<
+                std::vector<
+                    std::vector<arma::uword>>> nuclear;
         };
 
         static bool PartialCoreExpectation(
@@ -625,24 +685,10 @@ namespace RunSection::General::Resonance
                 coreMap,nuclearMap,error);
         }
 
-    public:
-        static bool GenerateIndependentFirstOrder(
-            const arma::sp_cx_mat &coreHamiltonian,
-            const arma::cx_mat &coreDensity,
-            const arma::sp_cx_mat &coreDHdB,
-            const arma::cx_mat &coreMuX,
-            const arma::cx_mat &coreMuY,
+        static bool ValidateIndependentMultiRequest(
             const IndependentMultiNucleusHybridRequest &hybrid,
-            const SpectrumRequest &request,
-            ResonanceLineSet &lineSet,
-            IndependentMultiNucleusHybridReport &report,
             std::string &error)
         {
-            error.clear();
-            lineSet.lines.clear();
-            lineSet.fieldJacobianQualified = false;
-            report = IndependentMultiNucleusHybridReport{};
-
             if (hybrid.nuclei.empty())
             {
                 error =
@@ -661,66 +707,126 @@ namespace RunSection::General::Resonance
                     "invalid independent multi-nucleus composition request";
                 return false;
             }
+            return true;
+        }
 
-            OneNucleusHybridPoint firstPoint;
-            firstPoint.coreHamiltonian = coreHamiltonian;
-            firstPoint.coreDensity = coreDensity;
-            firstPoint.coreDHdB = coreDHdB;
-            firstPoint.coreMuX = coreMuX;
-            firstPoint.coreMuY = coreMuY;
-            firstPoint.hybrid = hybrid.nuclei.front();
+        static bool SolveIndependentMultiPoint(
+            const IndependentMultiNucleusHybridPoint &point,
+            const SpectrumRequest &request,
+            IndependentMultiPointSolution &solution,
+            std::string &error)
+        {
+            solution = IndependentMultiPointSolution{};
 
-            PointSolution core;
-            if (!SolvePoint(firstPoint,request,core,error))
+            if (!ValidateIndependentMultiRequest(
+                    point.hybrid,error))
                 return false;
 
-            std::vector<IndependentNucleusSolution> factors;
-            factors.reserve(hybrid.nuclei.size());
+            OneNucleusHybridPoint firstPoint;
+            firstPoint.coreHamiltonian =
+                point.coreHamiltonian;
+            firstPoint.coreDensity =
+                point.coreDensity;
+            firstPoint.coreDHdB =
+                point.coreDHdB;
+            firstPoint.coreMuX =
+                point.coreMuX;
+            firstPoint.coreMuY =
+                point.coreMuY;
+            firstPoint.hybrid =
+                point.hybrid.nuclei.front();
+
+            if (!SolvePoint(
+                    firstPoint,request,
+                    solution.core,error))
+                return false;
+
+            solution.factors.reserve(
+                point.hybrid.nuclei.size());
 
             IndependentNucleusSolution first;
-            first.nuclear = core.nuclear;
-            first.dimension = core.nuclearDimension;
-            first.overlapThreshold = core.overlapThreshold;
-            factors.push_back(std::move(first));
+            first.nuclear =
+                solution.core.nuclear;
+            first.dimension =
+                solution.core.nuclearDimension;
+            first.overlapThreshold =
+                solution.core.overlapThreshold;
+            solution.factors.push_back(
+                std::move(first));
 
-            for (std::size_t k=1; k<hybrid.nuclei.size(); ++k)
+            for (std::size_t k=1;
+                 k<point.hybrid.nuclei.size(); ++k)
             {
                 IndependentNucleusSolution factor;
                 if (!SolveIndependentNucleus(
-                        hybrid.nuclei[k],
-                        core.coreEigenvectors,
+                        point.hybrid.nuclei[k],
+                        solution.core.coreEigenvectors,
                         factor,error))
                     return false;
-                factors.push_back(std::move(factor));
+                solution.factors.push_back(
+                    std::move(factor));
             }
 
-            report.nucleusCount = factors.size();
-            report.productNuclearDimension = 1;
-            report.largestDiagonalizedNuclearDimension = 0;
-            for (const auto &factor:factors)
+            solution.productNuclearDimension = 1;
+            solution.largestDiagonalizedNuclearDimension = 0;
+
+            for (const auto &factor:solution.factors)
             {
                 const std::size_t dimension =
-                    static_cast<std::size_t>(factor.dimension);
+                    static_cast<std::size_t>(
+                        factor.dimension);
                 if (dimension == 0 ||
-                    report.productNuclearDimension >
-                        std::numeric_limits<std::size_t>::max()/dimension)
+                    solution.productNuclearDimension >
+                        std::numeric_limits<std::size_t>::max()/
+                            dimension)
                 {
                     error =
                         "independent multi-nucleus product dimension overflow";
                     return false;
                 }
-                report.productNuclearDimension *= dimension;
-                report.largestDiagonalizedNuclearDimension =
+
+                solution.productNuclearDimension *=
+                    dimension;
+                solution.largestDiagonalizedNuclearDimension =
                     std::max(
-                        report.largestDiagonalizedNuclearDimension,
+                        solution.
+                            largestDiagonalizedNuclearDimension,
                         dimension);
+            }
+
+            return true;
+        }
+
+        static bool BuildIndependentMultiComponents(
+            const IndependentMultiPointSolution &solution,
+            const IndependentMultiNucleusHybridRequest &hybrid,
+            const SpectrumRequest &request,
+            std::vector<IndependentMultiComponent> &components,
+            IndependentMultiNucleusHybridReport &report,
+            std::string &error)
+        {
+            components.clear();
+            report = IndependentMultiNucleusHybridReport{};
+            report.nucleusCount =
+                solution.factors.size();
+            report.productNuclearDimension =
+                solution.productNuclearDimension;
+            report.largestDiagonalizedNuclearDimension =
+                solution.largestDiagonalizedNuclearDimension;
+
+            if (report.nucleusCount == 0 ||
+                report.productNuclearDimension == 0)
+            {
+                error =
+                    "independent multi-nucleus solution is empty";
+                return false;
             }
 
             const double productDimension =
                 static_cast<double>(
                     report.productNuclearDimension);
             const arma::uword coreDimension =
-                core.coreEnergies.n_elem;
+                solution.core.coreEnergies.n_elem;
 
             for (arma::uword lower=0;
                  lower<coreDimension; ++lower)
@@ -731,10 +837,11 @@ namespace RunSection::General::Resonance
                     ++report.coreTransitions;
 
                     const double corePopulationDifference =
-                        core.corePopulations(lower)-
-                        core.corePopulations(upper);
+                        solution.core.corePopulations(lower)-
+                        solution.core.corePopulations(upper);
                     const double populationDifference =
-                        corePopulationDifference/productDimension;
+                        corePopulationDifference/
+                        productDimension;
 
                     if (std::abs(populationDifference) <
                         request.populationThreshold)
@@ -742,14 +849,18 @@ namespace RunSection::General::Resonance
 
                     const TransitionMoment coreMoment =
                         ResonanceTransitionMoments::Evaluate(
-                            core.muXEigen,core.muYEigen,
+                            solution.core.muXEigen,
+                            solution.core.muYEigen,
                             lower,upper);
 
-                    std::vector<MultiPartialComponent> partials(1);
+                    std::vector<MultiPartialComponent>
+                        partials(1);
 
-                    for (const auto &factor:factors)
+                    for (const auto &factor:
+                         solution.factors)
                     {
-                        std::vector<MultiPartialComponent> next;
+                        std::vector<MultiPartialComponent>
+                            next;
                         const auto &lowerManifold =
                             factor.nuclear[lower];
                         const auto &upperManifold =
@@ -774,21 +885,25 @@ namespace RunSection::General::Resonance
                                     double overlapWeight =
                                         std::norm(overlap);
 
-                                    if (!std::isfinite(overlapWeight) ||
+                                    if (!std::isfinite(
+                                            overlapWeight) ||
                                         overlapWeight < 0.0 ||
-                                        overlapWeight > 1.0+1.0e-10)
+                                        overlapWeight >
+                                            1.0+1.0e-10)
                                     {
                                         error =
                                             "invalid independent nuclear-state overlap weight";
                                         return false;
                                     }
                                     overlapWeight =
-                                        std::min(1.0,overlapWeight);
+                                        std::min(
+                                            1.0,overlapWeight);
 
                                     if (overlapWeight <
                                         factor.overlapThreshold)
                                     {
-                                        report.pruningApplied = true;
+                                        report.pruningApplied =
+                                            true;
                                         continue;
                                     }
 
@@ -799,36 +914,44 @@ namespace RunSection::General::Resonance
                                         hybrid.
                                             minimumCumulativeOverlapWeight)
                                     {
-                                        report.pruningApplied = true;
+                                        report.pruningApplied =
+                                            true;
                                         continue;
                                     }
 
-                                    MultiPartialComponent component;
-                                    component.nuclearShift =
-                                        partial.nuclearShift +
-                                        upperManifold.energies(s) -
+                                    MultiPartialComponent component =
+                                        partial;
+                                    component.nuclearShift +=
+                                        upperManifold.energies(s)-
                                         lowerManifold.energies(r);
                                     component.overlapWeight =
                                         cumulativeWeight;
+                                    component.lowerNuclear.
+                                        push_back(r);
+                                    component.upperNuclear.
+                                        push_back(s);
 
                                     if (!std::isfinite(
-                                            component.nuclearShift) ||
+                                            component.
+                                                nuclearShift) ||
                                         !std::isfinite(
-                                            component.overlapWeight))
+                                            component.
+                                                overlapWeight))
                                     {
                                         error =
                                             "non-finite independent multi-nucleus component";
                                         return false;
                                     }
 
-                                    next.push_back(component);
+                                    next.push_back(
+                                        std::move(component));
 
                                     if (hybrid.
                                             maximumComponentsPerCoreTransition >
                                             0 &&
                                         next.size() >
                                             hybrid.
-                                            maximumComponentsPerCoreTransition)
+                                                maximumComponentsPerCoreTransition)
                                     {
                                         error =
                                             "independent multi-nucleus component cap exceeded";
@@ -841,7 +964,8 @@ namespace RunSection::General::Resonance
                         partials.swap(next);
                         report.maximumIntermediateComponents =
                             std::max(
-                                report.maximumIntermediateComponents,
+                                report.
+                                    maximumIntermediateComponents,
                                 partials.size());
 
                         if (partials.empty())
@@ -850,7 +974,8 @@ namespace RunSection::General::Resonance
 
                     double retainedWeight = 0.0;
                     for (const auto &partial:partials)
-                        retainedWeight += partial.overlapWeight;
+                        retainedWeight +=
+                            partial.overlapWeight;
 
                     if (!std::isfinite(retainedWeight))
                     {
@@ -860,39 +985,53 @@ namespace RunSection::General::Resonance
                     }
 
                     double retainedFraction =
-                        retainedWeight/productDimension;
-                    if (retainedFraction > 1.0+1.0e-10)
+                        retainedWeight/
+                        productDimension;
+                    if (retainedFraction >
+                        1.0+1.0e-10)
                     {
                         error =
                             "independent multi-nucleus overlap weight is not normalized";
                         return false;
                     }
                     retainedFraction =
-                        std::max(0.0,std::min(1.0,retainedFraction));
-                    report.maximumDiscardedNuclearWeightFraction =
+                        std::max(
+                            0.0,
+                            std::min(
+                                1.0,retainedFraction));
+                    report.
+                        maximumDiscardedNuclearWeightFraction =
                         std::max(
                             report.
                                 maximumDiscardedNuclearWeightFraction,
                             1.0-retainedFraction);
 
-                    report.retainedComponents += partials.size();
+                    report.retainedComponents +=
+                        partials.size();
 
-                    if (hybrid.mergeFrequencyToleranceRadNs > 0.0 &&
+                    if (hybrid.
+                            mergeFrequencyToleranceRadNs >
+                            0.0 &&
                         partials.size() > 1)
                     {
                         std::sort(
-                            partials.begin(),partials.end(),
+                            partials.begin(),
+                            partials.end(),
                             [](const MultiPartialComponent &a,
                                const MultiPartialComponent &b)
                             {
-                                if (a.nuclearShift != b.nuclearShift)
+                                if (a.nuclearShift !=
+                                    b.nuclearShift)
                                     return
-                                        a.nuclearShift < b.nuclearShift;
+                                        a.nuclearShift <
+                                        b.nuclearShift;
                                 return
-                                    a.overlapWeight < b.overlapWeight;
+                                    a.overlapWeight <
+                                    b.overlapWeight;
                             });
 
-                        std::vector<MultiPartialComponent> merged;
+                        std::vector<MultiPartialComponent>
+                            merged;
                         merged.reserve(partials.size());
 
                         for (const auto &partial:partials)
@@ -900,7 +1039,8 @@ namespace RunSection::General::Resonance
                             if (merged.empty() ||
                                 std::abs(
                                     partial.nuclearShift-
-                                    merged.back().nuclearShift) >
+                                    merged.back().
+                                        nuclearShift) >
                                     hybrid.
                                         mergeFrequencyToleranceRadNs)
                             {
@@ -909,10 +1049,12 @@ namespace RunSection::General::Resonance
                             }
 
                             const double combinedWeight =
-                                merged.back().overlapWeight+
+                                merged.back().
+                                    overlapWeight+
                                 partial.overlapWeight;
                             if (!(combinedWeight>0.0) ||
-                                !std::isfinite(combinedWeight))
+                                !std::isfinite(
+                                    combinedWeight))
                             {
                                 error =
                                     "invalid independent multi-nucleus merged weight";
@@ -920,8 +1062,10 @@ namespace RunSection::General::Resonance
                             }
 
                             merged.back().nuclearShift =
-                                (merged.back().nuclearShift*
-                                     merged.back().overlapWeight +
+                                (merged.back().
+                                     nuclearShift*
+                                     merged.back().
+                                         overlapWeight +
                                  partial.nuclearShift*
                                      partial.overlapWeight)/
                                 combinedWeight;
@@ -929,57 +1073,520 @@ namespace RunSection::General::Resonance
                                 combinedWeight;
                         }
 
-                        if (merged.size() < partials.size())
+                        if (merged.size() <
+                            partials.size())
                         {
                             report.mergingApplied = true;
                             report.mergedComponents +=
-                                partials.size()-merged.size();
+                                partials.size()-
+                                merged.size();
                         }
                         partials.swap(merged);
                     }
 
                     const double coreGap =
-                        core.coreEnergies(upper)-
-                        core.coreEnergies(lower);
+                        solution.core.
+                            coreEnergies(upper)-
+                        solution.core.
+                            coreEnergies(lower);
 
                     for (const auto &partial:partials)
                     {
-                        ResonanceLine line;
-                        line.lower = lower;
-                        line.upper = upper;
-                        line.omega =
-                            coreGap+partial.nuclearShift;
-                        line.populationDifference =
+                        IndependentMultiComponent output;
+                        output.line.lower = lower;
+                        output.line.upper = upper;
+                        output.line.omega =
+                            coreGap+
+                            partial.nuclearShift;
+                        output.line.populationDifference =
                             populationDifference;
-                        line.moment.x =
+                        output.line.moment.x =
                             coreMoment.x*
                             partial.overlapWeight;
-                        line.moment.y =
+                        output.line.moment.y =
                             coreMoment.y*
                             partial.overlapWeight;
-                        line.moment.perpendicular =
+                        output.line.moment.perpendicular =
                             coreMoment.perpendicular*
                             partial.overlapWeight;
+                        output.lowerNuclear =
+                            partial.lowerNuclear;
+                        output.upperNuclear =
+                            partial.upperNuclear;
 
-                        if (!std::isfinite(line.omega) ||
+                        if (!std::isfinite(
+                                output.line.omega) ||
                             !std::isfinite(
-                                line.populationDifference) ||
-                            !std::isfinite(line.moment.x) ||
-                            !std::isfinite(line.moment.y) ||
+                                output.line.
+                                    populationDifference) ||
                             !std::isfinite(
-                                line.moment.perpendicular))
+                                output.line.moment.x) ||
+                            !std::isfinite(
+                                output.line.moment.y) ||
+                            !std::isfinite(
+                                output.line.moment.
+                                    perpendicular))
                         {
                             error =
                                 "non-finite independent multi-nucleus resonance line";
                             return false;
                         }
 
-                        lineSet.lines.push_back(line);
+                        components.push_back(
+                            std::move(output));
                     }
                 }
             }
 
-            report.outputComponents = lineSet.lines.size();
+            report.outputComponents =
+                components.size();
+            return true;
+        }
+
+        static bool BuildIndependentMultiTrackingMaps(
+            const IndependentMultiPointSolution &reference,
+            const IndependentMultiPointSolution &displaced,
+            double minimumCoreOverlap,
+            double minimumNuclearOverlap,
+            IndependentMultiTrackingMaps &maps,
+            std::string &error)
+        {
+            maps = IndependentMultiTrackingMaps{};
+
+            if (reference.factors.size() !=
+                displaced.factors.size())
+            {
+                error =
+                    "multi-nucleus field-response nucleus count changed";
+                return false;
+            }
+
+            if (!MatchEigenvectors(
+                    reference.core.coreEigenvectors,
+                    displaced.core.coreEigenvectors,
+                    minimumCoreOverlap,
+                    maps.core,error,
+                    "multi-nucleus core"))
+                return false;
+
+            maps.nuclear.resize(
+                reference.factors.size());
+
+            for (std::size_t k=0;
+                 k<reference.factors.size(); ++k)
+            {
+                if (reference.factors[k].dimension !=
+                    displaced.factors[k].dimension)
+                {
+                    error =
+                        "multi-nucleus field-response nuclear dimension changed";
+                    return false;
+                }
+
+                maps.nuclear[k].resize(
+                    reference.core.
+                        coreEnergies.n_elem);
+
+                for (arma::uword a=0;
+                     a<reference.core.
+                         coreEnergies.n_elem; ++a)
+                {
+                    const arma::uword displacedCore =
+                        maps.core[a];
+                    if (!MatchEigenvectors(
+                            reference.factors[k].
+                                nuclear[a].eigenvectors,
+                            displaced.factors[k].
+                                nuclear[displacedCore].
+                                    eigenvectors,
+                            minimumNuclearOverlap,
+                            maps.nuclear[k][a],
+                            error,
+                            "multi-nucleus conditional nucleus"))
+                        return false;
+                }
+            }
+
+            return true;
+        }
+
+        static bool TrackedIndependentMultiFrequency(
+            const IndependentMultiComponent &component,
+            const IndependentMultiPointSolution &displaced,
+            const IndependentMultiTrackingMaps &maps,
+            double &omega)
+        {
+            if (component.lowerNuclear.size() !=
+                    displaced.factors.size() ||
+                component.upperNuclear.size() !=
+                    displaced.factors.size() ||
+                maps.nuclear.size() !=
+                    displaced.factors.size() ||
+                component.line.lower >=
+                    maps.core.size() ||
+                component.line.upper >=
+                    maps.core.size())
+                return false;
+
+            const arma::uword lower =
+                maps.core[component.line.lower];
+            const arma::uword upper =
+                maps.core[component.line.upper];
+
+            omega =
+                displaced.core.coreEnergies(upper)-
+                displaced.core.coreEnergies(lower);
+
+            for (std::size_t k=0;
+                 k<displaced.factors.size(); ++k)
+            {
+                if (component.line.lower >=
+                        maps.nuclear[k].size() ||
+                    component.line.upper >=
+                        maps.nuclear[k].size() ||
+                    component.lowerNuclear[k] >=
+                        maps.nuclear[k]
+                            [component.line.lower].size() ||
+                    component.upperNuclear[k] >=
+                        maps.nuclear[k]
+                            [component.line.upper].size())
+                    return false;
+
+                const arma::uword r =
+                    maps.nuclear[k]
+                        [component.line.lower]
+                        [component.lowerNuclear[k]];
+                const arma::uword s =
+                    maps.nuclear[k]
+                        [component.line.upper]
+                        [component.upperNuclear[k]];
+
+                omega +=
+                    displaced.factors[k].
+                        nuclear[upper].energies(s)-
+                    displaced.factors[k].
+                        nuclear[lower].energies(r);
+            }
+
+            return std::isfinite(omega);
+        }
+
+        static bool SolveTrackedIndependentMultiDisplacement(
+            const IndependentMultiNucleusHybridPointProvider &provider,
+            double fieldT,
+            const SpectrumRequest &request,
+            const IndependentMultiPointSolution &reference,
+            double minimumCoreOverlap,
+            double minimumNuclearOverlap,
+            IndependentMultiPointSolution &solution,
+            IndependentMultiTrackingMaps &maps,
+            std::string &error)
+        {
+            IndependentMultiNucleusHybridPoint point;
+            if (!provider(fieldT,point,error))
+            {
+                if (error.empty())
+                    error =
+                        "multi-nucleus field-response point provider failed";
+                return false;
+            }
+
+            if (!SolveIndependentMultiPoint(
+                    point,request,solution,error))
+                return false;
+
+            return BuildIndependentMultiTrackingMaps(
+                reference,solution,
+                minimumCoreOverlap,
+                minimumNuclearOverlap,
+                maps,error);
+        }
+
+    public:
+        static bool GenerateIndependentFirstOrder(
+            const arma::sp_cx_mat &coreHamiltonian,
+            const arma::cx_mat &coreDensity,
+            const arma::sp_cx_mat &coreDHdB,
+            const arma::cx_mat &coreMuX,
+            const arma::cx_mat &coreMuY,
+            const IndependentMultiNucleusHybridRequest &hybrid,
+            const SpectrumRequest &request,
+            ResonanceLineSet &lineSet,
+            IndependentMultiNucleusHybridReport &report,
+            std::string &error)
+        {
+            error.clear();
+            lineSet.lines.clear();
+            lineSet.fieldJacobianQualified = false;
+            report =
+                IndependentMultiNucleusHybridReport{};
+
+            IndependentMultiNucleusHybridPoint point;
+            point.coreHamiltonian =
+                coreHamiltonian;
+            point.coreDensity =
+                coreDensity;
+            point.coreDHdB =
+                coreDHdB;
+            point.coreMuX =
+                coreMuX;
+            point.coreMuY =
+                coreMuY;
+            point.hybrid =
+                hybrid;
+
+            IndependentMultiPointSolution solution;
+            if (!SolveIndependentMultiPoint(
+                    point,request,
+                    solution,error))
+                return false;
+
+            std::vector<IndependentMultiComponent>
+                components;
+            if (!BuildIndependentMultiComponents(
+                    solution,hybrid,request,
+                    components,report,error))
+                return false;
+
+            lineSet.lines.reserve(
+                components.size());
+            for (const auto &component:components)
+                lineSet.lines.push_back(
+                    component.line);
+
+            report.outputComponents =
+                lineSet.lines.size();
+            return true;
+        }
+
+        static bool GenerateIndependentFirstOrderFiniteDifference(
+            const IndependentMultiNucleusHybridPointProvider &provider,
+            const IndependentMultiNucleusHybridFieldResponseRequest &fieldResponse,
+            const SpectrumRequest &request,
+            ResonanceLineSet &lineSet,
+            IndependentMultiNucleusHybridReport &report,
+            std::string &error)
+        {
+            error.clear();
+            lineSet.lines.clear();
+            lineSet.fieldJacobianQualified = false;
+            report =
+                IndependentMultiNucleusHybridReport{};
+
+            if (!provider)
+            {
+                error =
+                    "multi-nucleus field-response point provider is not set";
+                return false;
+            }
+
+            if (!std::isfinite(fieldResponse.fieldT) ||
+                !std::isfinite(
+                    fieldResponse.fieldStepT) ||
+                fieldResponse.fieldT <= 0.0 ||
+                fieldResponse.fieldStepT <= 0.0 ||
+                fieldResponse.fieldStepT >=
+                    fieldResponse.fieldT ||
+                !std::isfinite(
+                    fieldResponse.
+                        minimumCoreStateOverlap) ||
+                !std::isfinite(
+                    fieldResponse.
+                        minimumNuclearStateOverlap) ||
+                fieldResponse.
+                    minimumCoreStateOverlap <= 0.0 ||
+                fieldResponse.
+                    minimumCoreStateOverlap > 1.0 ||
+                fieldResponse.
+                    minimumNuclearStateOverlap <= 0.0 ||
+                fieldResponse.
+                    minimumNuclearStateOverlap > 1.0 ||
+                !std::isfinite(
+                    fieldResponse.
+                        jacobianRelativeTolerance) ||
+                !std::isfinite(
+                    fieldResponse.
+                        jacobianAbsoluteTolerance) ||
+                fieldResponse.
+                    jacobianRelativeTolerance < 0.0 ||
+                fieldResponse.
+                    jacobianAbsoluteTolerance < 0.0)
+            {
+                error =
+                    "invalid multi-nucleus field-response request";
+                return false;
+            }
+
+            IndependentMultiNucleusHybridPoint
+                centerPoint;
+            if (!provider(
+                    fieldResponse.fieldT,
+                    centerPoint,error))
+            {
+                if (error.empty())
+                    error =
+                        "multi-nucleus field-response center provider failed";
+                return false;
+            }
+
+            if (centerPoint.hybrid.
+                    mergeFrequencyToleranceRadNs > 0.0)
+            {
+                error =
+                    "multi-nucleus field response requires unmerged center components";
+                return false;
+            }
+
+            IndependentMultiPointSolution center;
+            if (!SolveIndependentMultiPoint(
+                    centerPoint,request,
+                    center,error))
+                return false;
+
+            std::vector<IndependentMultiComponent>
+                components;
+            if (!BuildIndependentMultiComponents(
+                    center,centerPoint.hybrid,
+                    request,components,
+                    report,error))
+                return false;
+
+            const double h =
+                fieldResponse.fieldStepT;
+            const double hh =
+                0.5*h;
+
+            IndependentMultiPointSolution
+                plusH,minusH,plusHH,minusHH;
+            IndependentMultiTrackingMaps
+                mapPlusH,mapMinusH,
+                mapPlusHH,mapMinusHH;
+
+            if (!SolveTrackedIndependentMultiDisplacement(
+                    provider,
+                    fieldResponse.fieldT+h,
+                    request,center,
+                    fieldResponse.
+                        minimumCoreStateOverlap,
+                    fieldResponse.
+                        minimumNuclearStateOverlap,
+                    plusH,mapPlusH,error) ||
+                !SolveTrackedIndependentMultiDisplacement(
+                    provider,
+                    fieldResponse.fieldT-h,
+                    request,center,
+                    fieldResponse.
+                        minimumCoreStateOverlap,
+                    fieldResponse.
+                        minimumNuclearStateOverlap,
+                    minusH,mapMinusH,error) ||
+                !SolveTrackedIndependentMultiDisplacement(
+                    provider,
+                    fieldResponse.fieldT+hh,
+                    request,center,
+                    fieldResponse.
+                        minimumCoreStateOverlap,
+                    fieldResponse.
+                        minimumNuclearStateOverlap,
+                    plusHH,mapPlusHH,error) ||
+                !SolveTrackedIndependentMultiDisplacement(
+                    provider,
+                    fieldResponse.fieldT-hh,
+                    request,center,
+                    fieldResponse.
+                        minimumCoreStateOverlap,
+                    fieldResponse.
+                        minimumNuclearStateOverlap,
+                    minusHH,mapMinusHH,error))
+                return false;
+
+            for (auto component:components)
+            {
+                double omegaPlusH=0.0;
+                double omegaMinusH=0.0;
+                double omegaPlusHH=0.0;
+                double omegaMinusHH=0.0;
+
+                if (!TrackedIndependentMultiFrequency(
+                        component,plusH,
+                        mapPlusH,omegaPlusH) ||
+                    !TrackedIndependentMultiFrequency(
+                        component,minusH,
+                        mapMinusH,omegaMinusH) ||
+                    !TrackedIndependentMultiFrequency(
+                        component,plusHH,
+                        mapPlusHH,omegaPlusHH) ||
+                    !TrackedIndependentMultiFrequency(
+                        component,minusHH,
+                        mapMinusHH,omegaMinusHH))
+                {
+                    error =
+                        "non-finite tracked multi-nucleus transition frequency";
+                    return false;
+                }
+
+                const double slopeH =
+                    (omegaPlusH-omegaMinusH)/
+                    (2.0*h);
+                const double slopeHH =
+                    (omegaPlusHH-omegaMinusHH)/
+                    (2.0*hh);
+
+                if (!std::isfinite(slopeH) ||
+                    !std::isfinite(slopeHH))
+                {
+                    error =
+                        "non-finite multi-nucleus finite-difference field derivative";
+                    return false;
+                }
+
+                const double convergenceError =
+                    std::abs(
+                        slopeHH-slopeH);
+                const double convergenceScale =
+                    std::max(
+                        std::abs(slopeHH),
+                        std::abs(slopeH));
+                const double convergenceTolerance =
+                    fieldResponse.
+                        jacobianAbsoluteTolerance +
+                    fieldResponse.
+                        jacobianRelativeTolerance*
+                        convergenceScale;
+
+                if (convergenceError >
+                    convergenceTolerance)
+                {
+                    error =
+                        "multi-nucleus finite-difference field derivative did not converge";
+                    return false;
+                }
+
+                const double slope =
+                    std::abs(slopeHH);
+                if (slope <
+                    request.minimumSlope)
+                    continue;
+
+                const double dBdOmega =
+                    1.0/slope;
+                if (!std::isfinite(dBdOmega) ||
+                    dBdOmega >
+                        request.maximumDBdOmega)
+                    continue;
+
+                component.line.dOmegaDB =
+                    slope;
+                component.line.dBdOmega =
+                    dBdOmega;
+                lineSet.lines.push_back(
+                    component.line);
+            }
+
+            lineSet.fieldJacobianQualified =
+                true;
+            report.outputComponents =
+                lineSet.lines.size();
             return true;
         }
 
