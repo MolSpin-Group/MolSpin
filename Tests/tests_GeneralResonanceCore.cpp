@@ -6,6 +6,7 @@
 // an external numerical oracle for compact one-orientation field sweeps.
 //////////////////////////////////////////////////////////////////////////////
 #include "GeneralResonanceHamiltonian.h"
+#include "ExactResonanceSolver.h"
 #include "ResonanceFieldJacobian.h"
 #include "ResonanceLineshape.h"
 #include "ResonanceSpectrumEvaluator.h"
@@ -377,6 +378,99 @@ namespace
         return std::abs(HfullDense(0,1))>1.0e-6 && std::abs(dFullDense(0,1))>1.0e-6;
     }
 
+    bool GRC_TestExactLineBackendSeam()
+    {
+        using namespace RunSection::General::Resonance;
+
+        GRC_Model model{2.0023,2.0023,2.0023,0.060};
+        const double frequency = 9.5;
+        const double omega = 2.0*arma::datum::pi*frequency;
+        const double fieldT = omega/(GRC_MU_B_OVER_HBAR*model.gz);
+
+        auto system = GRC_BuildSystem(model,fieldT);
+        if (system == nullptr) return false;
+        SpinAPI::SpinSpace space(*system);
+        space.UseSuperoperatorSpace(false);
+        space.UseFullTensorRotation(true);
+
+        const auto plan = GRC_Plan(model,false);
+        const auto orientation = GRC_IdentityOrientation();
+        GeneralResonanceHamiltonian builder(plan,space);
+
+        arma::sp_cx_mat H,dHdB;
+        arma::cx_mat rho,muX,muY;
+        std::string error;
+        if (!builder.Build(orientation,H,error) ||
+            !builder.BuildFieldDerivative(orientation,{"B0"},fieldT,dHdB,error) ||
+            !GRC_Density(system,space,rho) ||
+            !GRC_TransverseOperators(system,space,muX,muY))
+            return false;
+
+        SpectrumRequest request;
+        request.microwaveFrequencyGHz = frequency;
+        request.linewidth_mT = 0.12;
+        request.lineshape = Lineshape::Gaussian;
+
+        SpectrumPoint compatibility;
+        if (!ResonanceSpectrumEvaluator::Evaluate(
+                H,rho,dHdB,muX,muY,request,compatibility,error))
+            return false;
+
+        ResonanceLineSet lines;
+        if (!ExactResonanceSolver::Generate(
+                H,rho,dHdB,muX,muY,request,lines,error))
+            return false;
+        if (lines.lines.empty())
+            return false;
+
+        // Backend-neutral lines must not depend on the experimental
+        // microwave frequency. Only spectrum assembly applies detuning.
+        SpectrumRequest otherFrequency = request;
+        otherFrequency.microwaveFrequencyGHz = 94.0;
+        ResonanceLineSet linesW;
+        if (!ExactResonanceSolver::Generate(
+                H,rho,dHdB,muX,muY,otherFrequency,linesW,error))
+            return false;
+        if (linesW.lines.size() != lines.lines.size())
+            return false;
+        for (size_t i=0; i<lines.lines.size(); ++i)
+        {
+            const auto &a = lines.lines[i];
+            const auto &b = linesW.lines[i];
+            if (a.lower != b.lower || a.upper != b.upper ||
+                a.omega != b.omega ||
+                a.populationDifference != b.populationDifference ||
+                a.dOmegaDB != b.dOmegaDB ||
+                a.dBdOmega != b.dBdOmega ||
+                a.moment.x != b.moment.x ||
+                a.moment.y != b.moment.y ||
+                a.moment.perpendicular != b.moment.perpendicular)
+                return false;
+        }
+
+        SpectrumPoint explicitLinePath;
+        if (!ResonanceSpectrumEvaluator::Evaluate(
+                lines,request,explicitLinePath,error))
+            return false;
+
+        const double scale = std::max({
+            1.0,
+            std::abs(compatibility.totalX),
+            std::abs(compatibility.totalY),
+            std::abs(compatibility.totalPerpendicular)
+        });
+
+        return compatibility.acceptedTransitions ==
+                   explicitLinePath.acceptedTransitions &&
+               std::abs(compatibility.totalX-explicitLinePath.totalX) <=
+                   1.0e-14*scale &&
+               std::abs(compatibility.totalY-explicitLinePath.totalY) <=
+                   1.0e-14*scale &&
+               std::abs(compatibility.totalPerpendicular-
+                        explicitLinePath.totalPerpendicular) <=
+                   1.0e-14*scale;
+    }
+
     bool GRC_TestLegacyParityIsotropicG()
     {
         GRC_Model model;
@@ -408,6 +502,7 @@ void AddGeneralResonanceCoreTests(std::vector<test_case> &cases)
     cases.push_back(test_case("General resonance core field Jacobian and transition detection",GRC_TestFieldJacobianAndDetector));
     cases.push_back(test_case("General resonance core resolves degenerate field slopes",GRC_TestDegenerateFieldJacobian));
     cases.push_back(test_case("General resonance Hamiltonian adapter preserves full/secular distinction",GRC_TestHamiltonianAdapterPreservesApproximation));
+    cases.push_back(test_case("General resonance exact solver line-backend seam parity",GRC_TestExactLineBackendSeam));
     cases.push_back(test_case("General resonance core frozen legacy isotropic-g sweep parity",GRC_TestLegacyParityIsotropicG));
     cases.push_back(test_case("General resonance core frozen legacy axial-g sweep parity",GRC_TestLegacyParityAxialG));
     cases.push_back(test_case("General resonance core frozen legacy hyperfine sweep parity",GRC_TestLegacyParityHyperfine));

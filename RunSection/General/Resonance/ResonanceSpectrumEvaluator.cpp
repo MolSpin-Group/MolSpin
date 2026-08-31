@@ -11,28 +11,49 @@
 // Assembly of the final resonance spectrum.
 //
 // What is done here:
-//   - Combines detected resonances, transition moments, field Jacobians, powder weights and analytical lineshapes.
-//   - Accumulates the observable spectrum without changing the underlying eigenproblem.
+//   - Consumes backend-neutral unbroadened resonance lines.
+//   - Applies microwave detuning, field Jacobians and analytical lineshapes.
+//   - Retains the historical matrix API as an exact-backend compatibility path.
 //
 // Connections to the General framework / SpinAPI:
-//   - Coordinates GeneralResonanceHamiltonian, ResonanceTransitionDetector, ResonanceTransitionMoments, ResonanceFieldJacobian and ResonanceLineshape.
-//   - SpinAPI remains responsible for spin-space operators and rotated Hamiltonians.
+//   - ExactResonanceSolver currently provides the qualified full-Hilbert lines.
+//   - Future hybrid nuclear solvers must provide the same ResonanceLineSet.
+//   - Hamiltonian/tensor physics remains in GeneralResonanceHamiltonian/SpinAPI.
 //
 // Why this ownership is used:
-//   - Spectrum assembly is kept separate from resonance finding so each stage can be validated independently.
+//   - Spectrum assembly must not know whether nuclei were represented exactly
+//     or perturbatively. Keeping solver physics upstream prevents duplicate
+//     powder/lineshape implementations and is the R1 seam for hybrid EPR.
+//
+// TODO:
+//   - Add HybridNuclearResonanceSolver only after the exact line-backend seam is
+//     numerically certified against the frozen legacy resonance tests.
 /////////////////////////////////////////////////////////////////////////
 
 #include "ResonanceSpectrumEvaluator.h"
-#include "ResonanceFieldJacobian.h"
+#include "ExactResonanceSolver.h"
 #include "ResonanceLineshape.h"
-#include "ResonanceTransitionDetector.h"
-#include "ResonanceTransitionMoments.h"
 
 #include <cmath>
-#include <vector>
 
 namespace RunSection::General::Resonance
 {
+    namespace
+    {
+        bool ValidateRequest(const SpectrumRequest &request, std::string &error)
+        {
+            if (!std::isfinite(request.microwaveFrequencyGHz) ||
+                request.microwaveFrequencyGHz <= 0.0 ||
+                !std::isfinite(request.linewidth_mT) ||
+                request.linewidth_mT < 0.0)
+            {
+                error = "invalid microwave frequency or linewidth";
+                return false;
+            }
+            return true;
+        }
+    }
+
     bool ResonanceSpectrumEvaluator::Evaluate(const arma::sp_cx_mat &hamiltonian,
         const arma::cx_mat &density, const arma::sp_cx_mat &dHdB,
         const arma::cx_mat &muX, const arma::cx_mat &muY,
@@ -40,6 +61,8 @@ namespace RunSection::General::Resonance
     {
         error.clear();
         spectrum = SpectrumPoint{};
+
+        // Preserve the pre-R1 input-validation ordering of the public exact API.
         const arma::uword dim = hamiltonian.n_rows;
         if (dim == 0 || hamiltonian.n_cols != dim)
         {
@@ -58,67 +81,60 @@ namespace RunSection::General::Resonance
             error = "resonance operator dimension does not match the Hamiltonian";
             return false;
         }
-        if (!std::isfinite(request.microwaveFrequencyGHz) || request.microwaveFrequencyGHz <= 0.0 ||
-            !std::isfinite(request.linewidth_mT) || request.linewidth_mT < 0.0)
-        {
-            error = "invalid microwave frequency or linewidth";
+        if (!ValidateRequest(request, error))
             return false;
-        }
 
-        arma::vec energies;
-        arma::cx_mat eigenvectors;
-        if (!arma::eig_sym(energies, eigenvectors, arma::cx_mat(hamiltonian)))
-        {
-            error = "failed to diagonalize the resonance Hamiltonian";
+        ResonanceLineSet lines;
+        if (!ExactResonanceSolver::Generate(
+                hamiltonian, density, dHdB, muX, muY, request, lines, error))
             return false;
-        }
 
-		arma::vec dEdB;
-		if (!ResonanceFieldJacobian::ResolveDegenerateSubspaces(
-			energies, eigenvectors, dHdB, dEdB, error))
-			return false;
+        return Evaluate(lines, request, spectrum, error);
+    }
 
-		// Resolve degenerate field-following states before transforming either
-		// the density or magnetic-dipole operators. Otherwise populations and
-		// transition moments depend on an arbitrary basis chosen by eig_sym.
-		const arma::cx_mat densityEigen = eigenvectors.t() * density * eigenvectors;
-        const arma::vec populations = arma::real(densityEigen.diag());
-        if (!populations.is_finite())
-        {
-            error = "non-finite eigenbasis populations";
+    bool ResonanceSpectrumEvaluator::Evaluate(const ResonanceLineSet &lines,
+        const SpectrumRequest &request, SpectrumPoint &spectrum, std::string &error)
+    {
+        error.clear();
+        spectrum = SpectrumPoint{};
+        if (!ValidateRequest(request, error))
             return false;
-        }
 
-        std::vector<Transition> transitions;
         const double omegaMw = 2.0 * arma::datum::pi * request.microwaveFrequencyGHz;
-        if (!ResonanceTransitionDetector::Detect(energies, populations, dEdB, omegaMw,
-                transitions, error, request.populationThreshold, request.minimumSlope,
-                request.maximumDBdOmega))
-            return false;
 
-        arma::cx_mat muXEigen, muYEigen;
-        if (!ResonanceTransitionMoments::Transform(eigenvectors, muX, muY,
-                muXEigen, muYEigen, error))
-            return false;
-
-        for (const auto &transition : transitions)
+        for (const auto &line : lines.lines)
         {
-            const double line = ResonanceLineshape::Evaluate(request.lineshape,
-                transition.detuningField_mT, request.linewidth_mT);
-            if (line == 0.0)
+            if (!std::isfinite(line.omega) ||
+                !std::isfinite(line.populationDifference) ||
+                !std::isfinite(line.dOmegaDB) ||
+                !std::isfinite(line.dBdOmega) ||
+                !std::isfinite(line.moment.x) ||
+                !std::isfinite(line.moment.y) ||
+                !std::isfinite(line.moment.perpendicular))
+            {
+                error = "resonance line set contains non-finite values";
+                spectrum = SpectrumPoint{};
+                return false;
+            }
+
+            const double detuningOmega = line.omega - omegaMw;
+            const double detuningField_mT =
+                1.0e3 * detuningOmega * line.dBdOmega;
+            const double profile = ResonanceLineshape::Evaluate(
+                request.lineshape, detuningField_mT, request.linewidth_mT);
+            if (profile == 0.0)
                 continue;
 
-            const double fieldWeight = transition.dBdOmega * line;
-            const TransitionMoment moment = ResonanceTransitionMoments::Evaluate(
-                muXEigen, muYEigen, transition.lower, transition.upper);
-            const double prefactor = transition.populationDifference * fieldWeight;
-            spectrum.totalX += prefactor * moment.x;
-            spectrum.totalY += prefactor * moment.y;
-            spectrum.totalPerpendicular += prefactor * moment.perpendicular;
+            const double fieldWeight = line.dBdOmega * profile;
+            const double prefactor = line.populationDifference * fieldWeight;
+            spectrum.totalX += prefactor * line.moment.x;
+            spectrum.totalY += prefactor * line.moment.y;
+            spectrum.totalPerpendicular += prefactor * line.moment.perpendicular;
             ++spectrum.acceptedTransitions;
         }
 
-        return std::isfinite(spectrum.totalX) && std::isfinite(spectrum.totalY) &&
+        return std::isfinite(spectrum.totalX) &&
+               std::isfinite(spectrum.totalY) &&
                std::isfinite(spectrum.totalPerpendicular);
     }
 }

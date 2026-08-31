@@ -13,6 +13,7 @@
 
 #include <armadillo>
 #include <cstddef>
+#include <vector>
 
 namespace RunSection::General::Resonance
 {
@@ -39,6 +40,24 @@ namespace RunSection::General::Resonance
         double x = 0.0;
         double y = 0.0;
         double perpendicular = 0.0;
+    };
+
+    // Backend-neutral unbroadened resonance line at one field/orientation.
+    // Exact and future hybrid nuclear solvers must produce this same object.
+    struct ResonanceLine
+    {
+        arma::uword lower = 0;                 // backend/core lower-state label
+        arma::uword upper = 0;                 // backend/core upper-state label
+        double omega = 0.0;                    // rad/ns
+        double populationDifference = 0.0;
+        double dOmegaDB = 0.0;                 // rad/ns/T
+        double dBdOmega = 0.0;                 // T/(rad/ns)
+        TransitionMoment moment;
+    };
+
+    struct ResonanceLineSet
+    {
+        std::vector<ResonanceLine> lines;
     };
 
     struct SpectrumRequest
