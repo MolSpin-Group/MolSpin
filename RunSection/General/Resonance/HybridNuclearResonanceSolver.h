@@ -1,7 +1,7 @@
 /////////////////////////////////////////////////////////////////////////
 // HybridNuclearResonanceSolver (RunSection::General::Resonance)
 // ------------------
-// Electron/core-exact, one-nucleus perturbative resonance backend.
+// Exact-core, factorized perturbative-nuclear resonance backend.
 //
 // Qualified development layers:
 //   R2A:
@@ -51,51 +51,32 @@
 
 namespace RunSection::General::Resonance
 {
-    struct OneNucleusHybridRequest
+    struct HybridNuclearResonanceNucleus
     {
         arma::cx_mat hyperfineCoreNuclear;
         arma::cx_mat nuclearHamiltonian;
         arma::sp_cx_mat nuclearDHdB;
         arma::uword nuclearDimension = 0;
         double overlapThreshold = 1.0e-14;
+
+        // Legacy first-order analytic qualification is meaningful only for a
+        // one-factor point. General field response is qualified through the
+        // finite-difference API.
         bool fieldIndependentProjection = false;
     };
 
-    struct OneNucleusHybridPoint
+    struct HybridNuclearResonanceRequest
     {
-        arma::sp_cx_mat coreHamiltonian;
-        arma::cx_mat coreDensity;
-        arma::sp_cx_mat coreDHdB;
-        arma::cx_mat coreMuX;
-        arma::cx_mat coreMuY;
-        OneNucleusHybridRequest hybrid;
-    };
+        // Ordered independent perturbative nuclear factors. One nucleus is
+        // represented by a vector with size()==1; there is no separate API.
+        std::vector<HybridNuclearResonanceNucleus> nuclei;
 
-    using OneNucleusHybridPointProvider =
-        std::function<bool(double, OneNucleusHybridPoint &, std::string &)>;
-
-    struct OneNucleusHybridFieldResponseRequest
-    {
-        double fieldT = 0.0;
-        double fieldStepT = 1.0e-4;
-        double minimumCoreStateOverlap = 0.90;
-        double minimumNuclearStateOverlap = 0.90;
-        double jacobianRelativeTolerance = 1.0e-4;
-        double jacobianAbsoluteTolerance = 1.0e-5;
-    };
-
-    // R2G-A: independent first-order composition of several perturbative
-    // nuclei at one field/orientation. Each nucleus is still solved in its
-    // own small Hilbert space; no dense product nuclear Hamiltonian is built.
-    struct IndependentMultiNucleusHybridRequest
-    {
-        std::vector<OneNucleusHybridRequest> nuclei;
         double minimumCumulativeOverlapWeight = 0.0;
         std::size_t maximumComponentsPerCoreTransition = 0;
         double mergeFrequencyToleranceRadNs = 0.0;
     };
 
-    struct IndependentMultiNucleusHybridReport
+    struct HybridNuclearResonanceReport
     {
         std::size_t nucleusCount = 0;
         std::size_t productNuclearDimension = 1;
@@ -111,23 +92,23 @@ namespace RunSection::General::Resonance
         bool mergingApplied = false;
     };
 
-    struct IndependentMultiNucleusHybridPoint
+    struct HybridNuclearResonancePoint
     {
         arma::sp_cx_mat coreHamiltonian;
         arma::cx_mat coreDensity;
         arma::sp_cx_mat coreDHdB;
         arma::cx_mat coreMuX;
         arma::cx_mat coreMuY;
-        IndependentMultiNucleusHybridRequest hybrid;
+        HybridNuclearResonanceRequest hybrid;
     };
 
-    using IndependentMultiNucleusHybridPointProvider =
+    using HybridNuclearResonancePointProvider =
         std::function<bool(
             double,
-            IndependentMultiNucleusHybridPoint &,
+            HybridNuclearResonancePoint &,
             std::string &)>;
 
-    struct IndependentMultiNucleusHybridFieldResponseRequest
+    struct HybridNuclearResonanceFieldResponseRequest
     {
         double fieldT = 0.0;
         double fieldStepT = 1.0e-4;
@@ -245,7 +226,7 @@ namespace RunSection::General::Resonance
         }
 
         static bool SolveIndependentNucleus(
-            const OneNucleusHybridRequest &request,
+            const HybridNuclearResonanceNucleus &request,
             const arma::cx_mat &coreEigenvectors,
             IndependentNucleusSolution &solution,
             std::string &error)
@@ -329,13 +310,22 @@ namespace RunSection::General::Resonance
             return true;
         }
 
-        static bool ValidatePoint(const OneNucleusHybridPoint &point,
+        static bool ValidatePoint(const HybridNuclearResonancePoint &point,
             const SpectrumRequest &request, std::string &error)
         {
+            if (point.hybrid.nuclei.size()!=1)
+            {
+                error =
+                    "single-factor hybrid helper requires exactly one perturbative nucleus";
+                return false;
+            }
+
+            const auto &nucleus =
+                point.hybrid.nuclei.front();
             const arma::uword coreDimension =
                 point.coreHamiltonian.n_rows;
             const arma::uword nuclearDimension =
-                point.hybrid.nuclearDimension;
+                nucleus.nuclearDimension;
 
             if (coreDimension == 0 ||
                 point.coreHamiltonian.n_cols != coreDimension)
@@ -357,24 +347,24 @@ namespace RunSection::General::Resonance
                 return false;
             }
             if (nuclearDimension < 2 ||
-                point.hybrid.nuclearHamiltonian.n_rows != nuclearDimension ||
-                point.hybrid.nuclearHamiltonian.n_cols != nuclearDimension ||
-                point.hybrid.nuclearDHdB.n_rows != nuclearDimension ||
-                point.hybrid.nuclearDHdB.n_cols != nuclearDimension ||
-                point.hybrid.hyperfineCoreNuclear.n_rows !=
+                nucleus.nuclearHamiltonian.n_rows != nuclearDimension ||
+                nucleus.nuclearHamiltonian.n_cols != nuclearDimension ||
+                nucleus.nuclearDHdB.n_rows != nuclearDimension ||
+                nucleus.nuclearDHdB.n_cols != nuclearDimension ||
+                nucleus.hyperfineCoreNuclear.n_rows !=
                     coreDimension*nuclearDimension ||
-                point.hybrid.hyperfineCoreNuclear.n_cols !=
+                nucleus.hyperfineCoreNuclear.n_cols !=
                     coreDimension*nuclearDimension)
             {
                 error = "invalid one-nucleus hybrid dimensions";
                 return false;
             }
             if (!point.coreDensity.is_finite() ||
-                !point.hybrid.nuclearHamiltonian.is_finite() ||
-                !point.hybrid.hyperfineCoreNuclear.is_finite() ||
-                !std::isfinite(point.hybrid.overlapThreshold) ||
-                point.hybrid.overlapThreshold < 0.0 ||
-                point.hybrid.overlapThreshold > 1.0 ||
+                !nucleus.nuclearHamiltonian.is_finite() ||
+                !nucleus.hyperfineCoreNuclear.is_finite() ||
+                !std::isfinite(nucleus.overlapThreshold) ||
+                nucleus.overlapThreshold < 0.0 ||
+                nucleus.overlapThreshold > 1.0 ||
                 request.populationThreshold < 0.0 ||
                 request.minimumSlope < 0.0 ||
                 request.maximumDBdOmega <= 0.0)
@@ -385,7 +375,7 @@ namespace RunSection::General::Resonance
             return true;
         }
 
-        static bool SolvePoint(const OneNucleusHybridPoint &point,
+        static bool SolvePoint(const HybridNuclearResonancePoint &point,
             const SpectrumRequest &request, PointSolution &solution,
             std::string &error)
         {
@@ -430,7 +420,7 @@ namespace RunSection::General::Resonance
 
             IndependentNucleusSolution nucleus;
             if (!SolveIndependentNucleus(
-                    point.hybrid,
+                    point.hybrid.nuclei.front(),
                     solution.coreEigenvectors,
                     nucleus,error))
                 return false;
@@ -658,7 +648,7 @@ namespace RunSection::General::Resonance
         }
 
         static bool SolveTrackedDisplacement(
-            const OneNucleusHybridPointProvider &provider,
+            const HybridNuclearResonancePointProvider &provider,
             double fieldT,
             const SpectrumRequest &request,
             const PointSolution &reference,
@@ -669,7 +659,7 @@ namespace RunSection::General::Resonance
             std::vector<std::vector<arma::uword>> &nuclearMap,
             std::string &error)
         {
-            OneNucleusHybridPoint point;
+            HybridNuclearResonancePoint point;
             if (!provider(fieldT,point,error))
             {
                 if (error.empty())
@@ -686,7 +676,7 @@ namespace RunSection::General::Resonance
         }
 
         static bool ValidateIndependentMultiRequest(
-            const IndependentMultiNucleusHybridRequest &hybrid,
+            const HybridNuclearResonanceRequest &hybrid,
             std::string &error)
         {
             if (hybrid.nuclei.empty())
@@ -711,7 +701,7 @@ namespace RunSection::General::Resonance
         }
 
         static bool SolveIndependentMultiPoint(
-            const IndependentMultiNucleusHybridPoint &point,
+            const HybridNuclearResonancePoint &point,
             const SpectrumRequest &request,
             IndependentMultiPointSolution &solution,
             std::string &error)
@@ -722,7 +712,7 @@ namespace RunSection::General::Resonance
                     point.hybrid,error))
                 return false;
 
-            OneNucleusHybridPoint firstPoint;
+            HybridNuclearResonancePoint firstPoint;
             firstPoint.coreHamiltonian =
                 point.coreHamiltonian;
             firstPoint.coreDensity =
@@ -733,8 +723,8 @@ namespace RunSection::General::Resonance
                 point.coreMuX;
             firstPoint.coreMuY =
                 point.coreMuY;
-            firstPoint.hybrid =
-                point.hybrid.nuclei.front();
+            firstPoint.hybrid.nuclei = {
+                point.hybrid.nuclei.front()};
 
             if (!SolvePoint(
                     firstPoint,request,
@@ -799,14 +789,14 @@ namespace RunSection::General::Resonance
 
         static bool BuildIndependentMultiComponents(
             const IndependentMultiPointSolution &solution,
-            const IndependentMultiNucleusHybridRequest &hybrid,
+            const HybridNuclearResonanceRequest &hybrid,
             const SpectrumRequest &request,
             std::vector<IndependentMultiComponent> &components,
-            IndependentMultiNucleusHybridReport &report,
+            HybridNuclearResonanceReport &report,
             std::string &error)
         {
             components.clear();
-            report = IndependentMultiNucleusHybridReport{};
+            report = HybridNuclearResonanceReport{};
             report.nucleusCount =
                 solution.factors.size();
             report.productNuclearDimension =
@@ -1272,7 +1262,7 @@ namespace RunSection::General::Resonance
         }
 
         static bool SolveTrackedIndependentMultiDisplacement(
-            const IndependentMultiNucleusHybridPointProvider &provider,
+            const HybridNuclearResonancePointProvider &provider,
             double fieldT,
             const SpectrumRequest &request,
             const IndependentMultiPointSolution &reference,
@@ -1282,7 +1272,7 @@ namespace RunSection::General::Resonance
             IndependentMultiTrackingMaps &maps,
             std::string &error)
         {
-            IndependentMultiNucleusHybridPoint point;
+            HybridNuclearResonancePoint point;
             if (!provider(fieldT,point,error))
             {
                 if (error.empty())
@@ -1302,26 +1292,26 @@ namespace RunSection::General::Resonance
                 maps,error);
         }
 
-    public:
-        static bool GenerateIndependentFirstOrder(
+    private:
+        static bool GenerateMultiNucleusFirstOrder(
             const arma::sp_cx_mat &coreHamiltonian,
             const arma::cx_mat &coreDensity,
             const arma::sp_cx_mat &coreDHdB,
             const arma::cx_mat &coreMuX,
             const arma::cx_mat &coreMuY,
-            const IndependentMultiNucleusHybridRequest &hybrid,
+            const HybridNuclearResonanceRequest &hybrid,
             const SpectrumRequest &request,
             ResonanceLineSet &lineSet,
-            IndependentMultiNucleusHybridReport &report,
+            HybridNuclearResonanceReport &report,
             std::string &error)
         {
             error.clear();
             lineSet.lines.clear();
             lineSet.fieldJacobianQualified = false;
             report =
-                IndependentMultiNucleusHybridReport{};
+                HybridNuclearResonanceReport{};
 
-            IndependentMultiNucleusHybridPoint point;
+            HybridNuclearResonancePoint point;
             point.coreHamiltonian =
                 coreHamiltonian;
             point.coreDensity =
@@ -1359,19 +1349,19 @@ namespace RunSection::General::Resonance
             return true;
         }
 
-        static bool GenerateIndependentFirstOrderFiniteDifference(
-            const IndependentMultiNucleusHybridPointProvider &provider,
-            const IndependentMultiNucleusHybridFieldResponseRequest &fieldResponse,
+        static bool GenerateMultiNucleusFirstOrderFiniteDifference(
+            const HybridNuclearResonancePointProvider &provider,
+            const HybridNuclearResonanceFieldResponseRequest &fieldResponse,
             const SpectrumRequest &request,
             ResonanceLineSet &lineSet,
-            IndependentMultiNucleusHybridReport &report,
+            HybridNuclearResonanceReport &report,
             std::string &error)
         {
             error.clear();
             lineSet.lines.clear();
             lineSet.fieldJacobianQualified = false;
             report =
-                IndependentMultiNucleusHybridReport{};
+                HybridNuclearResonanceReport{};
 
             if (!provider)
             {
@@ -1417,7 +1407,7 @@ namespace RunSection::General::Resonance
                 return false;
             }
 
-            IndependentMultiNucleusHybridPoint
+            HybridNuclearResonancePoint
                 centerPoint;
             if (!provider(
                     fieldResponse.fieldT,
@@ -1590,24 +1580,24 @@ namespace RunSection::General::Resonance
             return true;
         }
 
-        static bool GenerateFirstOrder(
+        static bool GenerateSingleNucleusFirstOrder(
             const arma::sp_cx_mat &coreHamiltonian,
             const arma::cx_mat &coreDensity,
             const arma::sp_cx_mat &coreDHdB,
             const arma::cx_mat &coreMuX,
             const arma::cx_mat &coreMuY,
-            const OneNucleusHybridRequest &hybrid,
+            const HybridNuclearResonanceNucleus &hybrid,
             const SpectrumRequest &request,
             ResonanceLineSet &lineSet,
             std::string &error)
         {
-            OneNucleusHybridPoint point;
+            HybridNuclearResonancePoint point;
             point.coreHamiltonian = coreHamiltonian;
             point.coreDensity = coreDensity;
             point.coreDHdB = coreDHdB;
             point.coreMuX = coreMuX;
             point.coreMuY = coreMuY;
-            point.hybrid = hybrid;
+            point.hybrid.nuclei = {hybrid};
 
             error.clear();
             lineSet.lines.clear();
@@ -1629,9 +1619,9 @@ namespace RunSection::General::Resonance
             return true;
         }
 
-        static bool GenerateFirstOrderFiniteDifference(
-            const OneNucleusHybridPointProvider &provider,
-            const OneNucleusHybridFieldResponseRequest &fieldResponse,
+        static bool GenerateSingleNucleusFirstOrderFiniteDifference(
+            const HybridNuclearResonancePointProvider &provider,
+            const HybridNuclearResonanceFieldResponseRequest &fieldResponse,
             const SpectrumRequest &request,
             ResonanceLineSet &lineSet,
             std::string &error)
@@ -1671,7 +1661,7 @@ namespace RunSection::General::Resonance
                 return false;
             }
 
-            OneNucleusHybridPoint centerPoint;
+            HybridNuclearResonancePoint centerPoint;
             if (!provider(
                     fieldResponse.fieldT,centerPoint,error))
             {
@@ -1794,6 +1784,79 @@ namespace RunSection::General::Resonance
 
             lineSet.fieldJacobianQualified = true;
             return true;
+        }
+
+    public:
+        static bool GenerateFirstOrder(
+            const HybridNuclearResonancePoint &point,
+            const SpectrumRequest &request,
+            ResonanceLineSet &lineSet,
+            HybridNuclearResonanceReport &report,
+            std::string &error)
+        {
+            report = HybridNuclearResonanceReport{};
+
+            if (point.hybrid.nuclei.empty())
+            {
+                error =
+                    "hybrid resonance point requires at least one perturbative nucleus";
+                lineSet.lines.clear();
+                lineSet.fieldJacobianQualified=false;
+                return false;
+            }
+
+            if (point.hybrid.nuclei.size()==1 &&
+                point.hybrid.nuclei.front().
+                    fieldIndependentProjection)
+            {
+                const auto &nucleus =
+                    point.hybrid.nuclei.front();
+
+                const bool ok =
+                    GenerateSingleNucleusFirstOrder(
+                        point.coreHamiltonian,
+                        point.coreDensity,
+                        point.coreDHdB,
+                        point.coreMuX,
+                        point.coreMuY,
+                        nucleus,
+                        request,lineSet,error);
+                if (!ok)
+                    return false;
+
+                report.nucleusCount=1;
+                report.productNuclearDimension=
+                    static_cast<std::size_t>(
+                        nucleus.nuclearDimension);
+                report.largestDiagonalizedNuclearDimension=
+                    static_cast<std::size_t>(
+                        nucleus.nuclearDimension);
+                report.outputComponents=
+                    lineSet.lines.size();
+                return true;
+            }
+
+            return GenerateMultiNucleusFirstOrder(
+                point.coreHamiltonian,
+                point.coreDensity,
+                point.coreDHdB,
+                point.coreMuX,
+                point.coreMuY,
+                point.hybrid,
+                request,lineSet,report,error);
+        }
+
+        static bool GenerateFirstOrderFiniteDifference(
+            const HybridNuclearResonancePointProvider &provider,
+            const HybridNuclearResonanceFieldResponseRequest &fieldResponse,
+            const SpectrumRequest &request,
+            ResonanceLineSet &lineSet,
+            HybridNuclearResonanceReport &report,
+            std::string &error)
+        {
+            return GenerateMultiNucleusFirstOrderFiniteDifference(
+                provider,fieldResponse,request,
+                lineSet,report,error);
         }
     };
 }

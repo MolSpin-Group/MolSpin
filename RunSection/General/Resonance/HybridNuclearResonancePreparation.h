@@ -1,21 +1,24 @@
 /////////////////////////////////////////////////////////////////////////
 // HybridNuclearResonancePreparation (RunSection::General::Resonance)
 // ------------------
-// Builds one OneNucleusHybridPoint from a physical SpinAPI partition.
+// Builds a canonical HybridNuclearResonancePoint from a physical SpinAPI
+// partition containing one exact core and one or more independent
+// perturbative nuclear factors.
 //
 // Ownership contract:
 //   * exactCoreSpins is ordered and defines the exact-core Kronecker basis;
-//   * perturbativeNucleus is appended as the final product-space factor;
-//   * every physical SpinSystem interaction is owned exactly once by either
-//     exactCoreInteractions, perturbativeHyperfine, or
-//     perturbativeNuclearInteractions;
+//   * each perturbative nucleus is appended as the final factor only in its
+//     own core+nucleus pair space;
+//   * every physical SpinSystem spin is owned exactly once;
+//   * every physical SpinSystem interaction is owned exactly once;
+//   * a perturbative HFC connects exactly one perturbative nucleus to the
+//     exact core;
+//   * purely nuclear interactions belong to exactly one perturbative nucleus;
+//   * direct perturbative-nucleus/perturbative-nucleus interactions are not
+//     representable in this independent-factor theory and fail closed;
 //   * field-interaction lists are subsets used only for dH/dB;
 //   * detection terms are explicit and use ResonanceMagneticMomentBuilder;
-//   * SpinAPI owns all tensor algebra, frames, prefactors and embedding.
-//
-// Initial R2E-B scope is deliberately one perturbative nucleus.  Multi-nuclear
-// convolution and automatic exact/perturbative partition selection are later
-// layers.
+//   * SpinAPI owns tensor algebra, frames, prefactors and embedding.
 //
 // Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
 // (c) 2026 Quantum Biology and Computational Physics Group.
@@ -43,43 +46,29 @@
 
 namespace RunSection::General::Resonance
 {
-    struct OneNucleusHybridPartition
+    struct HybridNuclearResonanceNucleusPartition
     {
-        SpinAPI::system_ptr system;
-
-        // Ordered exact-core Hilbert factors.
-        std::vector<SpinAPI::spin_ptr> exactCoreSpins;
-
-        // Complete interaction ownership for the exact core.
-        std::vector<SpinAPI::interaction_ptr> exactCoreInteractions;
-
-        // Subset of exactCoreInteractions that scales with the swept field.
-        std::vector<SpinAPI::interaction_ptr> exactCoreFieldInteractions;
-
-        // Explicit EPR detection ownership.
-        std::vector<ResonanceMagneticMomentTerm> detectionTerms;
-
-        // Exactly one perturbative nuclear Hilbert factor.
-        SpinAPI::spin_ptr perturbativeNucleus;
-
-        // Cross-sector coupling.
-        SpinAPI::interaction_ptr perturbativeHyperfine;
-
-        // Complete one-nucleus interaction ownership.
-        std::vector<SpinAPI::interaction_ptr>
-            perturbativeNuclearInteractions;
-
-        // Subset that scales with field.
-        std::vector<SpinAPI::interaction_ptr>
-            perturbativeNuclearFieldInteractions;
-
-        // The perturbative nucleus is intentionally absent: the solver owns
-        // an unpolarized 1/n reference density for that nucleus.
-        SpinAPI::state_ptr exactCoreState;
-
-        bool fullTensorRotation = true;
+        SpinAPI::spin_ptr nucleus;
+        SpinAPI::interaction_ptr hyperfine;
+        std::vector<SpinAPI::interaction_ptr> nuclearInteractions;
+        std::vector<SpinAPI::interaction_ptr> nuclearFieldInteractions;
         double overlapThreshold = 1.0e-14;
         bool fieldIndependentProjection = false;
+    };
+
+    struct HybridNuclearResonancePartition
+    {
+        SpinAPI::system_ptr system;
+        std::vector<SpinAPI::spin_ptr> exactCoreSpins;
+        std::vector<SpinAPI::interaction_ptr> exactCoreInteractions;
+        std::vector<SpinAPI::interaction_ptr> exactCoreFieldInteractions;
+        std::vector<ResonanceMagneticMomentTerm> detectionTerms;
+        std::vector<HybridNuclearResonanceNucleusPartition> nuclei;
+        SpinAPI::state_ptr exactCoreState;
+        bool fullTensorRotation = true;
+        double minimumCumulativeOverlapWeight = 0.0;
+        std::size_t maximumComponentsPerCoreTransition = 0;
+        double mergeFrequencyToleranceRadNs = 0.0;
     };
 
     class HybridNuclearResonancePreparation
@@ -106,6 +95,26 @@ namespace RunSection::General::Resonance
                 for (std::size_t j=i+1;j<values.size();++j)
                 {
                     if (values[i] == values[j])
+                        return false;
+                }
+            }
+            return true;
+        }
+
+        static bool UniqueNuclei(
+            const std::vector<
+                HybridNuclearResonanceNucleusPartition> &nuclei)
+        {
+            if (nuclei.empty())
+                return false;
+            for (std::size_t i=0;i<nuclei.size();++i)
+            {
+                if (nuclei[i].nucleus==nullptr)
+                    return false;
+                for (std::size_t j=i+1;j<nuclei.size();++j)
+                {
+                    if (nuclei[i].nucleus==
+                        nuclei[j].nucleus)
                         return false;
                 }
             }
@@ -172,7 +181,6 @@ namespace RunSection::General::Resonance
 
             const auto g1=interaction->Group1();
             const auto g2=interaction->Group2();
-
             if (g1.empty() || !g2.empty())
                 return false;
             for (const auto &spin:g1)
@@ -184,7 +192,7 @@ namespace RunSection::General::Resonance
         }
 
         static int InteractionOwnershipCount(
-            const OneNucleusHybridPartition &partition,
+            const HybridNuclearResonancePartition &partition,
             const SpinAPI::interaction_ptr &interaction)
         {
             int count=0;
@@ -194,13 +202,16 @@ namespace RunSection::General::Resonance
                 if (owned==interaction)
                     ++count;
             }
-            if (partition.perturbativeHyperfine==interaction)
-                ++count;
-            for (const auto &owned:
-                 partition.perturbativeNuclearInteractions)
+            for (const auto &factor:partition.nuclei)
             {
-                if (owned==interaction)
+                if (factor.hyperfine==interaction)
                     ++count;
+                for (const auto &owned:
+                     factor.nuclearInteractions)
+                {
+                    if (owned==interaction)
+                        ++count;
+                }
             }
             return count;
         }
@@ -276,18 +287,19 @@ namespace RunSection::General::Resonance
 
     public:
         static bool BuildPoint(
-            const OneNucleusHybridPartition &partition,
+            const HybridNuclearResonancePartition &partition,
             const HS::HSOrientation &orientation,
             double fieldT,
-            OneNucleusHybridPoint &point,
+            HybridNuclearResonancePoint &point,
             std::string &error)
         {
             error.clear();
-            point=OneNucleusHybridPoint{};
+            point=HybridNuclearResonancePoint{};
 
             if (partition.system == nullptr)
             {
-                error = "hybrid partition requires a SpinSystem";
+                error =
+                    "hybrid partition requires a SpinSystem";
                 return false;
             }
             if (orientation.frameToLab.n_rows != 3 ||
@@ -304,12 +316,16 @@ namespace RunSection::General::Resonance
                     "hybrid partition field magnitude must be finite and positive";
                 return false;
             }
-            if (!std::isfinite(partition.overlapThreshold) ||
-                partition.overlapThreshold<0.0 ||
-                partition.overlapThreshold>1.0)
+            if (!std::isfinite(
+                    partition.minimumCumulativeOverlapWeight) ||
+                partition.minimumCumulativeOverlapWeight<0.0 ||
+                partition.minimumCumulativeOverlapWeight>1.0 ||
+                !std::isfinite(
+                    partition.mergeFrequencyToleranceRadNs) ||
+                partition.mergeFrequencyToleranceRadNs<0.0)
             {
                 error =
-                    "hybrid partition overlap threshold is invalid";
+                    "hybrid composition controls are invalid";
                 return false;
             }
 
@@ -320,27 +336,10 @@ namespace RunSection::General::Resonance
                     "hybrid partition exact-core spins must be non-empty and unique";
                 return false;
             }
-            if (partition.perturbativeNucleus == nullptr ||
-                !partition.system->Contains(
-                    partition.perturbativeNucleus))
+            if (!UniqueNuclei(partition.nuclei))
             {
                 error =
-                    "hybrid partition perturbative nucleus is missing from the SpinSystem";
-                return false;
-            }
-            if (partition.perturbativeNucleus->Type() !=
-                SpinAPI::SpinType::Nucleus)
-            {
-                error =
-                    "hybrid partition perturbative spin must have nuclear SpinType";
-                return false;
-            }
-            if (Contains(
-                    partition.exactCoreSpins,
-                    partition.perturbativeNucleus))
-            {
-                error =
-                    "hybrid partition perturbative nucleus must not be part of the exact core";
+                    "hybrid partition perturbative nuclei must be non-empty and unique";
                 return false;
             }
 
@@ -354,19 +353,63 @@ namespace RunSection::General::Resonance
                 }
             }
 
-            const auto systemSpins=partition.system->Spins();
+            for (const auto &factor:partition.nuclei)
+            {
+                if (!partition.system->Contains(
+                        factor.nucleus))
+                {
+                    error =
+                        "hybrid partition perturbative nucleus is missing from the SpinSystem";
+                    return false;
+                }
+                if (factor.nucleus->Type() !=
+                    SpinAPI::SpinType::Nucleus)
+                {
+                    error =
+                        "hybrid partition perturbative spin must have nuclear SpinType";
+                    return false;
+                }
+                if (Contains(
+                        partition.exactCoreSpins,
+                        factor.nucleus))
+                {
+                    error =
+                        "hybrid partition perturbative nucleus must not be part of the exact core";
+                    return false;
+                }
+                if (!std::isfinite(
+                        factor.overlapThreshold) ||
+                    factor.overlapThreshold<0.0 ||
+                    factor.overlapThreshold>1.0)
+                {
+                    error =
+                        "hybrid partition overlap threshold is invalid";
+                    return false;
+                }
+            }
+
+            const auto systemSpins=
+                partition.system->Spins();
             if (systemSpins.size() !=
-                partition.exactCoreSpins.size()+1)
+                partition.exactCoreSpins.size()+
+                partition.nuclei.size())
             {
                 error =
                     "hybrid partition must own every SpinSystem spin exactly once";
                 return false;
             }
+
             for (const auto &spin:systemSpins)
             {
-                const int count=
-                    (Contains(partition.exactCoreSpins,spin)?1:0) +
-                    (spin==partition.perturbativeNucleus?1:0);
+                int count=
+                    Contains(
+                        partition.exactCoreSpins,
+                        spin) ? 1 : 0;
+                for (const auto &factor:partition.nuclei)
+                {
+                    if (spin==factor.nucleus)
+                        ++count;
+                }
                 if (count!=1)
                 {
                     error =
@@ -376,13 +419,22 @@ namespace RunSection::General::Resonance
             }
 
             if (partition.exactCoreInteractions.empty() ||
-                !Unique(partition.exactCoreInteractions) ||
-                !Unique(partition.perturbativeNuclearInteractions) ||
-                partition.perturbativeHyperfine == nullptr)
+                !Unique(partition.exactCoreInteractions))
             {
                 error =
                     "hybrid partition interaction ownership is incomplete or duplicated";
                 return false;
+            }
+
+            for (const auto &factor:partition.nuclei)
+            {
+                if (factor.hyperfine==nullptr ||
+                    !Unique(factor.nuclearInteractions))
+                {
+                    error =
+                        "hybrid partition interaction ownership is incomplete or duplicated";
+                    return false;
+                }
             }
 
             for (const auto &interaction:
@@ -400,31 +452,34 @@ namespace RunSection::General::Resonance
                 }
             }
 
-            if (!partition.system->Contains(
-                    partition.perturbativeHyperfine) ||
-                partition.perturbativeHyperfine->HasTimeDependence() ||
-                !IsPerturbativeHyperfineOwnership(
-                    partition.perturbativeHyperfine,
-                    partition.perturbativeNucleus,
-                    partition.exactCoreSpins))
+            for (const auto &factor:partition.nuclei)
             {
-                error =
-                    "hybrid perturbative hyperfine interaction does not connect nucleus and exact core exclusively";
-                return false;
-            }
-
-            for (const auto &interaction:
-                 partition.perturbativeNuclearInteractions)
-            {
-                if (!partition.system->Contains(interaction) ||
-                    interaction->HasTimeDependence() ||
-                    !IsPerturbativeNuclearOwnership(
-                        interaction,
-                        partition.perturbativeNucleus))
+                if (!partition.system->Contains(
+                        factor.hyperfine) ||
+                    factor.hyperfine->HasTimeDependence() ||
+                    !IsPerturbativeHyperfineOwnership(
+                        factor.hyperfine,
+                        factor.nucleus,
+                        partition.exactCoreSpins))
                 {
                     error =
-                        "hybrid perturbative nuclear interaction is invalid or crosses the partition";
+                        "hybrid perturbative hyperfine interaction does not connect nucleus and exact core exclusively";
                     return false;
+                }
+
+                for (const auto &interaction:
+                     factor.nuclearInteractions)
+                {
+                    if (!partition.system->Contains(interaction) ||
+                        interaction->HasTimeDependence() ||
+                        !IsPerturbativeNuclearOwnership(
+                            interaction,
+                            factor.nucleus))
+                    {
+                        error =
+                            "hybrid perturbative nuclear interaction is invalid or crosses the partition";
+                        return false;
+                    }
                 }
             }
 
@@ -448,6 +503,7 @@ namespace RunSection::General::Resonance
                     "hybrid partition requires unique exact-core field interactions";
                 return false;
             }
+
             for (const auto &interaction:
                  partition.exactCoreFieldInteractions)
             {
@@ -465,28 +521,30 @@ namespace RunSection::General::Resonance
                     return false;
             }
 
-            if (!Unique(
-                    partition.perturbativeNuclearFieldInteractions))
+            for (const auto &factor:partition.nuclei)
             {
-                error =
-                    "hybrid perturbative nuclear field interactions must be unique";
-                return false;
-            }
-            for (const auto &interaction:
-                 partition.perturbativeNuclearFieldInteractions)
-            {
-                if (!Contains(
-                        partition.perturbativeNuclearInteractions,
-                        interaction))
+                if (!Unique(factor.nuclearFieldInteractions))
                 {
                     error =
-                        "hybrid perturbative field interaction is not owned by the nucleus";
+                        "hybrid perturbative nuclear field interactions must be unique";
                     return false;
                 }
-                if (!ValidateFieldInteraction(
-                        interaction,fieldT,error,
-                        "hybrid perturbative nuclear"))
-                    return false;
+                for (const auto &interaction:
+                     factor.nuclearFieldInteractions)
+                {
+                    if (!Contains(
+                            factor.nuclearInteractions,
+                            interaction))
+                    {
+                        error =
+                            "hybrid perturbative field interaction is not owned by the nucleus";
+                        return false;
+                    }
+                    if (!ValidateFieldInteraction(
+                            interaction,fieldT,error,
+                            "hybrid perturbative nuclear"))
+                        return false;
+                }
             }
 
             if (partition.detectionTerms.empty())
@@ -521,18 +579,20 @@ namespace RunSection::General::Resonance
                 return false;
             }
 
-            std::vector<std::pair<int,arma::cx_double>>
-                perturbativeStateSeries;
-            bool perturbativeCoupled=false;
-            if (partition.exactCoreState->GetStateSeries(
-                    partition.perturbativeNucleus,
-                    perturbativeStateSeries,
-                    perturbativeCoupled) ||
-                perturbativeCoupled)
+            for (const auto &factor:partition.nuclei)
             {
-                error =
-                    "hybrid perturbative nucleus reference state must be unpolarized and unspecified";
-                return false;
+                std::vector<std::pair<int,arma::cx_double>>
+                    stateSeries;
+                bool coupled=false;
+                if (partition.exactCoreState->GetStateSeries(
+                        factor.nucleus,
+                        stateSeries,coupled) ||
+                    coupled)
+                {
+                    error =
+                        "hybrid perturbative nucleus reference state must be unpolarized and unspecified";
+                    return false;
+                }
             }
 
             SpinAPI::SpinSpace coreSpace(
@@ -571,6 +631,7 @@ namespace RunSection::General::Resonance
                     "failed to construct the exact-core density matrix";
                 return false;
             }
+
             const arma::cx_double trace=
                 arma::trace(point.coreDensity);
             if (!std::isfinite(trace.real()) ||
@@ -581,6 +642,7 @@ namespace RunSection::General::Resonance
                     "hybrid exact-core density matrix has invalid trace";
                 return false;
             }
+
             point.coreDensity/=trace;
             if (!point.coreDensity.is_finite())
             {
@@ -599,83 +661,99 @@ namespace RunSection::General::Resonance
                     error))
                 return false;
 
-            std::vector<SpinAPI::spin_ptr> pairSpins=
-                partition.exactCoreSpins;
-            pairSpins.push_back(
-                partition.perturbativeNucleus);
+            point.hybrid.minimumCumulativeOverlapWeight=
+                partition.minimumCumulativeOverlapWeight;
+            point.hybrid.maximumComponentsPerCoreTransition=
+                partition.maximumComponentsPerCoreTransition;
+            point.hybrid.mergeFrequencyToleranceRadNs=
+                partition.mergeFrequencyToleranceRadNs;
+            point.hybrid.nuclei.reserve(
+                partition.nuclei.size());
 
-            SpinAPI::SpinSpace pairSpace(pairSpins);
-            pairSpace.UseSuperoperatorSpace(false);
-            pairSpace.UseFullTensorRotation(
-                partition.fullTensorRotation);
+            arma::mat rotation=
+                orientation.frameToLab;
 
-            arma::mat rotation=orientation.frameToLab;
-            arma::sp_cx_mat hyperfinePair;
-            if (!pairSpace.InteractionOperatorRotatedZYZ(
-                    partition.perturbativeHyperfine,
-                    rotation,
-                    hyperfinePair))
+            for (const auto &factor:partition.nuclei)
             {
-                error =
-                    "failed to construct the exact-core/perturbative hyperfine operator";
-                return false;
-            }
+                std::vector<SpinAPI::spin_ptr> pairSpins=
+                    partition.exactCoreSpins;
+                pairSpins.push_back(factor.nucleus);
 
-            SpinAPI::SpinSpace nuclearSpace(
-                partition.perturbativeNucleus);
-            nuclearSpace.UseSuperoperatorSpace(false);
-            nuclearSpace.UseFullTensorRotation(
-                partition.fullTensorRotation);
+                SpinAPI::SpinSpace pairSpace(pairSpins);
+                pairSpace.UseSuperoperatorSpace(false);
+                pairSpace.UseFullTensorRotation(
+                    partition.fullTensorRotation);
 
-            const arma::uword nuclearDimension=
-                static_cast<arma::uword>(
-                    partition.perturbativeNucleus->
-                        Multiplicity());
-
-            arma::sp_cx_mat nuclearHamiltonian(
-                nuclearDimension,nuclearDimension);
-            for (const auto &interaction:
-                 partition.perturbativeNuclearInteractions)
-            {
-                arma::sp_cx_mat term;
-                if (!nuclearSpace.InteractionOperatorRotatedZYZ(
-                        interaction,rotation,term))
+                arma::sp_cx_mat hyperfinePair;
+                if (!pairSpace.InteractionOperatorRotatedZYZ(
+                        factor.hyperfine,
+                        rotation,
+                        hyperfinePair))
                 {
                     error =
-                        "failed to construct a perturbative nuclear interaction";
+                        "failed to construct the exact-core/perturbative hyperfine operator";
                     return false;
                 }
-                nuclearHamiltonian+=term;
-            }
 
-            arma::sp_cx_mat nuclearFieldHamiltonian(
-                nuclearDimension,nuclearDimension);
-            for (const auto &interaction:
-                 partition.perturbativeNuclearFieldInteractions)
-            {
-                arma::sp_cx_mat term;
-                if (!nuclearSpace.InteractionOperatorRotatedZYZ(
-                        interaction,rotation,term))
+                SpinAPI::SpinSpace nuclearSpace(
+                    factor.nucleus);
+                nuclearSpace.UseSuperoperatorSpace(false);
+                nuclearSpace.UseFullTensorRotation(
+                    partition.fullTensorRotation);
+
+                const arma::uword nuclearDimension=
+                    static_cast<arma::uword>(
+                        factor.nucleus->Multiplicity());
+
+                arma::sp_cx_mat nuclearHamiltonian(
+                    nuclearDimension,nuclearDimension);
+                for (const auto &interaction:
+                     factor.nuclearInteractions)
                 {
-                    error =
-                        "failed to construct a perturbative nuclear field interaction";
-                    return false;
+                    arma::sp_cx_mat term;
+                    if (!nuclearSpace.InteractionOperatorRotatedZYZ(
+                            interaction,rotation,term))
+                    {
+                        error =
+                            "failed to construct a perturbative nuclear interaction";
+                        return false;
+                    }
+                    nuclearHamiltonian+=term;
                 }
-                nuclearFieldHamiltonian+=term;
-            }
 
-            point.hybrid.hyperfineCoreNuclear=
-                arma::cx_mat(hyperfinePair);
-            point.hybrid.nuclearHamiltonian=
-                arma::cx_mat(nuclearHamiltonian);
-            point.hybrid.nuclearDHdB=
-                nuclearFieldHamiltonian/fieldT;
-            point.hybrid.nuclearDimension=
-                nuclearDimension;
-            point.hybrid.overlapThreshold=
-                partition.overlapThreshold;
-            point.hybrid.fieldIndependentProjection=
-                partition.fieldIndependentProjection;
+                arma::sp_cx_mat nuclearFieldHamiltonian(
+                    nuclearDimension,nuclearDimension);
+                for (const auto &interaction:
+                     factor.nuclearFieldInteractions)
+                {
+                    arma::sp_cx_mat term;
+                    if (!nuclearSpace.InteractionOperatorRotatedZYZ(
+                            interaction,rotation,term))
+                    {
+                        error =
+                            "failed to construct a perturbative nuclear field interaction";
+                        return false;
+                    }
+                    nuclearFieldHamiltonian+=term;
+                }
+
+                HybridNuclearResonanceNucleus nucleus;
+                nucleus.hyperfineCoreNuclear=
+                    arma::cx_mat(hyperfinePair);
+                nucleus.nuclearHamiltonian=
+                    arma::cx_mat(nuclearHamiltonian);
+                nucleus.nuclearDHdB=
+                    nuclearFieldHamiltonian/fieldT;
+                nucleus.nuclearDimension=
+                    nuclearDimension;
+                nucleus.overlapThreshold=
+                    factor.overlapThreshold;
+                nucleus.fieldIndependentProjection=
+                    factor.fieldIndependentProjection;
+
+                point.hybrid.nuclei.push_back(
+                    std::move(nucleus));
+            }
 
             return true;
         }
