@@ -1631,6 +1631,569 @@ namespace
                correctedError<rawError;
     }
 
+    struct GRC_ExactCorePromotionModel
+    {
+        double gx = 1.95;
+        double gy = 2.03;
+        double gz = 2.18;
+
+        // Strongly coupled nucleus retained in the exact core.
+        double axExact = 1.80;
+        double ayExact = 2.70;
+        double azExact = 4.20;
+        double aExactAlpha = 0.34;
+        double aExactBeta = 0.59;
+        double aExactGamma = -0.23;
+
+        // Second nucleus treated perturbatively.
+        double axPert = 0.18;
+        double ayPert = 0.31;
+        double azPert = 0.52;
+        double aPertAlpha = -0.27;
+        double aPertBeta = 0.63;
+        double aPertGamma = 0.39;
+    };
+
+    SpinAPI::system_ptr GRC_BuildExactCorePromotionSystem(
+        const GRC_ExactCorePromotionModel &model,
+        double fieldT,double perturbativeScale)
+    {
+        std::ostringstream eprops;
+        eprops << std::setprecision(17)
+               << "type=electron;spin=1/2;tensor=anisotropic("
+               << model.gx << " " << model.gy << " "
+               << model.gz << ");";
+        auto electron =
+            std::make_shared<SpinAPI::Spin>("E",eprops.str());
+
+        auto exactNucleus = std::make_shared<SpinAPI::Spin>(
+            "Vexact","type=nucleus;spin=7/2;tensor=isotropic(1);");
+        auto perturbativeNucleus = std::make_shared<SpinAPI::Spin>(
+            "Vpert","type=nucleus;spin=7/2;tensor=isotropic(1);");
+
+        std::ostringstream bprops;
+        bprops << std::setprecision(17)
+               << "type=zeeman;spins=E;field=0 0 " << fieldT
+               << ";ignoretensors=false;commonprefactor=true;"
+                  "prefactor=1.0;";
+        auto field =
+            std::make_shared<SpinAPI::Interaction>("B0",bprops.str());
+
+        std::ostringstream aExactProps;
+        aExactProps << std::setprecision(17)
+                    << "type=hyperfine;group1=E;group2=Vexact;"
+                       "tensor=anisotropic("
+                    << model.axExact << " "
+                    << model.ayExact << " "
+                    << model.azExact << ");orientation="
+                    << model.aExactAlpha << ","
+                    << model.aExactBeta << ","
+                    << model.aExactGamma
+                    << ";ignoretensors=true;commonprefactor=false;"
+                       "prefactor=1.0;";
+        auto aExact =
+            std::make_shared<SpinAPI::Interaction>(
+                "Aexact",aExactProps.str());
+
+        std::ostringstream aPertProps;
+        aPertProps << std::setprecision(17)
+                   << "type=hyperfine;group1=E;group2=Vpert;"
+                      "tensor=anisotropic("
+                   << perturbativeScale*model.axPert << " "
+                   << perturbativeScale*model.ayPert << " "
+                   << perturbativeScale*model.azPert
+                   << ");orientation="
+                   << model.aPertAlpha << ","
+                   << model.aPertBeta << ","
+                   << model.aPertGamma
+                   << ";ignoretensors=true;commonprefactor=false;"
+                      "prefactor=1.0;";
+        auto aPert =
+            std::make_shared<SpinAPI::Interaction>(
+                "Apert",aPertProps.str());
+
+        std::ostringstream nzExactProps;
+        nzExactProps << std::setprecision(17)
+                     << "type=zeeman;spins=Vexact;field=0 0 "
+                     << fieldT
+                     << ";ignoretensors=true;commonprefactor=false;"
+                        "prefactor=0.0703;";
+        auto nzExact =
+            std::make_shared<SpinAPI::Interaction>(
+                "NZexact",nzExactProps.str());
+
+        std::ostringstream nzPertProps;
+        nzPertProps << std::setprecision(17)
+                    << "type=zeeman;spins=Vpert;field=0 0 "
+                    << fieldT
+                    << ";ignoretensors=true;commonprefactor=false;"
+                       "prefactor=0.0703;";
+        auto nzPert =
+            std::make_shared<SpinAPI::Interaction>(
+                "NZpert",nzPertProps.str());
+
+        auto up = std::make_shared<SpinAPI::State>(
+            "Up","spin(E)=|1/2>;");
+
+        auto system =
+            std::make_shared<SpinAPI::SpinSystem>(
+                "ExactCorePromotion");
+        system->Add(electron);
+        system->Add(exactNucleus);
+        system->Add(perturbativeNucleus);
+        system->Add(field);
+        system->Add(aExact);
+        system->Add(aPert);
+        system->Add(nzExact);
+        system->Add(nzPert);
+        system->Add(up);
+        system->SetProperties(
+            std::make_shared<MSDParser::ObjectParser>(
+                "properties","initialstate=Up;"));
+
+        if (!system->ValidateInteractions().empty())
+            return nullptr;
+        if (!up->ParseFromSystem(*system))
+            return nullptr;
+        return system;
+    }
+
+    bool GRC_BuildExactCorePromotionPoint(
+        const GRC_ExactCorePromotionModel &model,
+        const RunSection::General::HS::HSOrientation &orientation,
+        double perturbativeScale,double fieldT,bool swapCoreOrder,
+        RunSection::General::Resonance::OneNucleusHybridPoint &point,
+        std::string &error)
+    {
+        using namespace RunSection::General::Resonance;
+
+        auto system =
+            GRC_BuildExactCorePromotionSystem(
+                model,fieldT,perturbativeScale);
+        if (system == nullptr)
+        {
+            error =
+                "failed to build exact-core promotion system";
+            return false;
+        }
+
+        auto electron = system->spins_find("E");
+        auto exactNucleus = system->spins_find("Vexact");
+        auto perturbativeNucleus = system->spins_find("Vpert");
+        auto b0 = system->interactions_find("B0");
+        auto aExact = system->interactions_find("Aexact");
+        auto aPert = system->interactions_find("Apert");
+        auto nzExact = system->interactions_find("NZexact");
+        auto nzPert = system->interactions_find("NZpert");
+
+        if (electron == nullptr ||
+            exactNucleus == nullptr ||
+            perturbativeNucleus == nullptr ||
+            b0 == nullptr ||
+            aExact == nullptr ||
+            aPert == nullptr ||
+            nzExact == nullptr ||
+            nzPert == nullptr)
+        {
+            error = "missing exact-core promotion object";
+            return false;
+        }
+
+        std::vector<SpinAPI::spin_ptr> coreSpins;
+        if (swapCoreOrder)
+            coreSpins = {exactNucleus,electron};
+        else
+            coreSpins = {electron,exactNucleus};
+
+        SpinAPI::SpinSpace coreSpace(coreSpins);
+        coreSpace.Add(b0);
+        coreSpace.Add(aExact);
+        coreSpace.Add(nzExact);
+        coreSpace.UseSuperoperatorSpace(false);
+        coreSpace.UseFullTensorRotation(true);
+
+        const auto corePlan =
+            GRC_H0Plan({"B0","Aexact","NZexact"});
+        GeneralResonanceHamiltonian coreBuilder(
+            corePlan,coreSpace);
+
+        if (!coreBuilder.Build(
+                orientation,point.coreHamiltonian,error) ||
+            !coreBuilder.BuildFieldDerivative(
+                orientation,{"B0","NZexact"},fieldT,
+                point.coreDHdB,error) ||
+            !GRC_Density(
+                system,coreSpace,point.coreDensity) ||
+            !GRC_TransverseOperators(
+                system,coreSpace,
+                point.coreMuX,point.coreMuY))
+            return false;
+
+        // Preserve the exact-core basis order and append the perturbative
+        // nucleus as the final Kronecker factor required by the R2A/R2C
+        // partial-core projection contract.
+        std::vector<SpinAPI::spin_ptr> pairSpins = coreSpins;
+        pairSpins.push_back(perturbativeNucleus);
+
+        SpinAPI::SpinSpace pairSpace(pairSpins);
+        pairSpace.UseSuperoperatorSpace(false);
+        pairSpace.UseFullTensorRotation(true);
+
+        arma::mat rotation = orientation.frameToLab;
+        arma::sp_cx_mat hyperfinePair;
+        if (!pairSpace.InteractionOperatorRotatedZYZ(
+                aPert,rotation,hyperfinePair))
+        {
+            error =
+                "failed to build exact-core/perturbative hyperfine operator";
+            return false;
+        }
+
+        SpinAPI::SpinSpace nuclearSpace(perturbativeNucleus);
+        nuclearSpace.UseSuperoperatorSpace(false);
+        nuclearSpace.UseFullTensorRotation(true);
+
+        arma::sp_cx_mat nuclearH;
+        if (!nuclearSpace.InteractionOperatorRotatedZYZ(
+                nzPert,rotation,nuclearH))
+        {
+            error =
+                "failed to build perturbative nuclear Zeeman operator";
+            return false;
+        }
+
+        point.hybrid.hyperfineCoreNuclear =
+            arma::cx_mat(hyperfinePair);
+        point.hybrid.nuclearHamiltonian =
+            arma::cx_mat(nuclearH);
+        point.hybrid.nuclearDHdB =
+            nuclearH/fieldT;
+        point.hybrid.nuclearDimension =
+            static_cast<arma::uword>(
+                perturbativeNucleus->Multiplicity());
+        point.hybrid.overlapThreshold = 1.0e-14;
+
+        // The exact core contains a strongly coupled nucleus, so its
+        // eigenvectors are field-dependent even for S=1/2.
+        point.hybrid.fieldIndependentProjection = false;
+
+        return true;
+    }
+
+    bool GRC_BuildExactCorePromotionExactLines(
+        const GRC_ExactCorePromotionModel &model,
+        const RunSection::General::HS::HSOrientation &orientation,
+        double perturbativeScale,double fieldT,
+        double frequencyGHz,
+        RunSection::General::Resonance::ResonanceLineSet &lines)
+    {
+        using namespace RunSection::General::Resonance;
+
+        auto system =
+            GRC_BuildExactCorePromotionSystem(
+                model,fieldT,perturbativeScale);
+        if (system == nullptr)
+            return false;
+
+        SpinAPI::SpinSpace fullSpace(*system);
+        fullSpace.UseSuperoperatorSpace(false);
+        fullSpace.UseFullTensorRotation(true);
+
+        const auto fullPlan =
+            GRC_H0Plan({
+                "B0","Aexact","Apert","NZexact","NZpert"});
+        GeneralResonanceHamiltonian fullBuilder(
+            fullPlan,fullSpace);
+
+        arma::sp_cx_mat H,dHdB;
+        arma::cx_mat rho,muX,muY;
+        std::string error;
+
+        if (!fullBuilder.Build(orientation,H,error) ||
+            !fullBuilder.BuildFieldDerivative(
+                orientation,
+                {"B0","NZexact","NZpert"},
+                fieldT,dHdB,error) ||
+            !GRC_Density(system,fullSpace,rho) ||
+            !GRC_TransverseOperators(
+                system,fullSpace,muX,muY))
+            return false;
+
+        SpectrumRequest request;
+        request.microwaveFrequencyGHz=frequencyGHz;
+        request.linewidth_mT=0.10;
+        request.populationThreshold=1.0e-15;
+        request.minimumSlope=1.0e-15;
+
+        return ExactResonanceSolver::Generate(
+            H,rho,dHdB,muX,muY,request,lines,error);
+    }
+
+    bool GRC_BuildExactCorePromotionHybridLines(
+        const GRC_ExactCorePromotionModel &model,
+        const RunSection::General::HS::HSOrientation &orientation,
+        double perturbativeScale,double fieldT,
+        double frequencyGHz,double stepT,bool swapCoreOrder,
+        RunSection::General::Resonance::ResonanceLineSet &lines)
+    {
+        using namespace RunSection::General::Resonance;
+
+        OneNucleusHybridPointProvider provider =
+            [&](double field,
+                OneNucleusHybridPoint &point,
+                std::string &error)
+            {
+                return GRC_BuildExactCorePromotionPoint(
+                    model,orientation,perturbativeScale,
+                    field,swapCoreOrder,point,error);
+            };
+
+        OneNucleusHybridFieldResponseRequest response;
+        response.fieldT=fieldT;
+        response.fieldStepT=stepT;
+        response.minimumCoreStateOverlap=0.85;
+        response.minimumNuclearStateOverlap=0.85;
+        response.jacobianRelativeTolerance=5.0e-4;
+        response.jacobianAbsoluteTolerance=2.0e-4;
+
+        SpectrumRequest request;
+        request.microwaveFrequencyGHz=frequencyGHz;
+        request.linewidth_mT=0.10;
+        request.populationThreshold=1.0e-15;
+        request.minimumSlope=1.0e-15;
+
+        std::string error;
+        return HybridNuclearResonanceSolver::
+            GenerateFirstOrderFiniteDifference(
+                provider,response,request,lines,error);
+    }
+
+    bool GRC_TestHybridExactCorePromotionZeroPerturbativeParity()
+    {
+        using namespace RunSection::General::Resonance;
+
+        GRC_ExactCorePromotionModel model;
+        const auto orientation =
+            GRC_Orientation(0.28,0.67,-0.36);
+        const double frequency = 9.5;
+        const double fieldT =
+            2.0*arma::datum::pi*frequency/
+            (GRC_MU_B_OVER_HBAR*model.gz);
+
+        OneNucleusHybridPoint center;
+        std::string error;
+        if (!GRC_BuildExactCorePromotionPoint(
+                model,orientation,0.0,fieldT,false,
+                center,error))
+            return false;
+
+        if (center.coreHamiltonian.n_rows != 16 ||
+            center.coreHamiltonian.n_cols != 16 ||
+            center.hybrid.nuclearDimension != 8 ||
+            center.hybrid.hyperfineCoreNuclear.n_rows != 128 ||
+            center.hybrid.hyperfineCoreNuclear.n_cols != 128)
+            return false;
+
+        ResonanceLineSet exact,hybrid;
+        if (!GRC_BuildExactCorePromotionExactLines(
+                model,orientation,0.0,fieldT,
+                frequency,exact) ||
+            !GRC_BuildExactCorePromotionHybridLines(
+                model,orientation,0.0,fieldT,
+                frequency,5.0e-5,false,hybrid))
+            return false;
+
+        if (!hybrid.fieldJacobianQualified)
+            return false;
+
+        SpectrumRequest request;
+        request.microwaveFrequencyGHz=frequency;
+        request.linewidth_mT=3.0;
+        request.populationThreshold=1.0e-15;
+        request.minimumSlope=1.0e-15;
+
+        SpectrumPoint exactPoint,hybridPoint;
+        if (!ResonanceSpectrumEvaluator::Evaluate(
+                exact,request,exactPoint,error) ||
+            !ResonanceSpectrumEvaluator::Evaluate(
+                hybrid,request,hybridPoint,error))
+            return false;
+
+        const double scale=std::max({
+            1.0,
+            std::abs(exactPoint.totalX),
+            std::abs(exactPoint.totalY),
+            std::abs(exactPoint.totalPerpendicular)
+        });
+
+        if (std::abs(exactPoint.totalPerpendicular) < 1.0e-12)
+            return false;
+
+        return
+            std::abs(exactPoint.totalX-hybridPoint.totalX)
+                <= 2.0e-6*scale &&
+            std::abs(exactPoint.totalY-hybridPoint.totalY)
+                <= 2.0e-6*scale &&
+            std::abs(
+                exactPoint.totalPerpendicular-
+                hybridPoint.totalPerpendicular)
+                <= 2.0e-6*scale;
+    }
+
+    bool GRC_TestHybridExactCorePromotionBasisOrderInvariant()
+    {
+        using namespace RunSection::General::Resonance;
+
+        GRC_ExactCorePromotionModel model;
+        const auto orientation =
+            GRC_Orientation(-0.24,0.74,0.43);
+        const double frequency = 9.5;
+        const double fieldT =
+            2.0*arma::datum::pi*frequency/
+            (GRC_MU_B_OVER_HBAR*model.gz);
+
+        ResonanceLineSet canonical,swapped;
+        if (!GRC_BuildExactCorePromotionHybridLines(
+                model,orientation,0.45,fieldT,
+                frequency,7.5e-5,false,canonical) ||
+            !GRC_BuildExactCorePromotionHybridLines(
+                model,orientation,0.45,fieldT,
+                frequency,7.5e-5,true,swapped))
+            return false;
+
+        if (!canonical.fieldJacobianQualified ||
+            !swapped.fieldJacobianQualified)
+            return false;
+
+        SpectrumRequest request;
+        request.microwaveFrequencyGHz=frequency;
+        request.linewidth_mT=2.0;
+        request.populationThreshold=1.0e-15;
+        request.minimumSlope=1.0e-15;
+
+        SpectrumPoint a,b;
+        std::string error;
+        if (!ResonanceSpectrumEvaluator::Evaluate(
+                canonical,request,a,error) ||
+            !ResonanceSpectrumEvaluator::Evaluate(
+                swapped,request,b,error))
+            return false;
+
+        const double scale=std::max({
+            1.0,
+            std::abs(a.totalX),
+            std::abs(a.totalY),
+            std::abs(a.totalPerpendicular)
+        });
+
+        return
+            std::abs(a.totalX-b.totalX) <= 1.0e-9*scale &&
+            std::abs(a.totalY-b.totalY) <= 1.0e-9*scale &&
+            std::abs(a.totalPerpendicular-b.totalPerpendicular)
+                <= 1.0e-9*scale;
+    }
+
+    bool GRC_TestHybridExactCorePromotionFieldResponse()
+    {
+        using namespace RunSection::General::Resonance;
+
+        GRC_ExactCorePromotionModel model;
+        const auto orientation =
+            GRC_Orientation(0.35,0.71,-0.31);
+        const double frequency = 9.5;
+        const double fieldT =
+            2.0*arma::datum::pi*frequency/
+            (GRC_MU_B_OVER_HBAR*model.gz);
+
+        ResonanceLineSet exact,corrected;
+        if (!GRC_BuildExactCorePromotionExactLines(
+                model,orientation,0.60,fieldT,
+                frequency,exact) ||
+            !GRC_BuildExactCorePromotionHybridLines(
+                model,orientation,0.60,fieldT,
+                frequency,7.5e-5,false,corrected))
+            return false;
+
+        OneNucleusHybridPoint center;
+        std::string error;
+        if (!GRC_BuildExactCorePromotionPoint(
+                model,orientation,0.60,fieldT,false,
+                center,error))
+            return false;
+
+        SpectrumRequest request;
+        request.microwaveFrequencyGHz=frequency;
+        request.linewidth_mT=0.10;
+        request.populationThreshold=1.0e-15;
+        request.minimumSlope=1.0e-15;
+
+        ResonanceLineSet incomplete;
+        if (!HybridNuclearResonanceSolver::GenerateFirstOrder(
+                center.coreHamiltonian,
+                center.coreDensity,
+                center.coreDHdB,
+                center.coreMuX,
+                center.coreMuY,
+                center.hybrid,
+                request,incomplete,error))
+            return false;
+
+        if (incomplete.fieldJacobianQualified ||
+            !corrected.fieldJacobianQualified)
+            return false;
+
+        const double rawError =
+            GRC_StrongSlopeError(exact,incomplete,8);
+        const double correctedError =
+            GRC_StrongSlopeError(exact,corrected,8);
+
+        return rawError>0.0 &&
+               correctedError>=0.0 &&
+               correctedError<0.50*rawError;
+    }
+
+    bool GRC_TestHybridExactCorePromotionA2Scaling()
+    {
+        GRC_ExactCorePromotionModel model;
+        const auto orientation =
+            GRC_Orientation(-0.32,0.69,0.38);
+        const double frequency = 9.5;
+        const double fieldT =
+            2.0*arma::datum::pi*frequency/
+            (GRC_MU_B_OVER_HBAR*model.gz);
+
+        RunSection::General::Resonance::ResonanceLineSet
+            exactStrong,hybridStrong,exactWeak,hybridWeak;
+
+        if (!GRC_BuildExactCorePromotionExactLines(
+                model,orientation,0.60,fieldT,
+                frequency,exactStrong) ||
+            !GRC_BuildExactCorePromotionHybridLines(
+                model,orientation,0.60,fieldT,
+                frequency,7.5e-5,false,hybridStrong) ||
+            !GRC_BuildExactCorePromotionExactLines(
+                model,orientation,0.30,fieldT,
+                frequency,exactWeak) ||
+            !GRC_BuildExactCorePromotionHybridLines(
+                model,orientation,0.30,fieldT,
+                frequency,7.5e-5,false,hybridWeak))
+            return false;
+
+        const double strongError =
+            GRC_StrongSlopeError(
+                exactStrong,hybridStrong,8);
+        const double weakError =
+            GRC_StrongSlopeError(
+                exactWeak,hybridWeak,8);
+
+        if (!(strongError>0.0) ||
+            !(weakError>0.0))
+            return false;
+
+        const double ratio=strongError/weakError;
+        return ratio>2.8 && ratio<5.5;
+    }
+
     bool GRC_TestExactLineBackendSeam()
     {
         using namespace RunSection::General::Resonance;
@@ -1769,6 +2332,10 @@ void AddGeneralResonanceCoreTests(std::vector<test_case> &cases)
     cases.push_back(test_case("General resonance R2C ZFS-aware field-response error retains A^2 scaling",GRC_TestHybridZfsFieldResponseA2Scaling));
     cases.push_back(test_case("General resonance R2C finite-difference hybrid Jacobian step convergence",GRC_TestHybridZfsFieldResponseStepConvergence));
     cases.push_back(test_case("General resonance R2C S=3/2 ZFS-aware hybrid field response",GRC_TestHybridZfsFieldResponseS32));
+    cases.push_back(test_case("General resonance R2D exact-core I=7/2 promotion zero-perturbative parity",GRC_TestHybridExactCorePromotionZeroPerturbativeParity));
+    cases.push_back(test_case("General resonance R2D exact-core basis-order invariance",GRC_TestHybridExactCorePromotionBasisOrderInvariant));
+    cases.push_back(test_case("General resonance R2D exact-core promotion requires corrected field response",GRC_TestHybridExactCorePromotionFieldResponse));
+    cases.push_back(test_case("General resonance R2D exact-core promotion residual A^2 scaling",GRC_TestHybridExactCorePromotionA2Scaling));
     cases.push_back(test_case("General resonance core frozen legacy isotropic-g sweep parity",GRC_TestLegacyParityIsotropicG));
     cases.push_back(test_case("General resonance core frozen legacy axial-g sweep parity",GRC_TestLegacyParityAxialG));
     cases.push_back(test_case("General resonance core frozen legacy hyperfine sweep parity",GRC_TestLegacyParityHyperfine));
