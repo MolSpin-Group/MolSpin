@@ -35,7 +35,9 @@
 #include <algorithm>
 #include <cmath>
 #include <functional>
+#include <limits>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace RunSection::General::Resonance
@@ -73,6 +75,33 @@ namespace RunSection::General::Resonance
         double jacobianAbsoluteTolerance = 1.0e-5;
     };
 
+    // R2G-A: independent first-order composition of several perturbative
+    // nuclei at one field/orientation. Each nucleus is still solved in its
+    // own small Hilbert space; no dense product nuclear Hamiltonian is built.
+    struct IndependentMultiNucleusHybridRequest
+    {
+        std::vector<OneNucleusHybridRequest> nuclei;
+        double minimumCumulativeOverlapWeight = 0.0;
+        std::size_t maximumComponentsPerCoreTransition = 0;
+        double mergeFrequencyToleranceRadNs = 0.0;
+    };
+
+    struct IndependentMultiNucleusHybridReport
+    {
+        std::size_t nucleusCount = 0;
+        std::size_t productNuclearDimension = 1;
+        std::size_t largestDiagonalizedNuclearDimension = 0;
+        std::size_t coreTransitions = 0;
+        std::size_t generatedComponents = 0;
+        std::size_t retainedComponents = 0;
+        std::size_t mergedComponents = 0;
+        std::size_t outputComponents = 0;
+        std::size_t maximumIntermediateComponents = 0;
+        double maximumDiscardedNuclearWeightFraction = 0.0;
+        bool pruningApplied = false;
+        bool mergingApplied = false;
+    };
+
     class HybridNuclearResonanceSolver
     {
     private:
@@ -101,6 +130,19 @@ namespace RunSection::General::Resonance
             ResonanceLine line;
             arma::uword lowerNuclear = 0;
             arma::uword upperNuclear = 0;
+        };
+
+        struct IndependentNucleusSolution
+        {
+            std::vector<NuclearManifold> nuclear;
+            arma::uword dimension = 0;
+            double overlapThreshold = 0.0;
+        };
+
+        struct MultiPartialComponent
+        {
+            double nuclearShift = 0.0;
+            double overlapWeight = 1.0;
         };
 
         static bool PartialCoreExpectation(
@@ -140,6 +182,91 @@ namespace RunSection::General::Resonance
 
             out = 0.5*(out + out.t());
             return out.is_finite();
+        }
+
+        static bool SolveIndependentNucleus(
+            const OneNucleusHybridRequest &request,
+            const arma::cx_mat &coreEigenvectors,
+            IndependentNucleusSolution &solution,
+            std::string &error)
+        {
+            solution = IndependentNucleusSolution{};
+
+            const arma::uword coreDimension =
+                coreEigenvectors.n_rows;
+            const arma::uword nuclearDimension =
+                request.nuclearDimension;
+
+            if (coreDimension == 0 ||
+                coreEigenvectors.n_cols != coreDimension ||
+                nuclearDimension < 2 ||
+                request.nuclearHamiltonian.n_rows != nuclearDimension ||
+                request.nuclearHamiltonian.n_cols != nuclearDimension ||
+                request.nuclearDHdB.n_rows != nuclearDimension ||
+                request.nuclearDHdB.n_cols != nuclearDimension ||
+                request.hyperfineCoreNuclear.n_rows !=
+                    coreDimension*nuclearDimension ||
+                request.hyperfineCoreNuclear.n_cols !=
+                    coreDimension*nuclearDimension)
+            {
+                error =
+                    "invalid independent perturbative-nucleus dimensions";
+                return false;
+            }
+            if (!coreEigenvectors.is_finite() ||
+                !request.nuclearHamiltonian.is_finite() ||
+                !request.hyperfineCoreNuclear.is_finite() ||
+                !std::isfinite(request.overlapThreshold) ||
+                request.overlapThreshold < 0.0 ||
+                request.overlapThreshold > 1.0)
+            {
+                error =
+                    "invalid independent perturbative-nucleus numerical input";
+                return false;
+            }
+
+            solution.dimension = nuclearDimension;
+            solution.overlapThreshold =
+                request.overlapThreshold;
+            solution.nuclear.resize(coreDimension);
+
+            for (arma::uword a=0; a<coreDimension; ++a)
+            {
+                arma::cx_mat projected;
+                if (!PartialCoreExpectation(
+                        request.hyperfineCoreNuclear,
+                        coreEigenvectors.col(a),
+                        nuclearDimension,projected))
+                {
+                    error =
+                        "failed to project an independent perturbative hyperfine operator";
+                    return false;
+                }
+
+                arma::cx_mat effectiveNuclear =
+                    request.nuclearHamiltonian + projected;
+                effectiveNuclear =
+                    0.5*(effectiveNuclear + effectiveNuclear.t());
+
+                if (!arma::eig_sym(
+                        solution.nuclear[a].energies,
+                        solution.nuclear[a].eigenvectors,
+                        effectiveNuclear))
+                {
+                    error =
+                        "failed to diagonalize an independent perturbative nuclear Hamiltonian";
+                    return false;
+                }
+
+                if (!ResonanceFieldJacobian::ResolveDegenerateSubspaces(
+                        solution.nuclear[a].energies,
+                        solution.nuclear[a].eigenvectors,
+                        request.nuclearDHdB,
+                        solution.nuclear[a].dEdB,error))
+                    return false;
+            }
+
+            return true;
         }
 
         static bool ValidatePoint(const OneNucleusHybridPoint &point,
@@ -241,49 +368,19 @@ namespace RunSection::General::Resonance
                     solution.muXEigen,solution.muYEigen,error))
                 return false;
 
+            IndependentNucleusSolution nucleus;
+            if (!SolveIndependentNucleus(
+                    point.hybrid,
+                    solution.coreEigenvectors,
+                    nucleus,error))
+                return false;
+
+            solution.nuclear =
+                std::move(nucleus.nuclear);
             solution.nuclearDimension =
-                point.hybrid.nuclearDimension;
+                nucleus.dimension;
             solution.overlapThreshold =
-                point.hybrid.overlapThreshold;
-            const arma::uword coreDimension =
-                solution.coreEnergies.n_elem;
-            solution.nuclear.resize(coreDimension);
-
-            for (arma::uword a=0; a<coreDimension; ++a)
-            {
-                arma::cx_mat projected;
-                if (!PartialCoreExpectation(
-                        point.hybrid.hyperfineCoreNuclear,
-                        solution.coreEigenvectors.col(a),
-                        solution.nuclearDimension,projected))
-                {
-                    error =
-                        "failed to project the hyperfine operator onto a core state";
-                    return false;
-                }
-
-                arma::cx_mat effectiveNuclear =
-                    point.hybrid.nuclearHamiltonian + projected;
-                effectiveNuclear =
-                    0.5*(effectiveNuclear + effectiveNuclear.t());
-
-                if (!arma::eig_sym(
-                        solution.nuclear[a].energies,
-                        solution.nuclear[a].eigenvectors,
-                        effectiveNuclear))
-                {
-                    error =
-                        "failed to diagonalize an effective nuclear Hamiltonian";
-                    return false;
-                }
-
-                if (!ResonanceFieldJacobian::ResolveDegenerateSubspaces(
-                        solution.nuclear[a].energies,
-                        solution.nuclear[a].eigenvectors,
-                        point.hybrid.nuclearDHdB,
-                        solution.nuclear[a].dEdB,error))
-                    return false;
-            }
+                nucleus.overlapThreshold;
 
             return true;
         }
@@ -529,6 +626,363 @@ namespace RunSection::General::Resonance
         }
 
     public:
+        static bool GenerateIndependentFirstOrder(
+            const arma::sp_cx_mat &coreHamiltonian,
+            const arma::cx_mat &coreDensity,
+            const arma::sp_cx_mat &coreDHdB,
+            const arma::cx_mat &coreMuX,
+            const arma::cx_mat &coreMuY,
+            const IndependentMultiNucleusHybridRequest &hybrid,
+            const SpectrumRequest &request,
+            ResonanceLineSet &lineSet,
+            IndependentMultiNucleusHybridReport &report,
+            std::string &error)
+        {
+            error.clear();
+            lineSet.lines.clear();
+            lineSet.fieldJacobianQualified = false;
+            report = IndependentMultiNucleusHybridReport{};
+
+            if (hybrid.nuclei.empty())
+            {
+                error =
+                    "independent multi-nucleus hybrid requires at least one perturbative nucleus";
+                return false;
+            }
+            if (!std::isfinite(
+                    hybrid.minimumCumulativeOverlapWeight) ||
+                hybrid.minimumCumulativeOverlapWeight < 0.0 ||
+                hybrid.minimumCumulativeOverlapWeight > 1.0 ||
+                !std::isfinite(
+                    hybrid.mergeFrequencyToleranceRadNs) ||
+                hybrid.mergeFrequencyToleranceRadNs < 0.0)
+            {
+                error =
+                    "invalid independent multi-nucleus composition request";
+                return false;
+            }
+
+            OneNucleusHybridPoint firstPoint;
+            firstPoint.coreHamiltonian = coreHamiltonian;
+            firstPoint.coreDensity = coreDensity;
+            firstPoint.coreDHdB = coreDHdB;
+            firstPoint.coreMuX = coreMuX;
+            firstPoint.coreMuY = coreMuY;
+            firstPoint.hybrid = hybrid.nuclei.front();
+
+            PointSolution core;
+            if (!SolvePoint(firstPoint,request,core,error))
+                return false;
+
+            std::vector<IndependentNucleusSolution> factors;
+            factors.reserve(hybrid.nuclei.size());
+
+            IndependentNucleusSolution first;
+            first.nuclear = core.nuclear;
+            first.dimension = core.nuclearDimension;
+            first.overlapThreshold = core.overlapThreshold;
+            factors.push_back(std::move(first));
+
+            for (std::size_t k=1; k<hybrid.nuclei.size(); ++k)
+            {
+                IndependentNucleusSolution factor;
+                if (!SolveIndependentNucleus(
+                        hybrid.nuclei[k],
+                        core.coreEigenvectors,
+                        factor,error))
+                    return false;
+                factors.push_back(std::move(factor));
+            }
+
+            report.nucleusCount = factors.size();
+            report.productNuclearDimension = 1;
+            report.largestDiagonalizedNuclearDimension = 0;
+            for (const auto &factor:factors)
+            {
+                const std::size_t dimension =
+                    static_cast<std::size_t>(factor.dimension);
+                if (dimension == 0 ||
+                    report.productNuclearDimension >
+                        std::numeric_limits<std::size_t>::max()/dimension)
+                {
+                    error =
+                        "independent multi-nucleus product dimension overflow";
+                    return false;
+                }
+                report.productNuclearDimension *= dimension;
+                report.largestDiagonalizedNuclearDimension =
+                    std::max(
+                        report.largestDiagonalizedNuclearDimension,
+                        dimension);
+            }
+
+            const double productDimension =
+                static_cast<double>(
+                    report.productNuclearDimension);
+            const arma::uword coreDimension =
+                core.coreEnergies.n_elem;
+
+            for (arma::uword lower=0;
+                 lower<coreDimension; ++lower)
+            {
+                for (arma::uword upper=lower+1;
+                     upper<coreDimension; ++upper)
+                {
+                    ++report.coreTransitions;
+
+                    const double corePopulationDifference =
+                        core.corePopulations(lower)-
+                        core.corePopulations(upper);
+                    const double populationDifference =
+                        corePopulationDifference/productDimension;
+
+                    if (std::abs(populationDifference) <
+                        request.populationThreshold)
+                        continue;
+
+                    const TransitionMoment coreMoment =
+                        ResonanceTransitionMoments::Evaluate(
+                            core.muXEigen,core.muYEigen,
+                            lower,upper);
+
+                    std::vector<MultiPartialComponent> partials(1);
+
+                    for (const auto &factor:factors)
+                    {
+                        std::vector<MultiPartialComponent> next;
+                        const auto &lowerManifold =
+                            factor.nuclear[lower];
+                        const auto &upperManifold =
+                            factor.nuclear[upper];
+
+                        for (const auto &partial:partials)
+                        {
+                            for (arma::uword r=0;
+                                 r<factor.dimension; ++r)
+                            {
+                                for (arma::uword s=0;
+                                     s<factor.dimension; ++s)
+                                {
+                                    ++report.generatedComponents;
+
+                                    const arma::cx_double overlap =
+                                        arma::cdot(
+                                            upperManifold.
+                                                eigenvectors.col(s),
+                                            lowerManifold.
+                                                eigenvectors.col(r));
+                                    double overlapWeight =
+                                        std::norm(overlap);
+
+                                    if (!std::isfinite(overlapWeight) ||
+                                        overlapWeight < 0.0 ||
+                                        overlapWeight > 1.0+1.0e-10)
+                                    {
+                                        error =
+                                            "invalid independent nuclear-state overlap weight";
+                                        return false;
+                                    }
+                                    overlapWeight =
+                                        std::min(1.0,overlapWeight);
+
+                                    if (overlapWeight <
+                                        factor.overlapThreshold)
+                                    {
+                                        report.pruningApplied = true;
+                                        continue;
+                                    }
+
+                                    const double cumulativeWeight =
+                                        partial.overlapWeight*
+                                        overlapWeight;
+                                    if (cumulativeWeight <
+                                        hybrid.
+                                            minimumCumulativeOverlapWeight)
+                                    {
+                                        report.pruningApplied = true;
+                                        continue;
+                                    }
+
+                                    MultiPartialComponent component;
+                                    component.nuclearShift =
+                                        partial.nuclearShift +
+                                        upperManifold.energies(s) -
+                                        lowerManifold.energies(r);
+                                    component.overlapWeight =
+                                        cumulativeWeight;
+
+                                    if (!std::isfinite(
+                                            component.nuclearShift) ||
+                                        !std::isfinite(
+                                            component.overlapWeight))
+                                    {
+                                        error =
+                                            "non-finite independent multi-nucleus component";
+                                        return false;
+                                    }
+
+                                    next.push_back(component);
+
+                                    if (hybrid.
+                                            maximumComponentsPerCoreTransition >
+                                            0 &&
+                                        next.size() >
+                                            hybrid.
+                                            maximumComponentsPerCoreTransition)
+                                    {
+                                        error =
+                                            "independent multi-nucleus component cap exceeded";
+                                        return false;
+                                    }
+                                }
+                            }
+                        }
+
+                        partials.swap(next);
+                        report.maximumIntermediateComponents =
+                            std::max(
+                                report.maximumIntermediateComponents,
+                                partials.size());
+
+                        if (partials.empty())
+                            break;
+                    }
+
+                    double retainedWeight = 0.0;
+                    for (const auto &partial:partials)
+                        retainedWeight += partial.overlapWeight;
+
+                    if (!std::isfinite(retainedWeight))
+                    {
+                        error =
+                            "non-finite retained independent nuclear weight";
+                        return false;
+                    }
+
+                    double retainedFraction =
+                        retainedWeight/productDimension;
+                    if (retainedFraction > 1.0+1.0e-10)
+                    {
+                        error =
+                            "independent multi-nucleus overlap weight is not normalized";
+                        return false;
+                    }
+                    retainedFraction =
+                        std::max(0.0,std::min(1.0,retainedFraction));
+                    report.maximumDiscardedNuclearWeightFraction =
+                        std::max(
+                            report.
+                                maximumDiscardedNuclearWeightFraction,
+                            1.0-retainedFraction);
+
+                    report.retainedComponents += partials.size();
+
+                    if (hybrid.mergeFrequencyToleranceRadNs > 0.0 &&
+                        partials.size() > 1)
+                    {
+                        std::sort(
+                            partials.begin(),partials.end(),
+                            [](const MultiPartialComponent &a,
+                               const MultiPartialComponent &b)
+                            {
+                                if (a.nuclearShift != b.nuclearShift)
+                                    return
+                                        a.nuclearShift < b.nuclearShift;
+                                return
+                                    a.overlapWeight < b.overlapWeight;
+                            });
+
+                        std::vector<MultiPartialComponent> merged;
+                        merged.reserve(partials.size());
+
+                        for (const auto &partial:partials)
+                        {
+                            if (merged.empty() ||
+                                std::abs(
+                                    partial.nuclearShift-
+                                    merged.back().nuclearShift) >
+                                    hybrid.
+                                        mergeFrequencyToleranceRadNs)
+                            {
+                                merged.push_back(partial);
+                                continue;
+                            }
+
+                            const double combinedWeight =
+                                merged.back().overlapWeight+
+                                partial.overlapWeight;
+                            if (!(combinedWeight>0.0) ||
+                                !std::isfinite(combinedWeight))
+                            {
+                                error =
+                                    "invalid independent multi-nucleus merged weight";
+                                return false;
+                            }
+
+                            merged.back().nuclearShift =
+                                (merged.back().nuclearShift*
+                                     merged.back().overlapWeight +
+                                 partial.nuclearShift*
+                                     partial.overlapWeight)/
+                                combinedWeight;
+                            merged.back().overlapWeight =
+                                combinedWeight;
+                        }
+
+                        if (merged.size() < partials.size())
+                        {
+                            report.mergingApplied = true;
+                            report.mergedComponents +=
+                                partials.size()-merged.size();
+                        }
+                        partials.swap(merged);
+                    }
+
+                    const double coreGap =
+                        core.coreEnergies(upper)-
+                        core.coreEnergies(lower);
+
+                    for (const auto &partial:partials)
+                    {
+                        ResonanceLine line;
+                        line.lower = lower;
+                        line.upper = upper;
+                        line.omega =
+                            coreGap+partial.nuclearShift;
+                        line.populationDifference =
+                            populationDifference;
+                        line.moment.x =
+                            coreMoment.x*
+                            partial.overlapWeight;
+                        line.moment.y =
+                            coreMoment.y*
+                            partial.overlapWeight;
+                        line.moment.perpendicular =
+                            coreMoment.perpendicular*
+                            partial.overlapWeight;
+
+                        if (!std::isfinite(line.omega) ||
+                            !std::isfinite(
+                                line.populationDifference) ||
+                            !std::isfinite(line.moment.x) ||
+                            !std::isfinite(line.moment.y) ||
+                            !std::isfinite(
+                                line.moment.perpendicular))
+                        {
+                            error =
+                                "non-finite independent multi-nucleus resonance line";
+                            return false;
+                        }
+
+                        lineSet.lines.push_back(line);
+                    }
+                }
+            }
+
+            report.outputComponents = lineSet.lines.size();
+            return true;
+        }
+
         static bool GenerateFirstOrder(
             const arma::sp_cx_mat &coreHamiltonian,
             const arma::cx_mat &coreDensity,
