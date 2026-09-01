@@ -9,6 +9,7 @@
 #include "ExactResonanceSolver.h"
 #include "HybridNuclearResonanceSolver.h"
 #include "HybridNuclearResonancePreparation.h"
+#include "HybridNuclearResonancePartitionBuilder.h"
 #include "ResonanceFieldJacobian.h"
 #include "ResonanceLineshape.h"
 #include "ResonanceMagneticMomentBuilder.h"
@@ -4060,6 +4061,319 @@ namespace
         return true;
     }
 
+    struct GRC_R2KA_Model
+    {
+        SpinAPI::system_ptr system;
+        SpinAPI::spin_ptr electron;
+        SpinAPI::spin_ptr v1;
+        SpinAPI::spin_ptr v2;
+        SpinAPI::interaction_ptr b0;
+        SpinAPI::interaction_ptr a1;
+        SpinAPI::interaction_ptr a2;
+        SpinAPI::interaction_ptr nz1;
+        SpinAPI::interaction_ptr nz2;
+        SpinAPI::state_ptr up;
+    };
+
+    bool GRC_R2KA_BuildModel(
+        GRC_R2KA_Model &model,
+        bool duplicateFirstHyperfine=false)
+    {
+        model=GRC_R2KA_Model{};
+
+        model.electron=std::make_shared<SpinAPI::Spin>(
+            "E",
+            "type=electron;spin=1/2;"
+            "tensor=anisotropic(2.001 2.006 1.973);");
+        model.v1=std::make_shared<SpinAPI::Spin>(
+            "V1",
+            "type=nucleus;spin=7/2;isotope=51V;"
+            "tensor=isotropic(1);");
+        model.v2=std::make_shared<SpinAPI::Spin>(
+            "V2",
+            "type=nucleus;spin=7/2;isotope=51V;"
+            "tensor=isotropic(1);");
+
+        model.b0=std::make_shared<SpinAPI::Interaction>(
+            "B0",
+            "type=zeeman;spins=E;field=0 0 0.34;"
+            "ignoretensors=false;commonprefactor=true;"
+            "prefactor=1.0;");
+        model.a1=std::make_shared<SpinAPI::Interaction>(
+            "A1",
+            "type=hyperfine;group1=E;group2=V1;"
+            "tensor=isotropic(0.040);"
+            "ignoretensors=true;commonprefactor=false;"
+            "prefactor=1.0;");
+        model.a2=std::make_shared<SpinAPI::Interaction>(
+            "A2",
+            "type=hyperfine;group1=E;group2=V2;"
+            "tensor=isotropic(0.025);"
+            "ignoretensors=true;commonprefactor=false;"
+            "prefactor=1.0;");
+
+        const arma::vec field={0.0,0.0,0.34};
+        std::string error;
+        if (!SpinAPI::NuclearZeeman::CreateInteraction(
+                "NZ1",model.v1,field,model.nz1,error) ||
+            !SpinAPI::NuclearZeeman::CreateInteraction(
+                "NZ2",model.v2,field,model.nz2,error))
+            return false;
+
+        model.up=std::make_shared<SpinAPI::State>(
+            "Up","spin(E)=|1/2>;");
+
+        model.system=std::make_shared<SpinAPI::SpinSystem>(
+            "R2KA");
+        model.system->Add(model.electron);
+        model.system->Add(model.v1);
+        model.system->Add(model.v2);
+        model.system->Add(model.b0);
+        model.system->Add(model.a1);
+        model.system->Add(model.a2);
+        model.system->Add(model.nz1);
+        model.system->Add(model.nz2);
+
+        if (duplicateFirstHyperfine)
+        {
+            auto duplicate=
+                std::make_shared<SpinAPI::Interaction>(
+                    "A1b",
+                    "type=hyperfine;group1=E;group2=V1;"
+                    "tensor=isotropic(0.005);"
+                    "ignoretensors=true;"
+                    "commonprefactor=false;prefactor=1.0;");
+            model.system->Add(duplicate);
+        }
+
+        model.system->Add(model.up);
+
+        if (!model.system->ValidateInteractions().empty())
+            return false;
+        if (!model.up->ParseFromSystem(*model.system))
+            return false;
+        return true;
+    }
+
+    RunSection::General::Resonance::
+        HybridNuclearResonanceExplicitPartitionRequest
+    GRC_R2KA_Request(const GRC_R2KA_Model &model)
+    {
+        using namespace RunSection::General::Resonance;
+
+        HybridNuclearResonanceExplicitPartitionRequest request;
+        request.system=model.system;
+        request.perturbativeNuclei={
+            {model.v1,1.0e-14,false},
+            {model.v2,1.0e-14,false}
+        };
+        request.fieldInteractions={
+            model.b0,model.nz1,model.nz2
+        };
+        request.detectionTerms={
+            {model.electron,model.b0}
+        };
+        request.exactCoreState=model.up;
+        request.fullTensorRotation=true;
+        return request;
+    }
+
+    bool GRC_R2KA_MatrixNear(
+        const arma::cx_mat &a,
+        const arma::cx_mat &b,
+        double tolerance=1.0e-13)
+    {
+        if (a.n_rows!=b.n_rows ||
+            a.n_cols!=b.n_cols)
+            return false;
+
+        const double scale=std::max({
+            1.0,arma::norm(a,"fro"),arma::norm(b,"fro")
+        });
+        return arma::norm(a-b,"fro")<=tolerance*scale;
+    }
+
+    bool GRC_TestR2KAExplicitTwo51VPartitionParity()
+    {
+        using namespace RunSection::General::Resonance;
+
+        GRC_R2KA_Model model;
+        if (!GRC_R2KA_BuildModel(model))
+            return false;
+
+        const auto request=GRC_R2KA_Request(model);
+
+        HybridNuclearResonancePartition generated;
+        std::string error;
+        if (!HybridNuclearResonancePartitionBuilder::Build(
+                request,generated,error))
+            return false;
+
+        if (generated.exactCoreSpins.size()!=1 ||
+            generated.exactCoreSpins[0]!=model.electron ||
+            generated.exactCoreInteractions.size()!=1 ||
+            generated.exactCoreInteractions[0]!=model.b0 ||
+            generated.exactCoreFieldInteractions.size()!=1 ||
+            generated.exactCoreFieldInteractions[0]!=model.b0 ||
+            generated.nuclei.size()!=2 ||
+            generated.nuclei[0].nucleus!=model.v1 ||
+            generated.nuclei[0].hyperfine!=model.a1 ||
+            generated.nuclei[0].nuclearInteractions.size()!=1 ||
+            generated.nuclei[0].nuclearInteractions[0]!=model.nz1 ||
+            generated.nuclei[0].nuclearFieldInteractions.size()!=1 ||
+            generated.nuclei[0].nuclearFieldInteractions[0]!=model.nz1 ||
+            generated.nuclei[1].nucleus!=model.v2 ||
+            generated.nuclei[1].hyperfine!=model.a2 ||
+            generated.nuclei[1].nuclearInteractions.size()!=1 ||
+            generated.nuclei[1].nuclearInteractions[0]!=model.nz2 ||
+            generated.nuclei[1].nuclearFieldInteractions.size()!=1 ||
+            generated.nuclei[1].nuclearFieldInteractions[0]!=model.nz2 ||
+            generated.detectionTerms.size()!=1 ||
+            generated.detectionTerms[0].spin!=model.electron ||
+            generated.detectionTerms[0].zeeman!=model.b0)
+            return false;
+
+        HybridNuclearResonancePartition manual;
+        manual.system=model.system;
+        manual.exactCoreSpins={model.electron};
+        manual.exactCoreInteractions={model.b0};
+        manual.exactCoreFieldInteractions={model.b0};
+        manual.detectionTerms={{model.electron,model.b0}};
+        manual.exactCoreState=model.up;
+        manual.fullTensorRotation=true;
+        manual.nuclei.resize(2);
+        manual.nuclei[0].nucleus=model.v1;
+        manual.nuclei[0].hyperfine=model.a1;
+        manual.nuclei[0].nuclearInteractions={model.nz1};
+        manual.nuclei[0].nuclearFieldInteractions={model.nz1};
+        manual.nuclei[1].nucleus=model.v2;
+        manual.nuclei[1].hyperfine=model.a2;
+        manual.nuclei[1].nuclearInteractions={model.nz2};
+        manual.nuclei[1].nuclearFieldInteractions={model.nz2};
+
+        HybridNuclearResonancePoint generatedPoint;
+        HybridNuclearResonancePoint manualPoint;
+        const auto orientation=GRC_IdentityOrientation();
+
+        if (!HybridNuclearResonancePreparation::BuildPoint(
+                generated,orientation,0.34,
+                generatedPoint,error) ||
+            !HybridNuclearResonancePreparation::BuildPoint(
+                manual,orientation,0.34,
+                manualPoint,error))
+            return false;
+
+        if (!GRC_R2KA_MatrixNear(
+                arma::cx_mat(generatedPoint.coreHamiltonian),
+                arma::cx_mat(manualPoint.coreHamiltonian)) ||
+            !GRC_R2KA_MatrixNear(
+                generatedPoint.coreDensity,
+                manualPoint.coreDensity) ||
+            !GRC_R2KA_MatrixNear(
+                arma::cx_mat(generatedPoint.coreDHdB),
+                arma::cx_mat(manualPoint.coreDHdB)) ||
+            !GRC_R2KA_MatrixNear(
+                generatedPoint.coreMuX,
+                manualPoint.coreMuX) ||
+            !GRC_R2KA_MatrixNear(
+                generatedPoint.coreMuY,
+                manualPoint.coreMuY) ||
+            generatedPoint.hybrid.nuclei.size()!=2 ||
+            manualPoint.hybrid.nuclei.size()!=2)
+            return false;
+
+        for (std::size_t i=0;i<2;++i)
+        {
+            const auto &a=generatedPoint.hybrid.nuclei[i];
+            const auto &b=manualPoint.hybrid.nuclei[i];
+            if (a.nuclearDimension!=b.nuclearDimension ||
+                !GRC_R2KA_MatrixNear(
+                    a.hyperfineCoreNuclear,
+                    b.hyperfineCoreNuclear) ||
+                !GRC_R2KA_MatrixNear(
+                    a.nuclearHamiltonian,
+                    b.nuclearHamiltonian) ||
+                !GRC_R2KA_MatrixNear(
+                    arma::cx_mat(a.nuclearDHdB),
+                    arma::cx_mat(b.nuclearDHdB)))
+                return false;
+        }
+
+        return true;
+    }
+
+    bool GRC_TestR2KAExplicitPartitionOrderContract()
+    {
+        using namespace RunSection::General::Resonance;
+
+        GRC_R2KA_Model model;
+        if (!GRC_R2KA_BuildModel(model))
+            return false;
+
+        auto request=GRC_R2KA_Request(model);
+        std::swap(
+            request.perturbativeNuclei[0],
+            request.perturbativeNuclei[1]);
+
+        HybridNuclearResonancePartition partition;
+        std::string error;
+        if (!HybridNuclearResonancePartitionBuilder::Build(
+                request,partition,error))
+            return false;
+
+        return
+            partition.nuclei.size()==2 &&
+            partition.nuclei[0].nucleus==model.v2 &&
+            partition.nuclei[0].hyperfine==model.a2 &&
+            partition.nuclei[0].nuclearInteractions.size()==1 &&
+            partition.nuclei[0].nuclearInteractions[0]==model.nz2 &&
+            partition.nuclei[1].nucleus==model.v1 &&
+            partition.nuclei[1].hyperfine==model.a1 &&
+            partition.nuclei[1].nuclearInteractions.size()==1 &&
+            partition.nuclei[1].nuclearInteractions[0]==model.nz1;
+    }
+
+    bool GRC_TestR2KADuplicateHyperfineFailsClosed()
+    {
+        using namespace RunSection::General::Resonance;
+
+        GRC_R2KA_Model model;
+        if (!GRC_R2KA_BuildModel(model,true))
+            return false;
+
+        const auto request=GRC_R2KA_Request(model);
+        HybridNuclearResonancePartition partition;
+        std::string error;
+
+        if (HybridNuclearResonancePartitionBuilder::Build(
+                request,partition,error))
+            return false;
+
+        return error==
+            "explicit hybrid partition requires exactly one core-nucleus hyperfine interaction per perturbative nucleus";
+    }
+
+    bool GRC_TestR2KADetectionOnPerturbativeNucleusFailsClosed()
+    {
+        using namespace RunSection::General::Resonance;
+
+        GRC_R2KA_Model model;
+        if (!GRC_R2KA_BuildModel(model))
+            return false;
+
+        auto request=GRC_R2KA_Request(model);
+        request.detectionTerms={{model.v1,model.nz1}};
+
+        HybridNuclearResonancePartition partition;
+        std::string error;
+        if (HybridNuclearResonancePartitionBuilder::Build(
+                request,partition,error))
+            return false;
+
+        return error==
+            "explicit hybrid detection spin must belong to the exact core";
+    }
+
     bool GRC_TestR2JAExactEigensystemOverloadParity()
     {
         using namespace RunSection::General::Resonance;
@@ -6276,6 +6590,10 @@ void AddGeneralResonanceCoreTests(std::vector<test_case> &cases)
     cases.push_back(test_case("General resonance core field Jacobian and transition detection",GRC_TestFieldJacobianAndDetector));
     cases.push_back(test_case("General resonance core resolves degenerate field slopes",GRC_TestDegenerateFieldJacobian));
     cases.push_back(test_case("General resonance Hamiltonian adapter preserves full/secular distinction",GRC_TestHamiltonianAdapterPreservesApproximation));
+    cases.push_back(test_case("General resonance R2K-A explicit two-51V partition parity",GRC_TestR2KAExplicitTwo51VPartitionParity));
+    cases.push_back(test_case("General resonance R2K-A explicit partition order contract",GRC_TestR2KAExplicitPartitionOrderContract));
+    cases.push_back(test_case("General resonance R2K-A duplicate perturbative hyperfine fails closed",GRC_TestR2KADuplicateHyperfineFailsClosed));
+    cases.push_back(test_case("General resonance R2K-A perturbative detection spin fails closed",GRC_TestR2KADetectionOnPerturbativeNucleusFailsClosed));
     cases.push_back(test_case("General resonance R2J-A exact eigensystem overload parity",GRC_TestR2JAExactEigensystemOverloadParity));
     cases.push_back(test_case("General resonance R2J-A resolved spectrum-point aggregation",GRC_TestR2JAResolvedSpectrumPoint));
     cases.push_back(test_case("General resonance R2J-A mixed resolved-channel cardinality fails closed",GRC_TestR2JAResolvedSpectrumCardinalityFailsClosed));
