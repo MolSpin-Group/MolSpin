@@ -240,5 +240,43 @@ target_include_directories(molspintest PRIVATE ${PATH_SOURCE_TESTS})
 target_link_libraries(molspintest PRIVATE molspin_core)
 molspin_configure_target(molspintest)
 
+# Slow physical resonance validation.
+#
+# This target retains the expensive R2K-D exact-vs-hybrid X/W powder oracles,
+# but is deliberately EXCLUDE_FROM_ALL and is not registered with CTest.
+# Build and run it explicitly when a physical resonance certificate is needed:
+#
+#   cmake --build build --target molspinresonanceslowtest
+#   ./build/molspinresonanceslowtest
+#
+# Successful-test output is replayed for this target so the R2K-D normalized
+# RMS certificate values remain visible.
+add_executable(molspinresonanceslowtest EXCLUDE_FROM_ALL ${SOURCES_TESTS})
+target_include_directories(molspinresonanceslowtest PRIVATE ${PATH_SOURCE_TESTS})
+target_link_libraries(molspinresonanceslowtest PRIVATE molspin_core)
+target_compile_definitions(molspinresonanceslowtest PRIVATE
+    SPINAPI_TEST=0
+    MSDPARSER_TEST=0
+    ACTION_TEST=0
+    STATICHSSDECAY_TEST=0
+    STATICSS_TEST=0
+    MULTISTATICSS_TEST=0
+    STATICRPONLY_TEST=0
+    STATICSSSPECTRA_TEST=0
+    STATICHSRESONANCE_TEST=1
+    STATICPOWDERSPECTRA_TEST=0
+    UTIL_TEST=0
+    HSGENERAL_TEST=0
+    SSGENERAL_TEST=0
+    MULTISSGENERAL_TEST=0
+    GENERALLOG_TEST=0
+    GENERALORIENTATION_TEST=0
+    GENERALPHYSICS_TEST=0
+    GENERALSPECTROSCOPY_TEST=0
+    MOLSPIN_SLOW_RESONANCE_ORACLES=1
+    MOLSPIN_REPLAY_SUCCESS_OUTPUT=1
+)
+molspin_configure_target(molspinresonanceslowtest)
+
 enable_testing()
 add_test(NAME molspintest COMMAND molspintest)

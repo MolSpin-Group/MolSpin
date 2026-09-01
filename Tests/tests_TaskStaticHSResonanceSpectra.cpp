@@ -18,6 +18,10 @@
 #include "TaskStaticHSDirectSpectra.h"
 #include "TaskStaticHSResonanceSpectra.h"
 
+#ifndef MOLSPIN_SLOW_RESONANCE_ORACLES
+#define MOLSPIN_SLOW_RESONANCE_ORACLES 0
+#endif
+
 namespace
 {
 	std::shared_ptr<SpinAPI::SpinSystem> BuildTwoZeemanSystem(double B1, double B2)
@@ -481,6 +485,7 @@ namespace
 	}
 
 
+#if MOLSPIN_SLOW_RESONANCE_ORACLES == 1
 	struct R2KDPhysicalSweep
 	{
 		std::vector<double> totalPerp;
@@ -731,6 +736,7 @@ namespace
 
 		return true;
 	}
+#endif
 
 	double NormalizedRms(const std::vector<double> &lhs, const std::vector<double> &rhs)
 	{
@@ -919,6 +925,7 @@ void AddTaskStaticHSResonanceSpectraTests(std::vector<test_case> &cases)
 	}));
 
 
+#if MOLSPIN_SLOW_RESONANCE_ORACLES == 1
 	cases.push_back(test_case("Resonance spectra R2K-D anisotropic one-51V thermal X-W oracle", []() {
 		R2KDPhysicalSweep exactX,hybridX,exactW,hybridW;
 		const std::vector<double> coupling = {1.0};
@@ -1026,6 +1033,7 @@ void AddTaskStaticHSResonanceSpectraTests(std::vector<test_case> &cases)
 			std::string::npos;
 		return allScaling && promotedScaling;
 	}));
+#endif
 
 	cases.push_back(test_case("Spectroscopy task registry aliases", []() {
 		const std::vector<std::string> resonanceNames = {

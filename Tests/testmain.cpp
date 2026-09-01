@@ -120,6 +120,10 @@ std::string read_captured_stream(std::FILE *file)
 	return output;
 }
 //////////////////////////////////////////////////////////////////////////////
+#ifndef MOLSPIN_REPLAY_SUCCESS_OUTPUT
+#define MOLSPIN_REPLAY_SUCCESS_OUTPUT 0
+#endif
+//////////////////////////////////////////////////////////////////////////////
 int main(int argc, char **argv)
 {
 	std::cout << "# -------------------------------------------------------" << std::endl;
@@ -247,7 +251,7 @@ int main(int argc, char **argv)
 		}
 		std::cout << std::endl;
 
-		if (!passed_test)
+		if (!passed_test || MOLSPIN_REPLAY_SUCCESS_OUTPUT == 1)
 		{
 			std::string captured_stdout_content = read_captured_stream(captured_stdout);
 			std::string captured_stderr_content = read_captured_stream(captured_stderr);
