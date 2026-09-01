@@ -8,11 +8,13 @@
 #include <cmath>
 #include <cstdlib>
 #include <limits>
+#include <iomanip>
 #include <sstream>
 #include <string>
 #include <vector>
 
 #include "RunSection.h"
+#include "NuclearZeeman.h"
 #include "TaskStaticHSDirectSpectra.h"
 #include "TaskStaticHSResonanceSpectra.h"
 
@@ -303,6 +305,115 @@ namespace
 		return !out.empty();
 	}
 
+
+	struct R2KBTaskResult
+	{
+		bool runOk = false;
+		std::string log;
+		std::string data;
+	};
+
+	std::shared_ptr<SpinAPI::SpinSystem> BuildR2KBOneVSystem(
+		double fieldT, bool molecularFrame)
+	{
+		auto electron = std::make_shared<SpinAPI::Spin>(
+			"E", "type=electron;spin=1/2;tensor=isotropic(2.0023);");
+		auto nucleus = std::make_shared<SpinAPI::Spin>(
+			"V", "type=nucleus;spin=7/2;isotope=51V;tensor=isotropic(1.0);");
+
+		std::ostringstream bprops;
+		bprops << std::setprecision(17)
+			   << "type=zeeman;spins=E;field=0 0 " << fieldT << ";"
+			   << "ignoretensors=false;commonprefactor=true;prefactor=1.0;";
+		auto b0 = std::make_shared<SpinAPI::Interaction>("B0", bprops.str());
+
+		auto hfc = std::make_shared<SpinAPI::Interaction>(
+			"A",
+			"type=hyperfine;group1=E;group2=V;"
+			"tensor=isotropic(0.0047);commonprefactor=false;prefactor=1.0;");
+
+		arma::vec field(3, arma::fill::zeros);
+		field(2) = fieldT;
+		SpinAPI::interaction_ptr nz;
+		std::string error;
+		if (!SpinAPI::NuclearZeeman::CreateInteraction(
+				"NZ", nucleus, field, nz, error))
+			return nullptr;
+
+		auto up = std::make_shared<SpinAPI::State>("Up", "spin(E)=|1/2>;");
+
+		auto system = std::make_shared<SpinAPI::SpinSystem>("HybridSystem");
+		system->Add(electron);
+		system->Add(nucleus);
+		system->Add(b0);
+		system->Add(hfc);
+		system->Add(nz);
+		system->Add(up);
+		if (!system->ValidateInteractions().empty() ||
+			!up->ParseFromSystem(*system))
+			return nullptr;
+
+		auto props = std::make_shared<MSDParser::ObjectParser>(
+			"spinsyssettings",
+			std::string("initialstate=Up;frame=") +
+			(molecularFrame ? "molecular;" : "fixed;"));
+		if (!system->SetProperties(props))
+			return nullptr;
+		return system;
+	}
+
+	bool RunR2KBTask(
+		const std::shared_ptr<SpinAPI::SpinSystem> &system,
+		const std::string &extraProperties,
+		R2KBTaskResult &result)
+	{
+		result = R2KBTaskResult{};
+		if (system == nullptr)
+			return false;
+
+		RunSection::RunSection rs;
+		rs.Add(system);
+
+		MSDParser::ObjectParser taskParser(
+			"testtask",
+			"type=statichs-resonance-spectra;"
+			"mwfrequency=9.5;linewidth=0.2;lineshape=gaussian;"
+			"detectspins=E;fieldinteraction=B0;initialstate=Up;"
+			"powdersamplingpoints=1;powdergridtype=fibonacci;"
+			"powdergammapoints=1;powderfullsphere=true;"
+			"fulltensorrotation=true;mzblocks=true;sweepcache=false;" +
+			extraProperties);
+		if (!rs.Add(MSDParser::ObjectType::Task, taskParser))
+			return false;
+
+		auto task = rs.GetTask("testtask");
+		if (task == nullptr)
+			return false;
+
+		std::ostringstream logstream;
+		std::ostringstream datastream;
+		task->SetLogStream(logstream);
+		task->SetDataStream(datastream);
+
+		result.runOk = rs.Run(1);
+		result.log = logstream.str();
+		result.data = datastream.str();
+		return true;
+	}
+
+	bool R2KBHasDataRow(const std::string &data)
+	{
+		std::istringstream stream(data);
+		std::string line;
+		int nonempty = 0;
+		while (std::getline(stream, line))
+		{
+			if (!line.empty())
+				++nonempty;
+		}
+		return nonempty >= 2;
+	}
+
 	double NormalizedRms(const std::vector<double> &lhs, const std::vector<double> &rhs)
 	{
 		if (lhs.size() != rhs.size() || lhs.empty())
@@ -330,6 +441,77 @@ namespace
 
 void AddTaskStaticHSResonanceSpectraTests(std::vector<test_case> &cases)
 {
+	cases.push_back(test_case("Resonance spectra R2K-B explicit hybrid task route", []() {
+		const double fieldT = 0.3389868917139098;
+		R2KBTaskResult result;
+		if (!RunR2KBTask(
+				BuildR2KBOneVSystem(fieldT, false),
+				"solver=hybrid;perturbativenuclei=V;"
+				"hamiltonianh0list=B0,A,NZ;hybridfieldstep=0.0001;",
+				result) || !result.runOk)
+			return false;
+
+		std::vector<double> signal;
+		if (!ExtractColumn(result.data, "HybridSystem.Total_perp", signal) ||
+			signal.size() != 1 || !std::isfinite(signal.front()) ||
+			std::abs(signal.front()) <= 1.0e-16)
+			return false;
+
+		return result.log.find(
+			"Hybrid resonance explicit partition: 1 perturbative nuclei; product nuclear dimension = 8; largest nuclear diagonalization = 8") !=
+			std::string::npos;
+	}));
+
+	cases.push_back(test_case("Resonance spectra R2K-B incomplete hybrid H0 fails closed", []() {
+		const double fieldT = 0.3389868917139098;
+		R2KBTaskResult result;
+		if (!RunR2KBTask(
+				BuildR2KBOneVSystem(fieldT, false),
+				"solver=hybrid;perturbativenuclei=V;"
+				"hamiltonianh0list=B0,A;hybridfieldstep=0.0001;",
+				result) || !result.runOk)
+			return false;
+
+		return !R2KBHasDataRow(result.data) &&
+			result.log.find(
+				"Hybrid resonance requires HamiltonianH0list to cover the complete static SpinSystem interaction set exactly once.") !=
+			std::string::npos;
+	}));
+
+	cases.push_back(test_case("Resonance spectra R2K-B molecular hybrid state fails closed", []() {
+		const double fieldT = 0.3389868917139098;
+		R2KBTaskResult result;
+		if (!RunR2KBTask(
+				BuildR2KBOneVSystem(fieldT, true),
+				"solver=hybrid;perturbativenuclei=V;"
+				"hamiltonianh0list=B0,A,NZ;hybridfieldstep=0.0001;",
+				result) || !result.runOk)
+			return false;
+
+		return !R2KBHasDataRow(result.data) &&
+			result.log.find(
+				"Hybrid resonance requires initialstateframe=fixed in R2K-B") !=
+			std::string::npos;
+	}));
+
+	cases.push_back(test_case("Resonance spectra R2K-B exact default solver parity", []() {
+		const double fieldT = 0.3389868917139098;
+		R2KBTaskResult defaultResult, explicitResult;
+		if (!RunR2KBTask(
+				BuildR2KBOneVSystem(fieldT, false),
+				"hamiltonianh0list=B0,A,NZ;",
+				defaultResult) ||
+			!RunR2KBTask(
+				BuildR2KBOneVSystem(fieldT, false),
+				"solver=exact;hamiltonianh0list=B0,A,NZ;",
+				explicitResult) ||
+			!defaultResult.runOk || !explicitResult.runOk)
+			return false;
+
+		return R2KBHasDataRow(defaultResult.data) &&
+			defaultResult.data == explicitResult.data;
+	}));
+
 	cases.push_back(test_case("Spectroscopy task registry aliases", []() {
 		const std::vector<std::string> resonanceNames = {
 			"statichs-resonance-spectra",

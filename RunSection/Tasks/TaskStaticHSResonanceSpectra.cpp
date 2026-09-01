@@ -20,6 +20,9 @@
 #include "ActionAddVector.h"
 #include "TaskStaticHSResonanceSpectra.h"
 #include "ExactResonanceSolver.h"
+#include "HybridNuclearResonancePartitionBuilder.h"
+#include "HybridNuclearResonancePreparation.h"
+#include "HybridNuclearResonanceSolver.h"
 #include "ResonanceMagneticMomentBuilder.h"
 #include "ResonanceSpectrumEvaluator.h"
 #include "ResonanceTypes.h"
@@ -67,7 +70,17 @@ namespace RunSection
 		  fieldInteractionName(""),
 		  enforceZeemanSync(false),
 		  initialStateName(""),
-		  hamiltonianH0list()
+		  hamiltonianH0list(),
+		  resonanceSolverMode("exact"),
+		  hybridPerturbativeNucleusNames(),
+		  hybridFieldStepT(1.0e-4),
+		  hybridMinimumCoreStateOverlap(0.90),
+		  hybridMinimumNuclearStateOverlap(0.90),
+		  hybridJacobianRelativeTolerance(1.0e-4),
+		  hybridJacobianAbsoluteTolerance(1.0e-5),
+		  hybridOverlapThreshold(1.0e-14),
+		  hybridMinimumCumulativeOverlapWeight(0.0),
+		  hybridMaximumComponentsPerCoreTransition(0)
 	{
 	}
 
@@ -114,6 +127,15 @@ namespace RunSection
 		for (auto sysIt = systems.cbegin(); sysIt != systems.cend(); sysIt++)
 		{
 			this->Log() << "\nStarting with SpinSystem \"" << (*sysIt)->Name() << "\"." << std::endl;
+
+			// Hybrid nuclear resonance must branch before the historical exact
+			// route constructs a full-system SpinSpace. Otherwise perturbative
+			// nuclei would still pay the full product-Hilbert-space cost.
+			if (this->resonanceSolverMode == "hybrid")
+			{
+				this->RunHybridSystem(*sysIt);
+				continue;
+			}
 
 			SpinAPI::SpinSpace space(*(*sysIt));
 			space.UseSuperoperatorSpace(false);
@@ -797,6 +819,458 @@ namespace RunSection
 		return true;
 	}
 
+
+	bool TaskStaticHSResonanceSpectra::RunHybridSystem(const SpinAPI::system_ptr &_system)
+	{
+		using namespace General::Resonance;
+
+		if (_system == nullptr)
+			return false;
+
+		// The canonical hybrid partition owns every physical interaction exactly
+		// once. Therefore a task-level H0 subset is valid only when it is the
+		// complete static SpinSystem interaction set. We never silently add an
+		// interaction omitted by the user and never silently drop physical terms.
+		std::vector<std::string> h0list = this->hamiltonianH0list;
+		if (h0list.empty())
+		{
+			for (const auto &interaction : _system->Interactions())
+			{
+				if (interaction != nullptr && SpinAPI::IsStatic(*interaction))
+					h0list.push_back(interaction->Name());
+			}
+		}
+
+		const auto systemInteractions = _system->Interactions();
+		if (h0list.size() != systemInteractions.size())
+		{
+			this->Log() << "Hybrid resonance requires HamiltonianH0list to cover the complete static SpinSystem interaction set exactly once." << std::endl;
+			return false;
+		}
+
+		for (const auto &interaction : systemInteractions)
+		{
+			if (interaction == nullptr || interaction->HasTimeDependence())
+			{
+				this->Log() << "Hybrid resonance currently requires a completely static SpinSystem." << std::endl;
+				return false;
+			}
+
+			const auto count = static_cast<std::size_t>(
+				std::count(h0list.begin(), h0list.end(), interaction->Name()));
+			if (count != 1)
+			{
+				this->Log() << "Hybrid resonance requires HamiltonianH0list to cover the complete static SpinSystem interaction set exactly once." << std::endl;
+				return false;
+			}
+		}
+		for (const auto &name : h0list)
+		{
+			if (_system->interactions_find(name) == nullptr ||
+				std::count(h0list.begin(), h0list.end(), name) != 1)
+			{
+				this->Log() << "Hybrid resonance HamiltonianH0list contains an unknown or duplicate interaction." << std::endl;
+				return false;
+			}
+		}
+
+		SpinAPI::interaction_ptr fieldInteraction = nullptr;
+		if (!this->ResolveFieldInteraction(_system, fieldInteraction) ||
+			fieldInteraction == nullptr)
+		{
+			this->Log() << "Hybrid resonance requires a designated Zeeman field interaction." << std::endl;
+			return false;
+		}
+
+		std::vector<SpinAPI::spin_ptr> detectSpins;
+		std::vector<std::string> detectSpinNames;
+		if (!this->ResolveDetectionSpins(
+				_system, fieldInteraction, detectSpins, detectSpinNames) ||
+			detectSpins.empty())
+		{
+			this->Log() << "Hybrid resonance failed to resolve exact-core EPR detection spins." << std::endl;
+			return false;
+		}
+
+		std::vector<SpinAPI::interaction_ptr> zeemanInteractions =
+			CollectZeemanInteractions(_system, h0list);
+		if (zeemanInteractions.empty() ||
+			std::find(zeemanInteractions.begin(), zeemanInteractions.end(),
+				fieldInteraction) == zeemanInteractions.end())
+		{
+			this->Log() << "Hybrid resonance requires the designated field interaction and every physical Zeeman term in HamiltonianH0list." << std::endl;
+			return false;
+		}
+
+		arma::vec Bvec = fieldInteraction->Field();
+		if (Bvec.n_elem != 3 || !Bvec.is_finite())
+		{
+			this->Log() << "Hybrid resonance field interaction does not provide a finite 3-vector." << std::endl;
+			return false;
+		}
+
+		FieldSyncGuard centerSync;
+		if (this->enforceZeemanSync)
+		{
+			centerSync.Apply(zeemanInteractions, Bvec);
+		}
+		else
+		{
+			const double tol = 1.0e-10;
+			for (const auto &interaction : zeemanInteractions)
+			{
+				if (interaction == nullptr)
+					return false;
+				const arma::vec field = interaction->Field();
+				if (field.n_elem != 3 || !field.is_finite() ||
+					arma::norm(field - Bvec) > tol)
+				{
+					this->Log() << "Hybrid resonance requires synchronized Zeeman field vectors; use enforce_zeeman_sync=true or supply identical fields." << std::endl;
+					return false;
+				}
+			}
+		}
+
+		// Re-read after optional synchronization.
+		Bvec = fieldInteraction->Field();
+		const double Bmag = arma::norm(Bvec);
+		if (!std::isfinite(Bmag) || Bmag <= 0.0 ||
+			this->hybridFieldStepT <= 0.0 ||
+			this->hybridFieldStepT >= Bmag)
+		{
+			this->Log() << "Hybrid resonance field magnitude/finite-difference step is invalid." << std::endl;
+			return false;
+		}
+		const arma::vec fieldDirection = Bvec / Bmag;
+		const double field_mT = 1.0e3 * Bmag;
+
+		// R2K-B intentionally accepts only a fixed explicit core state. Molecular
+		// frame rotation and eigen-frame Thermal preparation require a separate
+		// qualified state-preparation gate; silently treating either as fixed
+		// would give physically wrong orientation-dependent intensities.
+		if (_system->InitialStateFrame() != SpinAPI::StateFrame::Fixed)
+		{
+			this->Log() << "Hybrid resonance requires initialstateframe=fixed in R2K-B; molecular/eigen/thermal state preparation is not yet qualified." << std::endl;
+			return false;
+		}
+
+		SpinAPI::state_ptr exactCoreState = nullptr;
+		if (!this->initialStateName.empty())
+		{
+			exactCoreState = _system->states_find(this->initialStateName);
+		}
+		else
+		{
+			const auto initialStates = _system->InitialState();
+			if (initialStates.size() == 1 && initialStates.front() != nullptr)
+				exactCoreState = initialStates.front();
+		}
+		if (exactCoreState == nullptr)
+		{
+			this->Log() << "Hybrid resonance R2K-B requires exactly one explicit non-Thermal initial state." << std::endl;
+			return false;
+		}
+
+		std::vector<HybridNuclearResonanceExplicitNucleus> perturbative;
+		perturbative.reserve(this->hybridPerturbativeNucleusNames.size());
+		for (const auto &name : this->hybridPerturbativeNucleusNames)
+		{
+			auto nucleus = _system->spins_find(name);
+			if (nucleus == nullptr || nucleus->Type() != SpinAPI::SpinType::Nucleus)
+			{
+				this->Log() << "Hybrid resonance perturbative nucleus \"" << name
+							<< "\" is missing or is not SpinType::Nucleus." << std::endl;
+				return false;
+			}
+			HybridNuclearResonanceExplicitNucleus spec;
+			spec.nucleus = nucleus;
+			spec.overlapThreshold = this->hybridOverlapThreshold;
+			spec.fieldIndependentProjection = false;
+			perturbative.push_back(std::move(spec));
+		}
+
+		std::vector<ResonanceMagneticMomentTerm> detectionTerms;
+		detectionTerms.reserve(detectSpins.size());
+		for (const auto &spin : detectSpins)
+		{
+			auto zeeman = FindZeemanForSpin(spin, zeemanInteractions);
+			if (zeeman == nullptr && fieldInteraction != nullptr)
+			{
+				const auto group = fieldInteraction->Group1();
+				if (std::find(group.begin(), group.end(), spin) != group.end())
+					zeeman = fieldInteraction;
+			}
+			if (zeeman == nullptr)
+			{
+				this->Log() << "Hybrid resonance detection spin \"" << spin->Name()
+							<< "\" has no owned Zeeman interaction." << std::endl;
+				return false;
+			}
+			detectionTerms.push_back({spin, zeeman});
+		}
+
+		HybridNuclearResonanceExplicitPartitionRequest partitionRequest;
+		partitionRequest.system = _system;
+		partitionRequest.perturbativeNuclei = perturbative;
+		partitionRequest.fieldInteractions = zeemanInteractions;
+		partitionRequest.detectionTerms = detectionTerms;
+		partitionRequest.exactCoreState = exactCoreState;
+		partitionRequest.fullTensorRotation = this->fullTensorRotation;
+		partitionRequest.minimumCumulativeOverlapWeight =
+			this->hybridMinimumCumulativeOverlapWeight;
+		partitionRequest.maximumComponentsPerCoreTransition =
+			this->hybridMaximumComponentsPerCoreTransition;
+		// Finite-difference branch tracking is currently qualified only for
+		// unmerged center components. Merging remains disabled in this task gate.
+		partitionRequest.mergeFrequencyToleranceRadNs = 0.0;
+
+		HybridNuclearResonancePartition partition;
+		std::string hybridError;
+		if (!HybridNuclearResonancePartitionBuilder::Build(
+				partitionRequest, partition, hybridError))
+		{
+			this->Log() << "Hybrid resonance partition rejected: " << hybridError << std::endl;
+			return false;
+		}
+
+		// Keep the established task powder/grid semantics. Only line generation
+		// changes; the common General spectrum evaluator still owns detuning,
+		// field Jacobian use, lineshape, and resolved-channel aggregation.
+		int numPoints = this->powdersamplingpoints;
+		SpinAPI::PowderGrid grid;
+		const bool useSopheGrid = (this->powderGridType == "sophe");
+		std::string gridSymmetry = this->powderGridSymmetry;
+		if (useSopheGrid)
+		{
+			std::string symLower = ToLower(gridSymmetry);
+			if (symLower.empty() || symLower == "auto" || symLower == "automatic")
+			{
+				gridSymmetry = AutoDetectSopheSymmetry(
+					_system, fieldInteraction, h0list, this->fullTensorRotation);
+				this->Log() << "Auto-detected SOPHE grid symmetry: " << gridSymmetry << "." << std::endl;
+			}
+		}
+		if (useSopheGrid)
+		{
+			int gridSize = this->powderGridSize;
+			if (gridSize < 2)
+			{
+				SpinAPI::SopheGridParameters sopheParams;
+				if (numPoints > 1 && SpinAPI::GetSopheGridParameters(gridSymmetry, sopheParams))
+				{
+					int bestSize = 0;
+					int bestDiff = std::numeric_limits<int>::max();
+					for (int candidate = 2; candidate <= 200; ++candidate)
+					{
+						const int count = SpinAPI::SopheGridPointCount(
+							candidate, sopheParams.nOctants, sopheParams.closedPhi);
+						const int diff = std::abs(count - numPoints);
+						if (diff < bestDiff)
+						{
+							bestDiff = diff;
+							bestSize = candidate;
+							if (diff == 0)
+								break;
+						}
+					}
+					if (bestSize > 0)
+						gridSize = bestSize;
+				}
+				if (gridSize < 2)
+					gridSize = 19;
+			}
+			if (!SpinAPI::CreateSophePowderGrid(gridSize, gridSymmetry, grid))
+			{
+				this->Log() << "Hybrid resonance failed to obtain SOPHE powder grid." << std::endl;
+				return false;
+			}
+			numPoints = static_cast<int>(grid.size());
+		}
+		else if (numPoints > 1)
+		{
+			if (!this->CreateUniformGrid(numPoints, grid))
+			{
+				this->Log() << "Hybrid resonance failed to obtain uniform powder grid." << std::endl;
+				return false;
+			}
+		}
+		else
+		{
+			grid.clear();
+			grid.push_back({0.0, 0.0, 1.0});
+			numPoints = 1;
+		}
+
+		const int gammaPoints =
+			(numPoints > 1) ? std::max(1, this->powderGammaPoints) : 1;
+		const double gammaWeight = useSopheGrid
+			? (2.0 * arma::datum::pi / static_cast<double>(gammaPoints))
+			: (1.0 / static_cast<double>(gammaPoints));
+
+		SpectrumRequest resonanceRequest;
+		resonanceRequest.microwaveFrequencyGHz = this->mwFrequencyGHz;
+		resonanceRequest.linewidth_mT = std::abs(this->linewidth_mT);
+		resonanceRequest.lineshape =
+			(this->lineshape == "lorentzian")
+			? Lineshape::Lorentzian
+			: Lineshape::Gaussian;
+		resonanceRequest.populationThreshold = 1.0e-15;
+		resonanceRequest.minimumSlope = 1.0e-15;
+		resonanceRequest.maximumDBdOmega = 1.0e5;
+
+		HybridNuclearResonanceFieldResponseRequest fieldResponse;
+		fieldResponse.fieldT = Bmag;
+		fieldResponse.fieldStepT = this->hybridFieldStepT;
+		fieldResponse.minimumCoreStateOverlap =
+			this->hybridMinimumCoreStateOverlap;
+		fieldResponse.minimumNuclearStateOverlap =
+			this->hybridMinimumNuclearStateOverlap;
+		fieldResponse.jacobianRelativeTolerance =
+			this->hybridJacobianRelativeTolerance;
+		fieldResponse.jacobianAbsoluteTolerance =
+			this->hybridJacobianAbsoluteTolerance;
+
+		const std::size_t spinCount = detectSpins.size();
+		double total_x = 0.0;
+		double total_y = 0.0;
+		double total_perp = 0.0;
+		double cross_x = 0.0;
+		double cross_y = 0.0;
+		std::vector<double> spin_x(spinCount, 0.0);
+		std::vector<double> spin_y(spinCount, 0.0);
+		std::vector<double> spin_perp(spinCount, 0.0);
+		std::vector<double> spin_p(spinCount, 0.0);
+		std::vector<double> spin_m(spinCount, 0.0);
+
+		std::size_t maxProductNuclearDimension = 1;
+		std::size_t maxLargestDiagonalizedNuclearDimension = 0;
+		double maxDiscardedWeight = 0.0;
+		bool anyPruning = false;
+
+		// Sequential on purpose in R2K-B: the finite-difference provider
+		// temporarily mutates and restores shared physical Zeeman fields. A later
+		// gate may parallelize over cloned immutable field realizations.
+		for (int gridIndex = 0; gridIndex < numPoints; ++gridIndex)
+		{
+			auto [theta, phi, solidWeight] = grid[gridIndex];
+			for (int gammaIndex = 0; gammaIndex < gammaPoints; ++gammaIndex)
+			{
+				const double gamma = (gammaPoints > 1)
+					? 2.0 * arma::datum::pi *
+						(static_cast<double>(gammaIndex) + 0.5) /
+						static_cast<double>(gammaPoints)
+					: 0.0;
+				const double weight = solidWeight * gammaWeight;
+
+				arma::mat rotation;
+				double alphaForRotation = phi;
+				double betaForRotation = theta;
+				double gammaForRotation = gamma;
+				if (!this->CreatePassiveZYZRotationMatrix(
+						alphaForRotation, betaForRotation,
+						gammaForRotation, rotation))
+					return false;
+
+				General::HS::HSOrientation orientation;
+				orientation.alpha = phi;
+				orientation.beta = theta;
+				orientation.gamma = gamma;
+				orientation.weight = weight;
+				orientation.frameToLab = rotation;
+
+				HybridNuclearResonancePointProvider provider =
+					[&](double fieldT,
+						HybridNuclearResonancePoint &point,
+						std::string &error)
+					{
+						const arma::vec displacedField = fieldDirection * fieldT;
+						FieldSyncGuard displacedSync;
+						displacedSync.Apply(zeemanInteractions, displacedField);
+						return HybridNuclearResonancePreparation::BuildPoint(
+							partition, orientation, fieldT, point, error);
+					};
+
+				ResonanceLineSet resonanceLines;
+				HybridNuclearResonanceReport report;
+				if (!HybridNuclearResonanceSolver::GenerateFirstOrderFiniteDifference(
+						provider, fieldResponse, resonanceRequest,
+						resonanceLines, report, hybridError))
+				{
+					this->Log() << "Hybrid resonance finite-difference solver rejected orientation: "
+							<< hybridError << std::endl;
+					return false;
+				}
+
+				SpectrumPoint resonancePoint;
+				if (!ResonanceSpectrumEvaluator::Evaluate(
+						resonanceLines, resonanceRequest,
+						resonancePoint, hybridError))
+				{
+					this->Log() << "Hybrid resonance spectrum evaluation failed: "
+							<< hybridError << std::endl;
+					return false;
+				}
+				if (resonancePoint.channels.size() != spinCount)
+				{
+					this->Log() << "Hybrid resonance resolved detection-channel cardinality changed." << std::endl;
+					return false;
+				}
+
+				total_x += weight * resonancePoint.totalX;
+				total_y += weight * resonancePoint.totalY;
+				total_perp += weight * resonancePoint.totalPerpendicular;
+				cross_x += weight * resonancePoint.crossX;
+				cross_y += weight * resonancePoint.crossY;
+				for (std::size_t i = 0; i < spinCount; ++i)
+				{
+					spin_x[i] += weight * resonancePoint.channels[i].x;
+					spin_y[i] += weight * resonancePoint.channels[i].y;
+					spin_perp[i] += weight * resonancePoint.channels[i].perpendicular;
+					spin_p[i] += weight * resonancePoint.channels[i].plus;
+					spin_m[i] += weight * resonancePoint.channels[i].minus;
+				}
+
+				maxProductNuclearDimension = std::max(
+					maxProductNuclearDimension, report.productNuclearDimension);
+				maxLargestDiagonalizedNuclearDimension = std::max(
+					maxLargestDiagonalizedNuclearDimension,
+					report.largestDiagonalizedNuclearDimension);
+				maxDiscardedWeight = std::max(
+					maxDiscardedWeight,
+					report.maximumDiscardedNuclearWeightFraction);
+				anyPruning = anyPruning || report.pruningApplied;
+			}
+		}
+
+		if (this->RunSettings()->CurrentStep() == 1)
+		{
+			this->Log() << "Hybrid resonance explicit partition: "
+						<< perturbative.size() << " perturbative nuclei; product nuclear dimension = "
+						<< maxProductNuclearDimension
+						<< "; largest nuclear diagonalization = "
+						<< maxLargestDiagonalizedNuclearDimension
+						<< "; max discarded nuclear weight = "
+						<< maxDiscardedWeight
+						<< "; pruning = " << (anyPruning ? "yes" : "no") << "."
+						<< std::endl;
+		}
+
+		this->Data() << this->RunSettings()->CurrentStep() << " ";
+		this->Data() << this->RunSettings()->Time() << " ";
+		this->WriteStandardOutput(this->Data());
+		this->Data() << field_mT << " "
+					 << total_x << " " << total_y << " " << total_perp << " "
+					 << cross_x << " " << cross_y << " ";
+		for (std::size_t i = 0; i < detectSpinNames.size(); ++i)
+		{
+			this->Data() << spin_x[i] << " " << spin_y[i] << " "
+						 << spin_perp[i] << " " << spin_p[i] << " "
+						 << spin_m[i] << " ";
+		}
+		this->Data() << std::endl;
+		return true;
+	}
+
 	void TaskStaticHSResonanceSpectra::WriteHeader(std::ostream &_stream)
 	{
 		_stream << "Step ";
@@ -982,6 +1456,98 @@ namespace RunSection
 		this->Properties()->Get("powderfullsphere", this->powderFullSphere);
 		this->Properties()->Get("fulltensorrotation", this->fullTensorRotation);
 		this->Properties()->Get("mzblocks", this->useMzBlocks);
+
+		this->resonanceSolverMode = "exact";
+		std::string resonanceSolver;
+		if (this->Properties()->Get("solver", resonanceSolver) ||
+			this->Properties()->Get("resonancesolver", resonanceSolver) ||
+			this->Properties()->Get("resonance_solver", resonanceSolver))
+		{
+			resonanceSolver = ToLower(resonanceSolver);
+			if (resonanceSolver == "exact")
+				this->resonanceSolverMode = "exact";
+			else if (resonanceSolver == "hybrid")
+				this->resonanceSolverMode = "hybrid";
+			else if (resonanceSolver == "auto")
+			{
+				this->Log() << "solver=auto is not yet qualified for StaticHS-Resonance-Spectra; select exact or explicit hybrid." << std::endl;
+				return false;
+			}
+			else
+			{
+				this->Log() << "Unknown resonance solver \"" << resonanceSolver << "\"." << std::endl;
+				return false;
+			}
+		}
+
+		this->hybridPerturbativeNucleusNames.clear();
+		if (!this->Properties()->GetList("perturbativenuclei", this->hybridPerturbativeNucleusNames, ',') &&
+			!this->Properties()->GetList("hybridperturbativenuclei", this->hybridPerturbativeNucleusNames, ','))
+		{
+			this->Properties()->GetList("hybrid_perturbative_nuclei", this->hybridPerturbativeNucleusNames, ',');
+		}
+
+		if (!this->Properties()->Get("hybridfieldstep", this->hybridFieldStepT))
+			this->Properties()->Get("hybrid_field_step", this->hybridFieldStepT);
+		if (!this->Properties()->Get("hybridminimumcorestateoverlap", this->hybridMinimumCoreStateOverlap))
+			this->Properties()->Get("hybrid_minimum_core_state_overlap", this->hybridMinimumCoreStateOverlap);
+		if (!this->Properties()->Get("hybridminimumnuclearstateoverlap", this->hybridMinimumNuclearStateOverlap))
+			this->Properties()->Get("hybrid_minimum_nuclear_state_overlap", this->hybridMinimumNuclearStateOverlap);
+		if (!this->Properties()->Get("hybridjacobianreltol", this->hybridJacobianRelativeTolerance))
+			this->Properties()->Get("hybrid_jacobian_relative_tolerance", this->hybridJacobianRelativeTolerance);
+		if (!this->Properties()->Get("hybridjacobianabstol", this->hybridJacobianAbsoluteTolerance))
+			this->Properties()->Get("hybrid_jacobian_absolute_tolerance", this->hybridJacobianAbsoluteTolerance);
+		if (!this->Properties()->Get("hybridoverlapthreshold", this->hybridOverlapThreshold))
+			this->Properties()->Get("hybrid_overlap_threshold", this->hybridOverlapThreshold);
+		if (!this->Properties()->Get("hybridminimumcumulativeoverlapweight", this->hybridMinimumCumulativeOverlapWeight))
+			this->Properties()->Get("hybrid_minimum_cumulative_overlap_weight", this->hybridMinimumCumulativeOverlapWeight);
+
+		int hybridMaximumComponents = 0;
+		if (this->Properties()->Get("hybridmaximumcomponentspercoretransition", hybridMaximumComponents) ||
+			this->Properties()->Get("hybrid_maximum_components_per_core_transition", hybridMaximumComponents))
+		{
+			if (hybridMaximumComponents < 0)
+			{
+				this->Log() << "Hybrid maximum component count must be non-negative." << std::endl;
+				return false;
+			}
+			this->hybridMaximumComponentsPerCoreTransition =
+				static_cast<std::size_t>(hybridMaximumComponents);
+		}
+
+		if (this->resonanceSolverMode == "hybrid")
+		{
+			if (this->hybridPerturbativeNucleusNames.empty())
+			{
+				this->Log() << "solver=hybrid requires an explicit perturbativenuclei list." << std::endl;
+				return false;
+			}
+			if (this->useSweepCache)
+			{
+				this->Log() << "solver=hybrid R2K-B requires sweepcache=false; hybrid cache semantics are not yet qualified." << std::endl;
+				return false;
+			}
+			if (this->detectionHarmonic != 0)
+			{
+				this->Log() << "solver=hybrid R2K-B supports harmonic=0 only." << std::endl;
+				return false;
+			}
+			if (!std::isfinite(this->hybridFieldStepT) || this->hybridFieldStepT <= 0.0 ||
+				!std::isfinite(this->hybridMinimumCoreStateOverlap) ||
+				this->hybridMinimumCoreStateOverlap <= 0.0 || this->hybridMinimumCoreStateOverlap > 1.0 ||
+				!std::isfinite(this->hybridMinimumNuclearStateOverlap) ||
+				this->hybridMinimumNuclearStateOverlap <= 0.0 || this->hybridMinimumNuclearStateOverlap > 1.0 ||
+				!std::isfinite(this->hybridJacobianRelativeTolerance) || this->hybridJacobianRelativeTolerance < 0.0 ||
+				!std::isfinite(this->hybridJacobianAbsoluteTolerance) || this->hybridJacobianAbsoluteTolerance < 0.0 ||
+				!std::isfinite(this->hybridOverlapThreshold) || this->hybridOverlapThreshold < 0.0 || this->hybridOverlapThreshold > 1.0 ||
+				!std::isfinite(this->hybridMinimumCumulativeOverlapWeight) ||
+				this->hybridMinimumCumulativeOverlapWeight < 0.0 || this->hybridMinimumCumulativeOverlapWeight > 1.0)
+			{
+				this->Log() << "Invalid explicit hybrid resonance numerical controls." << std::endl;
+				return false;
+			}
+			this->Log() << "General Resonance solver = explicit hybrid nuclear treatment." << std::endl;
+		}
 
 		this->Log() << "Full-Hamiltonian resonance detection model: mwfrequency = " << this->mwFrequencyGHz
 					<< " GHz, linewidth = " << this->linewidth_mT
