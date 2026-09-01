@@ -2039,22 +2039,70 @@ namespace RunSection
 				}
 				else
 				{
+					// Cached exact resonance now uses the same canonical magnetic-
+					// moment ownership as the uncached exact route. Detection-spin
+					// and Zeeman-interaction selection remain task-owned.
+					std::vector<General::Resonance::ResonanceMagneticMomentTerm>
+						magneticMomentTerms;
+					magneticMomentTerms.reserve(spin_count);
+					bool magneticMomentTermsOk = true;
+					for (size_t i = 0; i < spin_count; ++i)
+					{
+						auto zeeman =
+							FindZeemanForSpin(detectSpins[i], zeemanInteractions);
+
+						// Preserve the historical designated-field fallback only
+						// when that interaction actually owns the detection spin.
+						if (zeeman == nullptr && _fieldInteraction != nullptr)
+						{
+							const auto group = _fieldInteraction->Group1();
+							if (std::find(
+									group.begin(), group.end(),
+									detectSpins[i]) != group.end())
+							{
+								zeeman = _fieldInteraction;
+							}
+						}
+
+						if (zeeman == nullptr)
+						{
+							magneticMomentTermsOk = false;
+							break;
+						}
+
+						General::Resonance::ResonanceMagneticMomentTerm term;
+						term.spin = detectSpins[i];
+						term.zeeman = zeeman;
+						magneticMomentTerms.push_back(std::move(term));
+					}
+					if (!magneticMomentTermsOk)
+						continue;
+
+					std::vector<General::Resonance::ResonanceDetectionOperator>
+						detectionChannels;
+					std::string magneticMomentError;
+					if (!General::Resonance::ResonanceMagneticMomentBuilder::
+							BuildTransverseChannels(
+								space,
+								magneticMomentTerms,
+								Rot,
+								this->fullTensorRotation,
+								detectionChannels,
+								magneticMomentError))
+					{
+						continue;
+					}
+					if (detectionChannels.size() != spin_count)
+						continue;
+
 					arma::cx_mat muxT =
 						arma::zeros<arma::cx_mat>(spaceDim, spaceDim);
 					arma::cx_mat muyT =
 						arma::zeros<arma::cx_mat>(spaceDim, spaceDim);
-					std::vector<General::Resonance::ResonanceDetectionOperator>
-						detectionChannels;
-					detectionChannels.reserve(spin_count);
-					for (size_t i = 0; i < spin_count; ++i)
+					for (const auto &channel : detectionChannels)
 					{
-						muxT += mux_list[i];
-						muyT += muy_list[i];
-
-						General::Resonance::ResonanceDetectionOperator channel;
-						channel.x = mux_list[i];
-						channel.y = muy_list[i];
-						detectionChannels.push_back(std::move(channel));
+						muxT += channel.x;
+						muyT += channel.y;
 					}
 
 					for (unsigned int step = 0; step < steps; ++step)
