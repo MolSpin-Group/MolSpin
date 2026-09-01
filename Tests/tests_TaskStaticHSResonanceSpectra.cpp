@@ -485,6 +485,199 @@ namespace
 	}
 
 
+	struct R2KFQuartetBand
+	{
+		std::vector<double> exact;
+		std::vector<double> hybrid;
+		std::string hybridLog;
+	};
+
+	std::shared_ptr<SpinAPI::SpinSystem> BuildR2KFQuartetOneVSystem(
+		double fieldT,
+		double temperatureK=8.0)
+	{
+		if (!std::isfinite(fieldT) || fieldT <= 0.0 ||
+			!std::isfinite(temperatureK) || temperatureK <= 0.0)
+			return nullptr;
+
+		auto electron = std::make_shared<SpinAPI::Spin>(
+			"E",
+			"type=electron;spin=3/2;"
+			"tensor=anisotropic(1.94 2.03 2.18);");
+		auto nucleus = std::make_shared<SpinAPI::Spin>(
+			"V",
+			"type=nucleus;spin=7/2;isotope=51V;"
+			"tensor=isotropic(1.0);");
+
+		std::ostringstream bprops;
+		bprops << std::setprecision(17)
+			   << "type=zeeman;spins=E;field=0 0 " << fieldT << ";"
+			   << "orientation=0.17,-0.31,0.23;"
+			   << "ignoretensors=false;commonprefactor=true;prefactor=1.0;";
+		auto b0 = std::make_shared<SpinAPI::Interaction>("B0", bprops.str());
+
+		// Representative V3-quartet-scale ZFS oracle:
+		// |D| = 24 GHz ~= 0.80 cm^-1, within the physical POV quartet regime.
+		auto zfs = std::make_shared<SpinAPI::Interaction>(
+			"ZFS",
+			"type=zfs;group1=E;"
+			"dvalue=-24000;evalue=3500;"
+			"orientation=-0.28,0.46,0.19;"
+			"prefactor=0.00628318530718;"
+			"ignoretensors=true;commonprefactor=false;");
+
+		auto hfc = std::make_shared<SpinAPI::Interaction>(
+			"A",
+			"type=hyperfine;group1=E;group2=V;"
+			"tensor=anisotropic(0.85 1.20 1.60);"
+			"orientation=0.39,-0.22,0.57;"
+			"ignoretensors=true;commonprefactor=false;prefactor=1.0;");
+
+		arma::vec field(3, arma::fill::zeros);
+		field(2) = fieldT;
+		SpinAPI::interaction_ptr nz;
+		std::string error;
+		if (!SpinAPI::NuclearZeeman::CreateInteraction(
+				"NZ", nucleus, field, nz, error))
+			return nullptr;
+
+		auto system = std::make_shared<SpinAPI::SpinSystem>(
+			"QuartetSystem");
+		system->Add(electron);
+		system->Add(nucleus);
+		system->Add(b0);
+		system->Add(zfs);
+		system->Add(hfc);
+		system->Add(nz);
+
+		if (!system->ValidateInteractions().empty())
+			return nullptr;
+
+		std::ostringstream settings;
+		settings << std::setprecision(17)
+				 << "initialstate=Thermal;frame=eigen;"
+				 << "thermalhamiltonian=B0,ZFS;"
+				 << "temperature=" << temperatureK << ";";
+		auto props = std::make_shared<MSDParser::ObjectParser>(
+			"spinsyssettings", settings.str());
+		if (!system->SetProperties(props))
+			return nullptr;
+
+		return system;
+	}
+
+	bool RunR2KFQuartetPoint(
+		double frequencyGHz,
+		double fieldT,
+		const std::string &solverProperties,
+		double &signal,
+		std::string &log)
+	{
+		signal = 0.0;
+		log.clear();
+
+		auto system = BuildR2KFQuartetOneVSystem(fieldT, 8.0);
+		if (system == nullptr)
+			return false;
+
+		RunSection::RunSection rs;
+		rs.Add(system);
+
+		std::ostringstream taskProperties;
+		taskProperties << std::setprecision(17)
+			<< "type=statichs-resonance-spectra;"
+			<< "mwfrequency=" << frequencyGHz << ";"
+			<< "linewidth=20.0;lineshape=gaussian;"
+			<< "detectspins=E;fieldinteraction=B0;"
+			<< "hamiltonianh0list=B0,ZFS,A,NZ;"
+			<< "powdersamplingpoints=1;powdergridtype=fibonacci;"
+			<< "powdergammapoints=1;powderfullsphere=true;"
+			<< "fulltensorrotation=true;mzblocks=false;sweepcache=false;"
+			<< "enforce_zeeman_sync=true;"
+			<< solverProperties;
+
+		MSDParser::ObjectParser taskParser(
+			"testtask", taskProperties.str());
+		if (!rs.Add(MSDParser::ObjectType::Task, taskParser))
+			return false;
+
+		auto task = rs.GetTask("testtask");
+		if (task == nullptr)
+			return false;
+
+		std::ostringstream logstream;
+		std::ostringstream datastream;
+		task->SetLogStream(logstream);
+		task->SetDataStream(datastream);
+
+		if (!rs.Run(1))
+			return false;
+
+		log = logstream.str();
+
+		std::vector<double> values;
+		if (!ExtractColumn(
+				datastream.str(),
+				"QuartetSystem.Total_perp",
+				values) ||
+			values.size() != 1 ||
+			!std::isfinite(values.front()))
+			return false;
+
+		signal = values.front();
+		return true;
+	}
+
+	bool RunR2KFQuartetBand(
+		double frequencyGHz,
+		double fieldStartT,
+		double fieldStepT,
+		unsigned int points,
+		R2KFQuartetBand &result)
+	{
+		result = R2KFQuartetBand{};
+		if (!std::isfinite(frequencyGHz) || frequencyGHz <= 0.0 ||
+			!std::isfinite(fieldStartT) || fieldStartT <= 0.0 ||
+			!std::isfinite(fieldStepT) || fieldStepT <= 0.0 ||
+			points < 3)
+			return false;
+
+		result.exact.reserve(points);
+		result.hybrid.reserve(points);
+
+		for (unsigned int k = 0; k < points; ++k)
+		{
+			const double fieldT =
+				fieldStartT + fieldStepT * static_cast<double>(k);
+
+			double exactSignal = 0.0;
+			double hybridSignal = 0.0;
+			std::string exactLog;
+			std::string hybridLog;
+
+			if (!RunR2KFQuartetPoint(
+					frequencyGHz,
+					fieldT,
+					"solver=exact;",
+					exactSignal,
+					exactLog) ||
+				!RunR2KFQuartetPoint(
+					frequencyGHz,
+					fieldT,
+					"solver=hybrid;perturbativenuclei=V;"
+					"hybridfieldstep=0.0001;",
+					hybridSignal,
+					hybridLog))
+				return false;
+
+			result.exact.push_back(exactSignal);
+			result.hybrid.push_back(hybridSignal);
+			result.hybridLog += hybridLog;
+		}
+
+		return true;
+	}
+
 #if MOLSPIN_SLOW_RESONANCE_ORACLES == 1
 	struct R2KDPhysicalSweep
 	{
@@ -924,6 +1117,62 @@ void AddTaskStaticHSResonanceSpectraTests(std::vector<test_case> &cases)
 			std::string::npos;
 	}));
 
+
+	cases.push_back(test_case(
+		"Resonance spectra R2K-F S=3/2 thermal quartet X-W task oracle",
+		[]() {
+			R2KFQuartetBand xBand;
+			R2KFQuartetBand wBand;
+
+			// Short single-orientation field windows centered on the
+			// central quartet transition. This is a task-route gate, not
+			// a converged powder-production spectrum.
+			if (!RunR2KFQuartetBand(
+					9.5, 0.24, 0.009, 21, xBand) ||
+				!RunR2KFQuartetBand(
+					94.0, 2.85, 0.045, 21, wBand))
+				return false;
+
+			const double xError =
+				NormalizedRms(xBand.exact, xBand.hybrid);
+			const double wError =
+				NormalizedRms(wBand.exact, wBand.hybrid);
+
+			std::cout << std::setprecision(17)
+				<< "R2K_F_QUARTET_X_NORMALIZED_RMS="
+				<< xError << std::endl
+				<< "R2K_F_QUARTET_W_NORMALIZED_RMS="
+				<< wError << std::endl;
+
+			const bool xScaling =
+				xBand.hybridLog.find(
+					"1 perturbative nuclei; product nuclear dimension = 8; "
+					"largest nuclear diagonalization = 8") !=
+				std::string::npos;
+			const bool wScaling =
+				wBand.hybridLog.find(
+					"1 perturbative nuclei; product nuclear dimension = 8; "
+					"largest nuclear diagonalization = 8") !=
+				std::string::npos;
+
+			if (!std::isfinite(xError) ||
+				!std::isfinite(wError) ||
+				xError <= 1.0e-10 ||
+				!(wError < xError) ||
+				!xScaling ||
+				!wScaling)
+			{
+				std::cerr << std::setprecision(17)
+					<< "R2K-F quartet X/W oracle rejected: X="
+					<< xError << " W=" << wError
+					<< " xScaling=" << xScaling
+					<< " wScaling=" << wScaling
+					<< std::endl;
+				return false;
+			}
+
+			return true;
+		}));
 
 #if MOLSPIN_SLOW_RESONANCE_ORACLES == 1
 	cases.push_back(test_case("Resonance spectra R2K-D anisotropic one-51V thermal X-W oracle", []() {
