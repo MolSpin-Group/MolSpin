@@ -362,10 +362,71 @@ namespace
 		return system;
 	}
 
+
+    std::shared_ptr<SpinAPI::SpinSystem> BuildR2KCThermalOneVSystem(
+        double fieldT, double coupling,
+        const std::string &thermalHamiltonian,
+        double temperatureK=4.2)
+    {
+        auto electron = std::make_shared<SpinAPI::Spin>(
+            "E", "type=electron;spin=1/2;tensor=isotropic(2.0023);");
+        auto nucleus = std::make_shared<SpinAPI::Spin>(
+            "V", "type=nucleus;spin=7/2;isotope=51V;tensor=isotropic(1.0);");
+
+        std::ostringstream bprops;
+        bprops << std::setprecision(17)
+               << "type=zeeman;spins=E;field=0 0 " << fieldT << ";"
+               << "ignoretensors=false;commonprefactor=true;prefactor=1.0;";
+        auto b0 = std::make_shared<SpinAPI::Interaction>("B0", bprops.str());
+
+        std::ostringstream aprops;
+        aprops << std::setprecision(17)
+               << "type=hyperfine;group1=E;group2=V;"
+               << "tensor=isotropic(" << coupling << ");"
+               << "commonprefactor=false;prefactor=1.0;";
+        auto hfc = std::make_shared<SpinAPI::Interaction>(
+            "A",aprops.str());
+
+        arma::vec field(3, arma::fill::zeros);
+        field(2) = fieldT;
+        SpinAPI::interaction_ptr nz;
+        std::string error;
+        if (!SpinAPI::NuclearZeeman::CreateInteraction(
+                "NZ", nucleus, field, nz, error))
+            return nullptr;
+
+        auto up = std::make_shared<SpinAPI::State>(
+            "Up", "spin(E)=|1/2>;");
+
+        auto system = std::make_shared<SpinAPI::SpinSystem>(
+            "HybridSystem");
+        system->Add(electron);
+        system->Add(nucleus);
+        system->Add(b0);
+        system->Add(hfc);
+        system->Add(nz);
+        system->Add(up);
+        if (!system->ValidateInteractions().empty() ||
+            !up->ParseFromSystem(*system))
+            return nullptr;
+
+        std::ostringstream settings;
+        settings << std::setprecision(17)
+                 << "initialstate=Thermal;frame=eigen;"
+                 << "thermalhamiltonian=" << thermalHamiltonian << ";"
+                 << "temperature=" << temperatureK << ";";
+        auto props = std::make_shared<MSDParser::ObjectParser>(
+            "spinsyssettings",settings.str());
+        if (!system->SetProperties(props))
+            return nullptr;
+        return system;
+    }
+
 	bool RunR2KBTask(
 		const std::shared_ptr<SpinAPI::SpinSystem> &system,
 		const std::string &extraProperties,
-		R2KBTaskResult &result)
+		R2KBTaskResult &result,
+		bool setTaskInitialState=true)
 	{
 		result = R2KBTaskResult{};
 		if (system == nullptr)
@@ -374,15 +435,20 @@ namespace
 		RunSection::RunSection rs;
 		rs.Add(system);
 
-		MSDParser::ObjectParser taskParser(
-			"testtask",
+		std::string taskProperties =
 			"type=statichs-resonance-spectra;"
 			"mwfrequency=9.5;linewidth=0.2;lineshape=gaussian;"
-			"detectspins=E;fieldinteraction=B0;initialstate=Up;"
+			"detectspins=E;fieldinteraction=B0;";
+		if (setTaskInitialState)
+			taskProperties += "initialstate=Up;";
+		taskProperties +=
 			"powdersamplingpoints=1;powdergridtype=fibonacci;"
 			"powdergammapoints=1;powderfullsphere=true;"
 			"fulltensorrotation=true;mzblocks=true;sweepcache=false;" +
-			extraProperties);
+			extraProperties;
+
+		MSDParser::ObjectParser taskParser(
+			"testtask",taskProperties);
 		if (!rs.Add(MSDParser::ObjectType::Task, taskParser))
 			return false;
 
@@ -490,7 +556,7 @@ void AddTaskStaticHSResonanceSpectraTests(std::vector<test_case> &cases)
 
 		return !R2KBHasDataRow(result.data) &&
 			result.log.find(
-				"Hybrid resonance requires initialstateframe=fixed in R2K-B") !=
+				"Hybrid resonance molecular-frame explicit-state rotation is not yet qualified") !=
 			std::string::npos;
 	}));
 
@@ -510,6 +576,94 @@ void AddTaskStaticHSResonanceSpectraTests(std::vector<test_case> &cases)
 
 		return R2KBHasDataRow(defaultResult.data) &&
 			defaultResult.data == explicitResult.data;
+	}));
+
+
+	cases.push_back(test_case("Resonance spectra R2K-C thermal hybrid task route", []() {
+		const double fieldT = 0.3389868917139098;
+		R2KBTaskResult result;
+		if (!RunR2KBTask(
+				BuildR2KCThermalOneVSystem(
+					fieldT,0.0047,"B0",4.2),
+				"solver=hybrid;perturbativenuclei=V;"
+				"hamiltonianh0list=B0,A,NZ;hybridfieldstep=0.0001;",
+				result,false) || !result.runOk)
+			return false;
+
+		std::vector<double> signal;
+		if (!ExtractColumn(result.data, "HybridSystem.Total_perp", signal) ||
+			signal.size()!=1 || !std::isfinite(signal.front()) ||
+			std::abs(signal.front())<=1.0e-16)
+			return false;
+
+		return result.log.find(
+			"Hybrid resonance initial state = thermal exact core at") !=
+			std::string::npos &&
+			result.log.find(
+			"perturbative nuclear reference = maximally mixed") !=
+			std::string::npos;
+	}));
+
+	cases.push_back(test_case("Resonance spectra R2K-C zero-HFC thermal exact-hybrid parity", []() {
+		const double fieldT = 0.3389868917139098;
+		R2KBTaskResult exactResult,hybridResult;
+		if (!RunR2KBTask(
+				BuildR2KCThermalOneVSystem(
+					fieldT,0.0,"B0",4.2),
+				"solver=exact;hamiltonianh0list=B0,A,NZ;",
+				exactResult,false) ||
+			!RunR2KBTask(
+				BuildR2KCThermalOneVSystem(
+					fieldT,0.0,"B0",4.2),
+				"solver=hybrid;perturbativenuclei=V;"
+				"hamiltonianh0list=B0,A,NZ;hybridfieldstep=0.0001;",
+				hybridResult,false) ||
+			!exactResult.runOk || !hybridResult.runOk)
+			return false;
+
+		std::vector<double> exact,hybrid;
+		if (!ExtractColumn(
+				exactResult.data,"HybridSystem.Total_perp",exact) ||
+			!ExtractColumn(
+				hybridResult.data,"HybridSystem.Total_perp",hybrid) ||
+			exact.size()!=1 || hybrid.size()!=1 ||
+			!std::isfinite(exact.front()) ||
+			!std::isfinite(hybrid.front()))
+			return false;
+
+		const double scale=std::max({
+			1.0e-18,
+			std::abs(exact.front()),
+			std::abs(hybrid.front())
+		});
+		const double relativeDifference=
+			std::abs(exact.front()-hybrid.front())/scale;
+		if (relativeDifference>=1.0e-8)
+		{
+			std::cerr << std::setprecision(17)
+					  << "R2K-C zero-HFC thermal exact/hybrid mismatch: exact="
+					  << exact.front() << " hybrid=" << hybrid.front()
+					  << " relative=" << relativeDifference << std::endl;
+			return false;
+		}
+		return true;
+	}));
+
+	cases.push_back(test_case("Resonance spectra R2K-C perturbative thermal Hamiltonian fails closed", []() {
+		const double fieldT = 0.3389868917139098;
+		R2KBTaskResult result;
+		if (!RunR2KBTask(
+				BuildR2KCThermalOneVSystem(
+					fieldT,0.0047,"B0,A",4.2),
+				"solver=hybrid;perturbativenuclei=V;"
+				"hamiltonianh0list=B0,A,NZ;hybridfieldstep=0.0001;",
+				result,false) || !result.runOk)
+			return false;
+
+		return !R2KBHasDataRow(result.data) &&
+			result.log.find(
+				"explicit hybrid thermal Hamiltonian interaction must be owned by the exact core") !=
+			std::string::npos;
 	}));
 
 	cases.push_back(test_case("Spectroscopy task registry aliases", []() {

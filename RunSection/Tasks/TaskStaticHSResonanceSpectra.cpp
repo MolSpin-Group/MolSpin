@@ -944,30 +944,93 @@ namespace RunSection
 		const arma::vec fieldDirection = Bvec / Bmag;
 		const double field_mT = 1.0e3 * Bmag;
 
-		// R2K-B intentionally accepts only a fixed explicit core state. Molecular
-		// frame rotation and eigen-frame Thermal preparation require a separate
-		// qualified state-preparation gate; silently treating either as fixed
-		// would give physically wrong orientation-dependent intensities.
-		if (_system->InitialStateFrame() != SpinAPI::StateFrame::Fixed)
-		{
-			this->Log() << "Hybrid resonance requires initialstateframe=fixed in R2K-B; molecular/eigen/thermal state preparation is not yet qualified." << std::endl;
-			return false;
-		}
-
+		// R2K-C qualifies two distinct exact-core state policies:
+		//   1. a fixed explicit state, preserving R2K-B semantics;
+		//   2. an orientation/field-dependent Thermal state generated from an
+		//      explicitly exact-core-owned thermal Hamiltonian.
+		// Perturbative nuclear factors remain maximally mixed in the first-order
+		// independent-factor solver. Molecular-frame explicit-state rotation is
+		// still a separate unqualified transformation and therefore fails closed.
+		const SpinAPI::StateFrame initialStateFrame =
+			_system->InitialStateFrame();
+		HybridNuclearResonanceCoreStateMode coreStateMode =
+			HybridNuclearResonanceCoreStateMode::ExplicitFixed;
 		SpinAPI::state_ptr exactCoreState = nullptr;
-		if (!this->initialStateName.empty())
+		std::vector<SpinAPI::interaction_ptr> exactCoreThermalInteractions;
+		double thermalTemperatureK = 300.0;
+
+		if (initialStateFrame == SpinAPI::StateFrame::Fixed)
 		{
-			exactCoreState = _system->states_find(this->initialStateName);
+			if (!this->initialStateName.empty())
+			{
+				exactCoreState =
+					_system->states_find(this->initialStateName);
+			}
+			else
+			{
+				const auto initialStates = _system->InitialState();
+				if (initialStates.size() == 1 &&
+					initialStates.front() != nullptr)
+					exactCoreState = initialStates.front();
+			}
+			if (exactCoreState == nullptr)
+			{
+				this->Log() << "Hybrid resonance fixed-state mode requires exactly one explicit non-Thermal initial state." << std::endl;
+				return false;
+			}
+		}
+		else if (initialStateFrame == SpinAPI::StateFrame::Eigen)
+		{
+			if (!this->initialStateName.empty())
+			{
+				this->Log() << "Hybrid resonance frame=eigen requires Thermal to be specified through the SpinSystem initialstate property." << std::endl;
+				return false;
+			}
+
+			const auto initialStates = _system->InitialState();
+			if (initialStates.size() != 1 ||
+				initialStates.front() != nullptr)
+			{
+				this->Log() << "Hybrid resonance frame=eigen requires a single Thermal SpinSystem initial state." << std::endl;
+				return false;
+			}
+
+			const auto thermalNames =
+				_system->ThermalHamiltonianList();
+			if (thermalNames.empty())
+			{
+				this->Log() << "Hybrid resonance R2K-C requires an explicit non-empty thermalhamiltonian list for frame=eigen." << std::endl;
+				return false;
+			}
+			for (const auto &name : thermalNames)
+			{
+				auto interaction = _system->interactions_find(name);
+				if (interaction == nullptr)
+				{
+					this->Log() << "Hybrid resonance thermal Hamiltonian interaction "" << name << "" was not found in the SpinSystem." << std::endl;
+					return false;
+				}
+				exactCoreThermalInteractions.push_back(interaction);
+			}
+
+			thermalTemperatureK = _system->Temperature();
+			if (!std::isfinite(thermalTemperatureK) ||
+				thermalTemperatureK <= 0.0)
+			{
+				this->Log() << "Hybrid resonance thermal temperature must be finite and positive." << std::endl;
+				return false;
+			}
+
+			coreStateMode =
+				HybridNuclearResonanceCoreStateMode::ThermalEigen;
+			this->Log() << "Hybrid resonance initial state = thermal exact core at "
+						<< thermalTemperatureK
+						<< " K; perturbative nuclear reference = maximally mixed."
+						<< std::endl;
 		}
 		else
 		{
-			const auto initialStates = _system->InitialState();
-			if (initialStates.size() == 1 && initialStates.front() != nullptr)
-				exactCoreState = initialStates.front();
-		}
-		if (exactCoreState == nullptr)
-		{
-			this->Log() << "Hybrid resonance R2K-B requires exactly one explicit non-Thermal initial state." << std::endl;
+			this->Log() << "Hybrid resonance molecular-frame explicit-state rotation is not yet qualified; use frame=fixed or frame=eigen with Thermal." << std::endl;
 			return false;
 		}
 
@@ -1014,7 +1077,11 @@ namespace RunSection
 		partitionRequest.perturbativeNuclei = perturbative;
 		partitionRequest.fieldInteractions = zeemanInteractions;
 		partitionRequest.detectionTerms = detectionTerms;
+		partitionRequest.coreStateMode = coreStateMode;
 		partitionRequest.exactCoreState = exactCoreState;
+		partitionRequest.exactCoreThermalInteractions =
+			exactCoreThermalInteractions;
+		partitionRequest.thermalTemperatureK = thermalTemperatureK;
 		partitionRequest.fullTensorRotation = this->fullTensorRotation;
 		partitionRequest.minimumCumulativeOverlapWeight =
 			this->hybridMinimumCumulativeOverlapWeight;

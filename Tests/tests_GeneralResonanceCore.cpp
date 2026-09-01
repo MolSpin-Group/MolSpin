@@ -4193,6 +4193,96 @@ namespace
         return arma::norm(a-b,"fro")<=tolerance*scale;
     }
 
+    bool GRC_TestR2KCThermalExactCoreDensityParity()
+    {
+        using namespace RunSection::General::Resonance;
+
+        GRC_R2KA_Model model;
+        if (!GRC_R2KA_BuildModel(model))
+            return false;
+
+        auto request=GRC_R2KA_Request(model);
+        request.coreStateMode=
+            HybridNuclearResonanceCoreStateMode::ThermalEigen;
+        request.exactCoreState=nullptr;
+        request.exactCoreThermalInteractions={model.b0};
+        request.thermalTemperatureK=4.2;
+
+        HybridNuclearResonancePartition partition;
+        std::string error;
+        if (!HybridNuclearResonancePartitionBuilder::Build(
+                request,partition,error))
+            return false;
+
+        if (partition.coreStateMode!=
+                HybridNuclearResonanceCoreStateMode::ThermalEigen ||
+            partition.exactCoreState!=nullptr ||
+            partition.exactCoreThermalInteractions.size()!=1 ||
+            partition.exactCoreThermalInteractions.front()!=model.b0 ||
+            std::abs(partition.thermalTemperatureK-4.2)>1.0e-15)
+            return false;
+
+        const auto orientation=
+            GRC_Orientation(0.37,0.68,-0.29);
+        HybridNuclearResonancePoint point;
+        if (!HybridNuclearResonancePreparation::BuildPoint(
+                partition,orientation,0.34,
+                point,error))
+            return false;
+
+        SpinAPI::SpinSpace coreSpace(
+            std::vector<SpinAPI::spin_ptr>{model.electron});
+        coreSpace.UseSuperoperatorSpace(false);
+        coreSpace.UseFullTensorRotation(true);
+        if (!coreSpace.Add(
+                std::vector<SpinAPI::interaction_ptr>{model.b0}))
+            return false;
+
+        arma::sp_cx_mat thermalHamiltonian;
+        if (!coreSpace.BaseHamiltonianRotatedZYZ(
+                {"B0"},orientation.frameToLab,
+                thermalHamiltonian))
+            return false;
+
+        arma::cx_mat expected;
+        if (!coreSpace.ThermalStateFromHamiltonian(
+                arma::cx_mat(thermalHamiltonian),
+                4.2,expected))
+            return false;
+
+        return
+            GRC_R2KA_MatrixNear(
+                point.coreDensity,expected,1.0e-13) &&
+            std::abs(
+                arma::trace(point.coreDensity).real()-1.0)<
+                1.0e-13;
+    }
+
+    bool GRC_TestR2KCThermalOwnershipFailsClosed()
+    {
+        using namespace RunSection::General::Resonance;
+
+        GRC_R2KA_Model model;
+        if (!GRC_R2KA_BuildModel(model))
+            return false;
+
+        auto request=GRC_R2KA_Request(model);
+        request.coreStateMode=
+            HybridNuclearResonanceCoreStateMode::ThermalEigen;
+        request.exactCoreState=nullptr;
+        request.exactCoreThermalInteractions={model.a1};
+        request.thermalTemperatureK=4.2;
+
+        HybridNuclearResonancePartition partition;
+        std::string error;
+        if (HybridNuclearResonancePartitionBuilder::Build(
+                request,partition,error))
+            return false;
+
+        return error==
+            "explicit hybrid thermal Hamiltonian interaction must be owned by the exact core";
+    }
+
     bool GRC_TestR2KAExplicitTwo51VPartitionParity()
     {
         using namespace RunSection::General::Resonance;
@@ -6594,6 +6684,8 @@ void AddGeneralResonanceCoreTests(std::vector<test_case> &cases)
     cases.push_back(test_case("General resonance R2K-A explicit partition order contract",GRC_TestR2KAExplicitPartitionOrderContract));
     cases.push_back(test_case("General resonance R2K-A duplicate perturbative hyperfine fails closed",GRC_TestR2KADuplicateHyperfineFailsClosed));
     cases.push_back(test_case("General resonance R2K-A perturbative detection spin fails closed",GRC_TestR2KADetectionOnPerturbativeNucleusFailsClosed));
+    cases.push_back(test_case("General resonance R2K-C thermal exact-core density parity",GRC_TestR2KCThermalExactCoreDensityParity));
+    cases.push_back(test_case("General resonance R2K-C thermal Hamiltonian ownership fails closed",GRC_TestR2KCThermalOwnershipFailsClosed));
     cases.push_back(test_case("General resonance R2J-A exact eigensystem overload parity",GRC_TestR2JAExactEigensystemOverloadParity));
     cases.push_back(test_case("General resonance R2J-A resolved spectrum-point aggregation",GRC_TestR2JAResolvedSpectrumPoint));
     cases.push_back(test_case("General resonance R2J-A mixed resolved-channel cardinality fails closed",GRC_TestR2JAResolvedSpectrumCardinalityFailsClosed));

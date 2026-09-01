@@ -58,7 +58,11 @@ namespace RunSection::General::Resonance
         // Detection-spin/Zeeman pairing remains caller-owned.
         std::vector<ResonanceMagneticMomentTerm> detectionTerms;
 
+        HybridNuclearResonanceCoreStateMode coreStateMode =
+            HybridNuclearResonanceCoreStateMode::ExplicitFixed;
         SpinAPI::state_ptr exactCoreState;
+        std::vector<SpinAPI::interaction_ptr> exactCoreThermalInteractions;
+        double thermalTemperatureK = 300.0;
         bool fullTensorRotation = true;
 
         double minimumCumulativeOverlapWeight = 0.0;
@@ -265,11 +269,51 @@ namespace RunSection::General::Resonance
                     "explicit hybrid field interactions must be unique and non-null";
                 return false;
             }
-            if (request.exactCoreState==nullptr ||
-                !request.system->Contains(request.exactCoreState))
+            if (request.coreStateMode ==
+                    HybridNuclearResonanceCoreStateMode::ExplicitFixed)
+            {
+                if (request.exactCoreState==nullptr ||
+                    !request.system->Contains(request.exactCoreState))
+                {
+                    error=
+                        "explicit hybrid exact-core state is missing from the SpinSystem";
+                    return false;
+                }
+                if (!request.exactCoreThermalInteractions.empty())
+                {
+                    error=
+                        "explicit hybrid fixed-state mode must not define a thermal Hamiltonian";
+                    return false;
+                }
+            }
+            else if (request.coreStateMode ==
+                        HybridNuclearResonanceCoreStateMode::ThermalEigen)
+            {
+                if (request.exactCoreState!=nullptr)
+                {
+                    error=
+                        "explicit hybrid thermal mode must not define an explicit exact-core state";
+                    return false;
+                }
+                if (request.exactCoreThermalInteractions.empty() ||
+                    !Unique(request.exactCoreThermalInteractions))
+                {
+                    error=
+                        "explicit hybrid thermal Hamiltonian must be non-empty, unique, and non-null";
+                    return false;
+                }
+                if (!std::isfinite(request.thermalTemperatureK) ||
+                    request.thermalTemperatureK<=0.0)
+                {
+                    error=
+                        "explicit hybrid thermal temperature must be finite and positive";
+                    return false;
+                }
+            }
+            else
             {
                 error=
-                    "explicit hybrid exact-core state is missing from the SpinSystem";
+                    "explicit hybrid exact-core state mode is invalid";
                 return false;
             }
             if (!std::isfinite(
@@ -302,7 +346,9 @@ namespace RunSection::General::Resonance
                         "explicit hybrid perturbative spin must be a nuclear SpinSystem member";
                     return false;
                 }
-                if (!StateExcludesNucleus(
+                if (request.coreStateMode ==
+                        HybridNuclearResonanceCoreStateMode::ExplicitFixed &&
+                    !StateExcludesNucleus(
                         request.exactCoreState,spec.nucleus))
                 {
                     error=
@@ -312,7 +358,12 @@ namespace RunSection::General::Resonance
             }
 
             partition.system=request.system;
+            partition.coreStateMode=request.coreStateMode;
             partition.exactCoreState=request.exactCoreState;
+            partition.exactCoreThermalInteractions=
+                request.exactCoreThermalInteractions;
+            partition.thermalTemperatureK=
+                request.thermalTemperatureK;
             partition.fullTensorRotation=
                 request.fullTensorRotation;
             partition.minimumCumulativeOverlapWeight=
@@ -438,6 +489,25 @@ namespace RunSection::General::Resonance
                     error=
                         "explicit hybrid partition requires exactly one core-nucleus hyperfine interaction per perturbative nucleus";
                     return false;
+                }
+            }
+
+            if (request.coreStateMode ==
+                    HybridNuclearResonanceCoreStateMode::ThermalEigen)
+            {
+                for (const auto &interaction:
+                     request.exactCoreThermalInteractions)
+                {
+                    if (!request.system->Contains(interaction) ||
+                        !Contains(
+                            partition.exactCoreInteractions,
+                            interaction) ||
+                        interaction->HasTimeDependence())
+                    {
+                        error=
+                            "explicit hybrid thermal Hamiltonian interaction must be owned by the exact core";
+                        return false;
+                    }
                 }
             }
 

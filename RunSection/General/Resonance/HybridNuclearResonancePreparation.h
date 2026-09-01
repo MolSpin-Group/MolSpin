@@ -46,6 +46,12 @@
 
 namespace RunSection::General::Resonance
 {
+    enum class HybridNuclearResonanceCoreStateMode
+    {
+        ExplicitFixed,
+        ThermalEigen
+    };
+
     struct HybridNuclearResonanceNucleusPartition
     {
         SpinAPI::spin_ptr nucleus;
@@ -64,7 +70,11 @@ namespace RunSection::General::Resonance
         std::vector<SpinAPI::interaction_ptr> exactCoreFieldInteractions;
         std::vector<ResonanceMagneticMomentTerm> detectionTerms;
         std::vector<HybridNuclearResonanceNucleusPartition> nuclei;
+        HybridNuclearResonanceCoreStateMode coreStateMode =
+            HybridNuclearResonanceCoreStateMode::ExplicitFixed;
         SpinAPI::state_ptr exactCoreState;
+        std::vector<SpinAPI::interaction_ptr> exactCoreThermalInteractions;
+        double thermalTemperatureK = 300.0;
         bool fullTensorRotation = true;
         double minimumCumulativeOverlapWeight = 0.0;
         std::size_t maximumComponentsPerCoreTransition = 0;
@@ -570,29 +580,82 @@ namespace RunSection::General::Resonance
                 }
             }
 
-            if (partition.exactCoreState == nullptr ||
-                !partition.system->Contains(
-                    partition.exactCoreState))
+            if (partition.coreStateMode ==
+                    HybridNuclearResonanceCoreStateMode::ExplicitFixed)
             {
-                error =
-                    "hybrid partition exact-core state is missing from the SpinSystem";
-                return false;
-            }
-
-            for (const auto &factor:partition.nuclei)
-            {
-                std::vector<std::pair<int,arma::cx_double>>
-                    stateSeries;
-                bool coupled=false;
-                if (partition.exactCoreState->GetStateSeries(
-                        factor.nucleus,
-                        stateSeries,coupled) ||
-                    coupled)
+                if (partition.exactCoreState == nullptr ||
+                    !partition.system->Contains(
+                        partition.exactCoreState))
                 {
                     error =
-                        "hybrid perturbative nucleus reference state must be unpolarized and unspecified";
+                        "hybrid partition exact-core state is missing from the SpinSystem";
                     return false;
                 }
+                if (!partition.exactCoreThermalInteractions.empty())
+                {
+                    error =
+                        "hybrid explicit exact-core state must not define a thermal Hamiltonian";
+                    return false;
+                }
+
+                for (const auto &factor:partition.nuclei)
+                {
+                    std::vector<std::pair<int,arma::cx_double>>
+                        stateSeries;
+                    bool coupled=false;
+                    if (partition.exactCoreState->GetStateSeries(
+                            factor.nucleus,
+                            stateSeries,coupled) ||
+                        coupled)
+                    {
+                        error =
+                            "hybrid perturbative nucleus reference state must be unpolarized and unspecified";
+                        return false;
+                    }
+                }
+            }
+            else if (partition.coreStateMode ==
+                        HybridNuclearResonanceCoreStateMode::ThermalEigen)
+            {
+                if (partition.exactCoreState != nullptr)
+                {
+                    error =
+                        "hybrid thermal exact-core preparation must not define an explicit state";
+                    return false;
+                }
+                if (partition.exactCoreThermalInteractions.empty() ||
+                    !Unique(partition.exactCoreThermalInteractions))
+                {
+                    error =
+                        "hybrid thermal exact-core Hamiltonian must be non-empty, unique, and non-null";
+                    return false;
+                }
+                if (!std::isfinite(partition.thermalTemperatureK) ||
+                    partition.thermalTemperatureK <= 0.0)
+                {
+                    error =
+                        "hybrid thermal exact-core temperature must be finite and positive";
+                    return false;
+                }
+                for (const auto &interaction:
+                     partition.exactCoreThermalInteractions)
+                {
+                    if (!Contains(
+                            partition.exactCoreInteractions,
+                            interaction) ||
+                        interaction->HasTimeDependence())
+                    {
+                        error =
+                            "hybrid thermal Hamiltonian interaction must be owned by the exact core";
+                        return false;
+                    }
+                }
+            }
+            else
+            {
+                error =
+                    "hybrid exact-core state preparation mode is invalid";
+                return false;
             }
 
             SpinAPI::SpinSpace coreSpace(
@@ -623,13 +686,37 @@ namespace RunSection::General::Resonance
                     point.coreDHdB,error))
                 return false;
 
-            if (!coreSpace.GetState(
-                    partition.exactCoreState,
-                    point.coreDensity))
+            if (partition.coreStateMode ==
+                    HybridNuclearResonanceCoreStateMode::ExplicitFixed)
             {
-                error =
-                    "failed to construct the exact-core density matrix";
-                return false;
+                if (!coreSpace.GetState(
+                        partition.exactCoreState,
+                        point.coreDensity))
+                {
+                    error =
+                        "failed to construct the explicit exact-core density matrix";
+                    return false;
+                }
+            }
+            else
+            {
+                const auto thermalPlan=
+                    CorePlan(partition.exactCoreThermalInteractions);
+                GeneralResonanceHamiltonian thermalBuilder(
+                    thermalPlan,coreSpace);
+                arma::sp_cx_mat thermalHamiltonian;
+                if (!thermalBuilder.Build(
+                        orientation,thermalHamiltonian,error))
+                    return false;
+                if (!coreSpace.ThermalStateFromHamiltonian(
+                        arma::cx_mat(thermalHamiltonian),
+                        partition.thermalTemperatureK,
+                        point.coreDensity))
+                {
+                    error =
+                        "failed to construct the thermal exact-core density matrix";
+                    return false;
+                }
             }
 
             const arma::cx_double trace=
