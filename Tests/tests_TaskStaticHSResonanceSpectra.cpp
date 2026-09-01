@@ -6,6 +6,7 @@
 //////////////////////////////////////////////////////////////////////////////
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <limits>
 #include <sstream>
 #include <string>
@@ -108,19 +109,18 @@ namespace
 		{
 			if (line.empty())
 				continue;
+
 			std::istringstream ls(line);
 			std::vector<double> values;
 			for (std::string tok; ls >> tok;)
 			{
-				try
-				{
-					values.push_back(std::stod(tok));
-				}
-				catch (const std::exception &)
-				{
+				char *end = nullptr;
+				const double value = std::strtod(tok.c_str(), &end);
+				if (end == tok.c_str() || end == nullptr || *end != '\0')
 					return false;
-				}
+				values.push_back(value);
 			}
+
 			if (values.size() <= idx)
 				return false;
 			out.push_back(values[idx]);
@@ -207,6 +207,100 @@ namespace
 		}
 
 		return ExtractColumn(datastream.str(), "Triplet.Total_perp", out);
+	}
+
+	bool RunAnisotropicMomentOwnershipSweep(
+		bool useCache,
+		std::vector<double> &out)
+	{
+		RunSection::RunSection rs;
+		auto spinsys = BuildTwoZeemanSystem(3.370, 3.370);
+		if (spinsys == nullptr)
+			return false;
+
+		auto init = spinsys->states_find("Init");
+		if (init == nullptr || !init->ParseFromSystem(*spinsys))
+			return false;
+
+		rs.Add(spinsys);
+
+		MSDParser::ObjectParser settingsParser(
+			"general", "steps=41;");
+		rs.Add(MSDParser::ObjectType::Settings, settingsParser);
+
+		MSDParser::ObjectParser taskParser(
+			"testtask",
+			"type=statichs-resonance-spectra;"
+			"mwfrequency=95.0;linewidth=0.5;lineshape=gaussian;"
+			"detectspins=FE1,WE2;fieldinteraction=zeeman1;"
+			"initialstate=Init;"
+			"hamiltonianh0list=zeeman1,zeeman2;"
+			"powdersamplingpoints=12;powdergridtype=fibonacci;"
+			"powdergammapoints=3;powderfullsphere=true;"
+			"fulltensorrotation=true;"
+			"sweepcache=" + std::string(useCache ? "true" : "false") +
+			";sweepcachemode=exact;mzblocks=true;"
+			"enforce_zeeman_sync=true;");
+		if (!rs.Add(MSDParser::ObjectType::Task, taskParser))
+			return false;
+
+		MSDParser::ObjectParser action1(
+			"field1",
+			"type=addvector;vector=System.zeeman1.field;"
+			"direction=0 0 1;value=0.0005;");
+		MSDParser::ObjectParser action2(
+			"field2",
+			"type=addvector;vector=System.zeeman2.field;"
+			"direction=0 0 1;value=0.0005;");
+		if (!rs.Add(MSDParser::ObjectType::Action, action1) ||
+			!rs.Add(MSDParser::ObjectType::Action, action2))
+			return false;
+
+		auto task = rs.GetTask("testtask");
+		if (task == nullptr)
+			return false;
+
+		std::ostringstream logstream;
+		std::ostringstream datastream;
+		task->SetLogStream(logstream);
+		task->SetDataStream(datastream);
+
+		for (unsigned int step = 1; step <= 41; ++step)
+		{
+			if (!rs.Run(step))
+				return false;
+			if (step < 41 && !rs.Step(step + 1))
+				return false;
+		}
+
+		const std::vector<std::string> columns = {
+			"System.Total_x",
+			"System.Total_y",
+			"System.Total_perp",
+			"System.Cross_x",
+			"System.Cross_y",
+			"System.FE1_x",
+			"System.FE1_y",
+			"System.FE1_perp",
+			"System.FE1_p",
+			"System.FE1_m",
+			"System.WE2_x",
+			"System.WE2_y",
+			"System.WE2_perp",
+			"System.WE2_p",
+			"System.WE2_m",
+		};
+
+		out.clear();
+		for (const auto &column : columns)
+		{
+			std::vector<double> values;
+			if (!ExtractColumn(datastream.str(), column, values))
+				return false;
+			out.insert(out.end(), values.begin(), values.end());
+		}
+
+		return !out.empty();
 	}
 
 	double NormalizedRms(const std::vector<double> &lhs, const std::vector<double> &rhs)
@@ -329,6 +423,81 @@ void AddTaskStaticHSResonanceSpectraTests(std::vector<test_case> &cases)
 		if (normalizedRms >= 0.02)
 			std::cerr << "Exact/crossing normalized RMS mismatch: " << normalizedRms << std::endl;
 		return normalizedRms < 0.02;
+	}));
+
+	cases.push_back(test_case("Resonance spectra canonical magnetic-moment old-vs-new exact parity", []() {
+		std::vector<double> cachedManual;
+		std::vector<double> uncachedCanonical;
+		if (!RunAnisotropicMomentOwnershipSweep(true, cachedManual) ||
+			!RunAnisotropicMomentOwnershipSweep(false, uncachedCanonical))
+			return false;
+
+		if (cachedManual.empty() ||
+			cachedManual.size() != uncachedCanonical.size())
+			return false;
+
+		double cachedMaxAbs = 0.0;
+		double uncachedMaxAbs = 0.0;
+		for (size_t i = 0; i < cachedManual.size(); ++i)
+		{
+			if (!std::isfinite(cachedManual[i]) ||
+				!std::isfinite(uncachedCanonical[i]))
+				return false;
+			cachedMaxAbs =
+				std::max(cachedMaxAbs, std::abs(cachedManual[i]));
+			uncachedMaxAbs =
+				std::max(uncachedMaxAbs, std::abs(uncachedCanonical[i]));
+		}
+
+		const double commonScale =
+			std::max(cachedMaxAbs, uncachedMaxAbs);
+		if (!(commonScale > 0.0) || !std::isfinite(commonScale))
+			return false;
+
+		long double diff2 = 0.0L;
+		long double cached2 = 0.0L;
+		long double uncached2 = 0.0L;
+		for (size_t i = 0; i < cachedManual.size(); ++i)
+		{
+			const long double a =
+				static_cast<long double>(cachedManual[i] / commonScale);
+			const long double b =
+				static_cast<long double>(uncachedCanonical[i] / commonScale);
+			const long double d = a - b;
+			diff2 += d * d;
+			cached2 += a * a;
+			uncached2 += b * b;
+		}
+
+		const long double reference2 =
+			std::max(cached2, uncached2);
+		if (!(reference2 > 0.0L))
+			return false;
+
+		const double relativeL2 =
+			static_cast<double>(std::sqrt(diff2 / reference2));
+		const double peakRelative =
+			std::abs(cachedMaxAbs - uncachedMaxAbs) / commonScale;
+		const double shapeNormalizedRms =
+			NormalizedRms(cachedManual, uncachedCanonical);
+
+		if (relativeL2 >= 1e-10 ||
+			peakRelative >= 1e-10 ||
+			shapeNormalizedRms >= 1e-10)
+		{
+			std::cerr
+				<< std::setprecision(17)
+				<< "Magnetic-moment parity mismatch:"
+				<< " relative_l2=" << relativeL2
+				<< " peak_relative=" << peakRelative
+				<< " shape_normalized_rms=" << shapeNormalizedRms
+				<< " cached_maxabs=" << cachedMaxAbs
+				<< " uncached_maxabs=" << uncachedMaxAbs
+				<< std::endl;
+			return false;
+		}
+
+		return true;
 	}));
 
 	cases.push_back(test_case("Resonance spectra exact cache equivalence", []() {

@@ -20,6 +20,7 @@
 #include "ActionAddVector.h"
 #include "TaskStaticHSResonanceSpectra.h"
 #include "ExactResonanceSolver.h"
+#include "ResonanceMagneticMomentBuilder.h"
 #include "ResonanceSpectrumEvaluator.h"
 #include "ResonanceTypes.h"
 #include "ObjectParser.h"
@@ -416,28 +417,6 @@ namespace RunSection
 			if (!useOrientationThermal)
 				rho0 /= arma::trace(rho0);
 
-			// Embed the bare spin operators into the full Hilbert space. The
-			// orientation-dependent magnetic dipole operators are then built from
-			// these operators and the rotated g tensors.
-			std::vector<arma::cx_mat> Sx_list(detectSpins.size());
-			std::vector<arma::cx_mat> Sy_list(detectSpins.size());
-			std::vector<arma::cx_mat> Sz_list(detectSpins.size());
-			bool operators_ok = true;
-			for (size_t i = 0; i < detectSpins.size(); ++i)
-			{
-				auto spin = detectSpins[i];
-				if (!space.CreateOperator(arma::conv_to<arma::cx_mat>::from(spin->Sx()), spin, Sx_list[i]) ||
-					!space.CreateOperator(arma::conv_to<arma::cx_mat>::from(spin->Sy()), spin, Sy_list[i]) ||
-					!space.CreateOperator(arma::conv_to<arma::cx_mat>::from(spin->Sz()), spin, Sz_list[i]))
-				{
-					this->Log() << "Failed to build bare spin operators for spin \"" << spin->Name() << "\"." << std::endl;
-					operators_ok = false;
-					break;
-				}
-			}
-			if (!operators_ok)
-				continue;
-
 			// Build powder grid (theta,phi) and optional gamma sampling.
 			int numPoints = this->powdersamplingpoints;
 			SpinAPI::PowderGrid grid;
@@ -516,38 +495,48 @@ namespace RunSection
 			// field-swept experiment, so broadening is applied directly in field units.
 			const double lwB_mT = std::abs(this->linewidth_mT);
 
-			// Determine Zeeman interaction for each detection spin (frame + prefactor).
-			std::vector<SpinAPI::interaction_ptr> spinZeeman(detectSpins.size(), nullptr);
+			// Detection-spin / Zeeman selection remains task-owned. Tensor,
+			// frame, Hilbert embedding and prefactor interpretation are canonical.
+			std::vector<General::Resonance::ResonanceMagneticMomentTerm>
+				magneticMomentTerms;
+			magneticMomentTerms.reserve(detectSpins.size());
+			bool magneticMomentTermsOk = true;
 			for (size_t i = 0; i < detectSpins.size(); ++i)
 			{
-				spinZeeman[i] = FindZeemanForSpin(detectSpins[i], zeemanInteractions);
-				if (spinZeeman[i] == nullptr)
-					spinZeeman[i] = fieldInteraction;
-			}
+				auto zeeman =
+					FindZeemanForSpin(detectSpins[i], zeemanInteractions);
 
-			// Base tensors (as specified on spins), rotated from tensor frame to molecular frame.
-			std::vector<arma::mat> g_frame_base(detectSpins.size());
-			std::vector<double> mu_prefactors(detectSpins.size(), 1.0);
-			for (size_t i = 0; i < detectSpins.size(); ++i)
-			{
-				arma::mat g_base = arma::conv_to<arma::mat>::from(detectSpins[i]->GetTensor().LabFrame());
-				if (spinZeeman[i] != nullptr && spinZeeman[i]->IgnoreTensors())
-					g_base = arma::eye<arma::mat>(3, 3);
-
-				arma::mat RFrame = arma::eye<arma::mat>(3, 3);
-				if (spinZeeman[i] != nullptr)
-					RFrame = PassiveZYZRotation(spinZeeman[i]->Framelist());
-				const arma::mat RFrame_T2M = RFrame.t();
-				g_frame_base[i] = RFrame_T2M * g_base * RFrame_T2M.t();
-
-				if (spinZeeman[i] != nullptr)
+				// Preserve the historical fallback only when the designated field
+				// interaction actually owns this detection spin.
+				if (zeeman == nullptr && fieldInteraction != nullptr)
 				{
-					double mu = spinZeeman[i]->Prefactor();
-					if (spinZeeman[i]->AddCommonPrefactor())
-						mu *= 8.79410005e+1;
-					mu_prefactors[i] = mu;
+					const auto group = fieldInteraction->Group1();
+					if (std::find(
+							group.begin(), group.end(),
+							detectSpins[i]) != group.end())
+					{
+						zeeman = fieldInteraction;
+					}
 				}
+
+				if (zeeman == nullptr)
+				{
+					this->Log()
+						<< "No Zeeman interaction owns detection spin \""
+						<< detectSpins[i]->Name()
+						<< "\"; exact resonance magnetic moment is undefined."
+						<< std::endl;
+					magneticMomentTermsOk = false;
+					break;
+				}
+
+				General::Resonance::ResonanceMagneticMomentTerm term;
+				term.spin = detectSpins[i];
+				term.zeeman = zeeman;
+				magneticMomentTerms.push_back(std::move(term));
 			}
+			if (!magneticMomentTermsOk)
+				continue;
 
 			// Accumulators
 			double total_x = 0.0;
@@ -608,9 +597,8 @@ namespace RunSection
 					if (!this->CreatePassiveZYZRotationMatrix(phi, theta, gamma, Rot))
 						continue;
 
-					// Rot is a PASSIVE ZYZ rotation (EasySpin convention) from molecular to lab frame.
-					// Use it directly for tensor rotation and magnetic dipole operators.
-					const arma::mat Rpowder = Rot;
+					// Rot is the same molecular-to-lab orientation used by the
+					// Hamiltonian and canonical magnetic-moment builder.
 					arma::cx_mat rho_oriented;
 					if (useOrientationThermal)
 					{
@@ -662,46 +650,31 @@ namespace RunSection
 						continue;
 					arma::sp_cx_mat dHdB_sp = Hz_sp / Bmag; // rad/ns/T
 
-					std::vector<arma::cx_mat> mux_list(spin_count);
-					std::vector<arma::cx_mat> muy_list(spin_count);
-					arma::cx_mat muxT = arma::zeros<arma::cx_mat>(spaceDim, spaceDim);
-					arma::cx_mat muyT = arma::zeros<arma::cx_mat>(spaceDim, spaceDim);
-					bool tensor_dim_ok = true;
-
-					for (size_t i = 0; i < spin_count; ++i)
+					std::vector<General::Resonance::ResonanceDetectionOperator>
+						detectionChannels;
+					std::string magneticMomentError;
+					if (!General::Resonance::ResonanceMagneticMomentBuilder::
+							BuildTransverseChannels(
+								space_local,
+								magneticMomentTerms,
+								Rot,
+								this->fullTensorRotation,
+								detectionChannels,
+								magneticMomentError))
 					{
-						arma::mat g = Rpowder * g_frame_base[i] * Rpowder.t();
-						if (!this->fullTensorRotation)
-							g = g % arma::eye<arma::mat>(3, 3);
-
-						arma::cx_mat mux = g(0, 0) * Sx_list[i] + g(1, 0) * Sy_list[i] + g(2, 0) * Sz_list[i];
-						arma::cx_mat muy = g(0, 1) * Sx_list[i] + g(1, 1) * Sy_list[i] + g(2, 1) * Sz_list[i];
-
-						const double mu_prefactor = mu_prefactors[i];
-						if (mu_prefactor != 1.0)
-						{
-							mux *= mu_prefactor;
-							muy *= mu_prefactor;
-						}
-
-						if (mux.n_rows != spaceDim || mux.n_cols != spaceDim || muy.n_rows != spaceDim || muy.n_cols != spaceDim)
-							tensor_dim_ok = false;
-						mux_list[i] = mux;
-						muy_list[i] = muy;
-						muxT += mux;
-						muyT += muy;
+						continue;
 					}
-					if (!tensor_dim_ok)
+					if (detectionChannels.size() != spin_count)
 						continue;
 
-					std::vector<General::Resonance::ResonanceDetectionOperator> detectionChannels;
-					detectionChannels.reserve(spin_count);
-					for (size_t i = 0; i < spin_count; ++i)
+					arma::cx_mat muxT =
+						arma::zeros<arma::cx_mat>(spaceDim, spaceDim);
+					arma::cx_mat muyT =
+						arma::zeros<arma::cx_mat>(spaceDim, spaceDim);
+					for (const auto &channel : detectionChannels)
 					{
-						General::Resonance::ResonanceDetectionOperator channel;
-						channel.x = mux_list[i];
-						channel.y = muy_list[i];
-						detectionChannels.push_back(std::move(channel));
+						muxT += channel.x;
+						muyT += channel.y;
 					}
 
 					General::Resonance::ResonanceLineSet resonanceLines;
