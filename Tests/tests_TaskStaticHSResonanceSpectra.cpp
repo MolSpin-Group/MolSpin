@@ -480,6 +480,258 @@ namespace
 		return nonempty >= 2;
 	}
 
+
+	struct R2KDPhysicalSweep
+	{
+		std::vector<double> totalPerp;
+		std::string log;
+		std::string data;
+		std::string failureStage;
+	};
+
+	std::shared_ptr<SpinAPI::SpinSystem> BuildR2KDPhysicalSystem(
+		double fieldT,
+		const std::vector<double> &couplingScales,
+		double temperatureK=8.0)
+	{
+		if (couplingScales.empty() || couplingScales.size() > 2 ||
+			!std::isfinite(fieldT) || fieldT <= 0.0 ||
+			!std::isfinite(temperatureK) || temperatureK <= 0.0)
+			return nullptr;
+
+		auto electron = std::make_shared<SpinAPI::Spin>(
+			"E",
+			"type=electron;spin=1;"
+			"tensor=anisotropic(1.94 2.03 2.18);");
+
+		std::ostringstream bprops;
+		bprops << std::setprecision(17)
+			   << "type=zeeman;spins=E;field=0 0 " << fieldT << ";"
+			   << "orientation=0.17,-0.31,0.23;"
+			   << "ignoretensors=false;commonprefactor=true;prefactor=1.0;";
+		auto b0 = std::make_shared<SpinAPI::Interaction>("B0", bprops.str());
+
+		auto zfs = std::make_shared<SpinAPI::Interaction>(
+			"ZFS",
+			"type=zfs;group1=E;dvalue=-4200;evalue=650;"
+			"orientation=-0.28,0.46,0.19;"
+			"prefactor=0.00628318530718;"
+			"ignoretensors=true;commonprefactor=false;");
+
+		auto system = std::make_shared<SpinAPI::SpinSystem>("R2KDPhysical");
+		system->Add(electron);
+		system->Add(b0);
+		system->Add(zfs);
+
+		const double baseA[2][3] = {
+			{0.85, 1.20, 1.60},
+			{0.45, 0.68, 0.92}
+		};
+		const char *orientations[2] = {
+			"0.39,-0.22,0.57",
+			"-0.31,0.44,-0.18"
+		};
+
+		for (std::size_t k = 0; k < couplingScales.size(); ++k)
+		{
+			const double scale = couplingScales[k];
+			if (!std::isfinite(scale) || scale < 0.0)
+				return nullptr;
+
+			const std::string suffix = std::to_string(k + 1);
+			const std::string nucleusName = "V" + suffix;
+			auto nucleus = std::make_shared<SpinAPI::Spin>(
+				nucleusName,
+				"type=nucleus;spin=7/2;isotope=51V;tensor=isotropic(1.0);");
+			system->Add(nucleus);
+
+			std::ostringstream aprops;
+			aprops << std::setprecision(17)
+				   << "type=hyperfine;group1=E;group2=" << nucleusName << ";"
+				   << "tensor=anisotropic("
+				   << scale * baseA[k][0] << " "
+				   << scale * baseA[k][1] << " "
+				   << scale * baseA[k][2] << ");"
+				   << "orientation=" << orientations[k] << ";"
+				   << "ignoretensors=true;commonprefactor=false;prefactor=1.0;";
+			auto hfc = std::make_shared<SpinAPI::Interaction>(
+				"A" + suffix, aprops.str());
+			system->Add(hfc);
+
+			arma::vec field(3, arma::fill::zeros);
+			field(2) = fieldT;
+			SpinAPI::interaction_ptr nz;
+			std::string error;
+			if (!SpinAPI::NuclearZeeman::CreateInteraction(
+					"NZ" + suffix, nucleus, field, nz, error))
+				return nullptr;
+			system->Add(nz);
+		}
+
+		if (!system->ValidateInteractions().empty())
+			return nullptr;
+
+		std::ostringstream settings;
+		settings << std::setprecision(17)
+				 << "initialstate=Thermal;frame=eigen;"
+				 << "thermalhamiltonian=B0,ZFS;"
+				 << "temperature=" << temperatureK << ";";
+		auto props = std::make_shared<MSDParser::ObjectParser>(
+			"spinsyssettings", settings.str());
+		if (!system->SetProperties(props))
+			return nullptr;
+
+		return system;
+	}
+
+	bool RunR2KDPhysicalSweep(
+		double frequencyGHz,
+		const std::vector<double> &couplingScales,
+		const std::string &solverProperties,
+		R2KDPhysicalSweep &result)
+	{
+		result = R2KDPhysicalSweep{};
+		const auto failEarly = [&](const std::string &stage)
+		{
+			result.failureStage = stage;
+			std::cerr << std::setprecision(17)
+				<< "R2K_D_SWEEP_FAILURE frequency_GHz=" << frequencyGHz
+				<< " solver_properties=\"" << solverProperties << "\""
+				<< " stage=" << stage << std::endl;
+			return false;
+		};
+
+		if (couplingScales.empty() || couplingScales.size() > 2)
+			return failEarly("invalid-coupling-cardinality");
+
+		const bool xBand = frequencyGHz < 20.0;
+		const double fieldStartT = xBand ? 0.15 : 3.00;
+		const double fieldStepT = xBand ? 0.006 : 0.012;
+		const unsigned int steps = 61;
+
+		auto system = BuildR2KDPhysicalSystem(
+			fieldStartT, couplingScales, 8.0);
+		if (system == nullptr)
+			return failEarly("build-physical-system");
+
+		RunSection::RunSection rs;
+		rs.Add(system);
+
+		MSDParser::ObjectParser settingsParser(
+			"general", "steps=" + std::to_string(steps) + ";");
+		// Historical RunSection::Add(Settings, ...) mutates the Settings object
+		// but returns false after falling through the generic Add() dispatcher.
+		// Match the established MolSpin test/task construction contract: apply
+		// Settings here without interpreting that legacy return value as failure.
+		rs.Add(MSDParser::ObjectType::Settings, settingsParser);
+
+		std::string h0 = "B0,ZFS";
+		for (std::size_t k = 0; k < couplingScales.size(); ++k)
+		{
+			const std::string suffix = std::to_string(k + 1);
+			h0 += ",A" + suffix + ",NZ" + suffix;
+		}
+
+		std::ostringstream taskProperties;
+		taskProperties << std::setprecision(17)
+			<< "type=statichs-resonance-spectra;"
+			<< "mwfrequency=" << frequencyGHz << ";"
+			<< "linewidth=5.0;lineshape=gaussian;"
+			<< "detectspins=E;fieldinteraction=B0;"
+			<< "hamiltonianh0list=" << h0 << ";"
+			<< "powdersamplingpoints=4;powdergridtype=fibonacci;"
+			<< "powdergammapoints=1;powderfullsphere=true;"
+			<< "fulltensorrotation=true;mzblocks=false;sweepcache=false;"
+			<< "enforce_zeeman_sync=true;"
+			<< solverProperties;
+
+		MSDParser::ObjectParser taskParser(
+			"testtask", taskProperties.str());
+		if (!rs.Add(MSDParser::ObjectType::Task, taskParser))
+			return failEarly("add-task");
+
+		std::ostringstream actionProperties;
+		actionProperties << std::setprecision(17)
+			<< "type=addvector;vector=R2KDPhysical.B0.field;"
+			<< "direction=0 0 1;value=" << fieldStepT << ";";
+		MSDParser::ObjectParser actionParser(
+			"field", actionProperties.str());
+		if (!rs.Add(MSDParser::ObjectType::Action, actionParser))
+			return failEarly("add-action");
+
+		auto task = rs.GetTask("testtask");
+		if (task == nullptr)
+			return failEarly("resolve-task");
+
+		std::ostringstream logstream;
+		std::ostringstream datastream;
+		task->SetLogStream(logstream);
+		task->SetDataStream(datastream);
+
+		const auto failCaptured = [&](const std::string &stage, unsigned int step)
+		{
+			result.failureStage = stage;
+			result.log = logstream.str();
+			result.data = datastream.str();
+			const std::size_t keep = 7000;
+			const std::string logTail =
+				result.log.size() > keep
+					? result.log.substr(result.log.size() - keep)
+					: result.log;
+			std::cerr << std::setprecision(17)
+				<< "R2K_D_SWEEP_FAILURE frequency_GHz=" << frequencyGHz
+				<< " solver_properties=\"" << solverProperties << "\""
+				<< " stage=" << stage
+				<< " step=" << step
+				<< " data_bytes=" << result.data.size()
+				<< " log_bytes=" << result.log.size() << std::endl
+				<< "R2K_D_LOG_TAIL_BEGIN" << std::endl
+				<< logTail
+				<< "R2K_D_LOG_TAIL_END" << std::endl;
+			return false;
+		};
+
+		for (unsigned int step = 1; step <= steps; ++step)
+		{
+			if (!rs.Run(step))
+				return failCaptured("run", step);
+			if (step < steps && !rs.Step(step + 1))
+				return failCaptured("step", step + 1);
+		}
+
+		result.log = logstream.str();
+		result.data = datastream.str();
+		const bool extracted = ExtractColumn(
+			result.data, "R2KDPhysical.Total_perp", result.totalPerp);
+		if (!extracted || result.totalPerp.size() != steps)
+		{
+			result.failureStage = "extract-spectrum";
+			const std::size_t keep = 7000;
+			const std::string logTail =
+				result.log.size() > keep
+					? result.log.substr(result.log.size() - keep)
+					: result.log;
+			std::cerr << std::setprecision(17)
+				<< "R2K_D_SWEEP_FAILURE frequency_GHz=" << frequencyGHz
+				<< " solver_properties=\"" << solverProperties << "\""
+				<< " stage=extract-spectrum"
+				<< " extracted=" << extracted
+				<< " rows=" << result.totalPerp.size()
+				<< " expected_rows=" << steps
+				<< " data_bytes=" << result.data.size()
+				<< " log_bytes=" << result.log.size() << std::endl
+				<< "R2K_D_DATA_BEGIN" << std::endl
+				<< result.data.substr(0, std::min<std::size_t>(result.data.size(), 2500))
+				<< "R2K_D_DATA_END" << std::endl
+				<< "R2K_D_LOG_TAIL_BEGIN" << std::endl
+				<< logTail
+				<< "R2K_D_LOG_TAIL_END" << std::endl;
+			return false;
+		}
+
+		return true;
+	}
+
 	double NormalizedRms(const std::vector<double> &lhs, const std::vector<double> &rhs)
 	{
 		if (lhs.size() != rhs.size() || lhs.empty())
@@ -664,6 +916,115 @@ void AddTaskStaticHSResonanceSpectraTests(std::vector<test_case> &cases)
 			result.log.find(
 				"explicit hybrid thermal Hamiltonian interaction must be owned by the exact core") !=
 			std::string::npos;
+	}));
+
+
+	cases.push_back(test_case("Resonance spectra R2K-D anisotropic one-51V thermal X-W oracle", []() {
+		R2KDPhysicalSweep exactX,hybridX,exactW,hybridW;
+		const std::vector<double> coupling = {1.0};
+
+		if (!RunR2KDPhysicalSweep(
+				9.5,coupling,"solver=exact;",exactX) ||
+			!RunR2KDPhysicalSweep(
+				9.5,coupling,
+				"solver=hybrid;perturbativenuclei=V1;hybridfieldstep=0.0001;",
+				hybridX) ||
+			!RunR2KDPhysicalSweep(
+				94.0,coupling,"solver=exact;",exactW) ||
+			!RunR2KDPhysicalSweep(
+				94.0,coupling,
+				"solver=hybrid;perturbativenuclei=V1;hybridfieldstep=0.0001;",
+				hybridW))
+			return false;
+
+		const double xError =
+			NormalizedRms(exactX.totalPerp, hybridX.totalPerp);
+		const double wError =
+			NormalizedRms(exactW.totalPerp, hybridW.totalPerp);
+
+		std::cout << std::setprecision(17)
+			<< "R2K_D_ONE_V_X_NORMALIZED_RMS=" << xError << std::endl
+			<< "R2K_D_ONE_V_W_NORMALIZED_RMS=" << wError << std::endl;
+
+		if (!std::isfinite(xError) || !std::isfinite(wError) ||
+			xError <= 1.0e-10 ||
+			!(wError < xError) ||
+			wError >= 0.20)
+		{
+			std::cerr << std::setprecision(17)
+				<< "R2K-D one-51V X/W oracle rejected: X="
+				<< xError << " W=" << wError << std::endl;
+			return false;
+		}
+
+		return hybridX.log.find(
+			"product nuclear dimension = 8; largest nuclear diagonalization = 8") !=
+			std::string::npos &&
+			hybridW.log.find(
+			"product nuclear dimension = 8; largest nuclear diagonalization = 8") !=
+			std::string::npos;
+	}));
+
+	cases.push_back(test_case("Resonance spectra R2K-D two-51V exact-core promotion oracle", []() {
+		const std::vector<double> couplings = {1.0,0.35};
+		R2KDPhysicalSweep exactX,allPertX,promotedX,exactW,allPertW;
+
+		if (!RunR2KDPhysicalSweep(
+				9.5,couplings,"solver=exact;",exactX) ||
+			!RunR2KDPhysicalSweep(
+				9.5,couplings,
+				"solver=hybrid;perturbativenuclei=V1,V2;hybridfieldstep=0.0001;",
+				allPertX) ||
+			!RunR2KDPhysicalSweep(
+				9.5,couplings,
+				"solver=hybrid;perturbativenuclei=V2;hybridfieldstep=0.0001;",
+				promotedX) ||
+			!RunR2KDPhysicalSweep(
+				94.0,couplings,"solver=exact;",exactW) ||
+			!RunR2KDPhysicalSweep(
+				94.0,couplings,
+				"solver=hybrid;perturbativenuclei=V1,V2;hybridfieldstep=0.0001;",
+				allPertW))
+			return false;
+
+		const double allPertXError =
+			NormalizedRms(exactX.totalPerp, allPertX.totalPerp);
+		const double promotedXError =
+			NormalizedRms(exactX.totalPerp, promotedX.totalPerp);
+		const double allPertWError =
+			NormalizedRms(exactW.totalPerp, allPertW.totalPerp);
+
+		std::cout << std::setprecision(17)
+			<< "R2K_D_TWO_V_X_ALL_PERT_NORMALIZED_RMS="
+			<< allPertXError << std::endl
+			<< "R2K_D_TWO_V_X_PROMOTED_NORMALIZED_RMS="
+			<< promotedXError << std::endl
+			<< "R2K_D_TWO_V_W_ALL_PERT_NORMALIZED_RMS="
+			<< allPertWError << std::endl;
+
+		if (!std::isfinite(allPertXError) ||
+			!std::isfinite(promotedXError) ||
+			!std::isfinite(allPertWError) ||
+			allPertXError <= 1.0e-10 ||
+			!(promotedXError < allPertXError) ||
+			!(allPertWError < allPertXError))
+		{
+			std::cerr << std::setprecision(17)
+				<< "R2K-D two-51V promotion oracle rejected: all-X="
+				<< allPertXError << " promoted-X=" << promotedXError
+				<< " all-W=" << allPertWError << std::endl;
+			return false;
+		}
+
+		const bool allScaling =
+			allPertX.log.find(
+				"2 perturbative nuclei; product nuclear dimension = 64; largest nuclear diagonalization = 8") !=
+			std::string::npos;
+		const bool promotedScaling =
+			promotedX.log.find(
+				"1 perturbative nuclei; product nuclear dimension = 8; largest nuclear diagonalization = 8") !=
+			std::string::npos;
+		return allScaling && promotedScaling;
 	}));
 
 	cases.push_back(test_case("Spectroscopy task registry aliases", []() {
