@@ -11,6 +11,8 @@
 #include "HybridNuclearResonancePreparation.h"
 #include "HybridNuclearResonancePartitionBuilder.h"
 #include "ResonanceFieldJacobian.h"
+#include "ResonanceFieldRoots.h"
+#include "ResonancePowderMesh.h"
 #include "ResonanceLineshape.h"
 #include "ResonanceMagneticMomentBuilder.h"
 #include "ResonanceSpectrumEvaluator.h"
@@ -6676,6 +6678,66 @@ namespace
 
 void AddGeneralResonanceCoreTests(std::vector<test_case> &cases)
 {
+    cases.push_back(test_case("General resonance frequency surface retains zero-field-slope transitions", []() {
+        using namespace RunSection::General::Resonance;
+        arma::cx_mat h=arma::diagmat(arma::cx_vec{0.,1.});
+        arma::sp_cx_mat slope(2,2);
+        arma::cx_mat mx=arma::conv_to<arma::cx_mat>::from(arma::mat{{0.,1.},{1.,0.}}),my(2,2,arma::fill::zeros);
+        ResonanceLineSet lines;std::string error;
+        if(!ExactResonanceSolver::GenerateFrequencyThermal(h,10.,slope,mx,my,lines,error)) return false;
+        const double beta=6.582119569e-16*1e9/(8.617333262e-5*10.);
+        return !lines.fieldJacobianQualified && lines.lines.size()==1 &&
+            std::abs(lines.lines[0].omega-1.)<1e-12 &&
+            std::abs(lines.lines[0].populationDifference-std::tanh(beta/2))<1e-12 &&
+            std::abs(lines.lines[0].moment.perpendicular-.5)<1e-12;
+    }));
+    cases.push_back(test_case("General resonance powder mesh integrates linear weights and merging field roots", []() {
+        using namespace RunSection::General::Resonance;
+        for(int mode=0;mode<4;++mode)
+        {
+            std::vector<std::vector<double>> mass(1,std::vector<double>(1001,0.));
+            ResonancePowderMesh mesh(0.,.001,mass);
+            const int n=8;
+            for(int i=0;i<n;++i) for(int j=0;j<n;++j)
+            {
+                std::array<ResonanceMeshNode,8> nodes;std::array<const ResonanceMeshNode*,8> pointers;
+                for(int v=0;v<8;++v)
+                {
+                    double u=(i+(v&1?1:0))/double(n),b=(j+(v&4?1:0))/double(n),f=0.,w=1.;
+                    if(mode==0) f=b-.5;
+                    if(mode==1) {f=b+u-.5;w=1+u+2*b;}
+                    if(mode==2) f=u-.5;
+                    if(mode==3) f=(b-.5)*(b-.5)+u-.25;
+                    nodes[v].omega={1.+f};nodes[v].strength={{w}};pointers[v]=&nodes[v];
+                }
+                mesh.AddCell(pointers,j/double(n),(j+1)/double(n),1./n,1.,1.);
+            }
+            double sum=0.;for(double value:mass[0]) sum+=value;
+            if(std::abs(sum-(mode==1?.875:1.))>1e-10) return false;
+        }
+        return true;
+    }));
+    cases.push_back(test_case("General resonance refined roots detect narrow avoided-crossing pair", []() {
+        using namespace RunSection::General::Resonance;
+        // Both scan endpoints are above resonance; two roots lie only 0.2 mT
+        // apart. A coarse sign-change-only detector would miss both.
+        const double center=.437, coupling=10., target=std::sqrt(100.+4e-8);
+        arma::cx_mat h0=arma::conv_to<arma::cx_mat>::from(arma::mat{{-center,coupling/2.},{coupling/2.,center}});
+        arma::cx_mat derivative=arma::conv_to<arma::cx_mat>::from(arma::mat{{1.,0.},{0.,-1.}});
+        std::vector<ResonanceFieldRoot> roots; std::string error;
+        if (!ResonanceFieldRoots::Locate(h0,derivative,0.,1.,target,roots,error)) return false;
+        if (roots.size()!=2) return false;
+        return std::abs(roots[0].fieldT-(center-1e-4))<2e-8 &&
+               std::abs(roots[1].fieldT-(center+1e-4))<2e-8;
+    }));
+    cases.push_back(test_case("General resonance refined roots include boundary without duplicates", []() {
+        using namespace RunSection::General::Resonance;
+        arma::cx_mat h0(2,2,arma::fill::zeros);
+        arma::cx_mat derivative=arma::conv_to<arma::cx_mat>::from(arma::mat{{-1.,0.},{0.,1.}});
+        std::vector<ResonanceFieldRoot> roots; std::string error;
+        if (!ResonanceFieldRoots::Locate(h0,derivative,.5,1.,1.,roots,error)) return false;
+        return roots.size()==1 && std::abs(roots[0].fieldT-.5)<1e-10;
+    }));
     cases.push_back(test_case("General resonance core normalized Gaussian/Lorentzian FWHM contract",GRC_TestLineshapeContract));
     cases.push_back(test_case("General resonance core field Jacobian and transition detection",GRC_TestFieldJacobianAndDetector));
     cases.push_back(test_case("General resonance core resolves degenerate field slopes",GRC_TestDegenerateFieldJacobian));

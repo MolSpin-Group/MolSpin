@@ -81,7 +81,7 @@ namespace RunSection::General::HS
 	}
 
 	bool HSStatePreparation::BuildInitialDensity(const SpinAPI::system_ptr &system,
-		SpinAPI::SpinSpace &space, arma::cx_mat &density, std::string &error)
+		SpinAPI::SpinSpace &space, arma::cx_mat &density, std::string &error, bool normalizeComponents)
 	{
 		error.clear();
 		density.reset();
@@ -153,7 +153,19 @@ namespace RunSection::General::HS
 				error = "an initial-state component has an invalid trace";
 				return false;
 			}
-			density += weights[index] * component / componentTrace;
+			density += weights[index] * component / (normalizeComponents ? componentTrace : arma::cx_double(1.0));
+		}
+		// Historical resonance weights apply to projectors before normalization;
+		// propagation weights apply to normalized component densities by default.
+		if (!normalizeComponents)
+		{
+			const auto trace=arma::trace(density);
+			if (!density.is_finite() || !std::isfinite(std::abs(trace)) || std::abs(trace)==0.0)
+			{
+				error="the weighted initial density has an invalid trace";
+				return false;
+			}
+			density /= trace;
 		}
 		return true;
 	}
@@ -307,9 +319,6 @@ namespace RunSection::General::HS
 	{
 		state = HSOrientedState();
 		error.clear();
-		const SpinAPI::HilbertStateRotationCache *rotationCache =
-			reference.hasRotationCache ? &reference.rotationCache : nullptr;
-
 		if (reference.stochastic)
 		{
 			state.factors = reference.factors;
@@ -334,6 +343,23 @@ namespace RunSection::General::HS
 			return true;
 		}
 
+		if (!PrepareDensityForOrientation(plan,space,reference,orientation,state.density,error))
+			return false;
+		if (!space.FactorizeDensityMatrix(state.density, state.factors, &error))
+		{
+			error = "failed to factorize the oriented initial density: " + error;
+			return false;
+		}
+		return true;
+	}
+
+	bool HSStatePreparation::PrepareDensityForOrientation(const HSExecutionPlan &plan,
+		SpinAPI::SpinSpace &space,const HSPreparedState &reference,const HSOrientation &orientation,
+		arma::cx_mat &density,std::string &error)
+	{
+		error.clear();
+		const SpinAPI::HilbertStateRotationCache *rotationCache =
+			reference.hasRotationCache ? &reference.rotationCache : nullptr;
 		arma::cx_mat referenceDensity = reference.density;
 		SpinAPI::StateFrame preparationFrame = reference.frame;
 		if (reference.orientationSpecificThermal)
@@ -356,14 +382,9 @@ namespace RunSection::General::HS
 
 		if (!space.PrepareInitialDensityForPowder(referenceDensity, orientation.frameToLab,
 			preparationFrame, reference.dephaseInHamiltonianEigenbasis,
-			reference.dephasingHamiltonian, plan.approximation, rotationCache, state.density))
+			reference.dephasingHamiltonian, plan.approximation, rotationCache, density))
 		{
 			error = "failed to prepare the initial density for the current HS orientation/eigenbasis";
-			return false;
-		}
-		if (!space.FactorizeDensityMatrix(state.density, state.factors, &error))
-		{
-			error = "failed to factorize the oriented initial density: " + error;
 			return false;
 		}
 		return true;

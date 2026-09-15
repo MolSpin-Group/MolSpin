@@ -33,6 +33,8 @@
 #include "SpinSystem.h"
 #include "State.h"
 #include "Interaction.h"
+#include "ResonanceFieldRoots.h"
+#include "ResonancePowderMesh.h"
 
 #ifdef _OPENMP
 #include <omp.h>
@@ -64,6 +66,9 @@ namespace RunSection
 
 		  sweepCacheExact(true),
 		  sweepCacheResfields(false),
+		  sweepCacheRefinedRoots(false),
+		  sweepCachePowderMesh(false),
+		  meshCosPoints(33), meshPhiPoints(64), meshFieldPoints(129), meshFieldScale(0.25),
 
 		  sweepCacheResfieldPoints(0),
 		  detectSpinNames(),
@@ -111,7 +116,7 @@ namespace RunSection
 			this->Log() << "Sweep cache " << (this->useSweepCache ? "enabled" : "disabled");
 			if (this->useSweepCache)
 			{
-				const char *mode = this->sweepCacheExact ? "exact" : (this->sweepCacheResfields ? "resonanceprojection" : "approx");
+				const char *mode = this->sweepCachePowderMesh ? "powdermesh" : (this->sweepCacheRefinedRoots ? "refinedroots" : (this->sweepCacheExact ? "exact" : (this->sweepCacheResfields ? "resonanceprojection" : "approx")));
 				this->Log() << " (mode: " << mode << ")";
 			}
 			this->Log() << "." << std::endl;
@@ -302,6 +307,11 @@ namespace RunSection
 						this->spectrumCache.emplace((*sysIt)->Name(), std::move(cache));
 						cacheIt = this->spectrumCache.find((*sysIt)->Name());
 					}
+				}
+				if ((this->sweepCacheRefinedRoots || this->sweepCachePowderMesh) && cacheIt == this->spectrumCache.end())
+				{
+					this->Log() << "Refined resonance fields could not be constructed; refusing a different broadening method." << std::endl;
+					return false;
 				}
 			}
 			if (this->useSweepCache && cacheIt != this->spectrumCache.end())
@@ -1460,7 +1470,18 @@ namespace RunSection
 			this->Properties()->Get("cache_sweep_mode", sweepCacheMode))
 		{
 			sweepCacheMode = ToLower(sweepCacheMode);
-			if (sweepCacheMode == "exact" || sweepCacheMode == "direct" || sweepCacheMode == "matrix")
+			if (sweepCacheMode == "powdermesh")
+			{
+				this->sweepCacheExact=false;this->sweepCacheResfields=false;
+				this->sweepCacheRefinedRoots=false;this->sweepCachePowderMesh=true;
+			}
+			else if (sweepCacheMode == "refinedroots")
+			{
+				this->sweepCacheExact = false;
+				this->sweepCacheResfields = false;
+				this->sweepCacheRefinedRoots = true;
+			}
+			else if (sweepCacheMode == "exact" || sweepCacheMode == "direct" || sweepCacheMode == "matrix")
 			{
 				this->sweepCacheExact = true;
 				this->sweepCacheResfields = false;
@@ -1483,6 +1504,24 @@ namespace RunSection
 				this->Log() << "Unknown sweepcachemode \"" << sweepCacheMode << "\". Using "
 							<< (this->sweepCacheExact ? "exact" : (this->sweepCacheResfields ? "resonanceprojection" : "approx")) << "." << std::endl;
 			}
+		}
+
+		if (this->sweepCacheRefinedRoots && (!this->useSweepCache ||
+			this->lineshape != "gaussian" || !(this->linewidth_mT > 0.0)))
+		{
+			this->Log() << "sweepcachemode=refinedroots requires sweepcache=true and a positive Gaussian linewidth." << std::endl;
+			return false;
+		}
+		this->Properties()->Get("meshcospoints",this->meshCosPoints);
+		this->Properties()->Get("meshphipoints",this->meshPhiPoints);
+		this->Properties()->Get("meshfieldpoints",this->meshFieldPoints);
+		this->Properties()->Get("meshfieldscale",this->meshFieldScale);
+		if (this->sweepCachePowderMesh && (!this->useSweepCache || this->lineshape!="gaussian" ||
+			!(this->linewidth_mT>0) || this->meshCosPoints<3 || this->meshPhiPoints<4 ||
+			this->meshFieldPoints<3 || !(this->meshFieldScale>=0) || !std::isfinite(this->meshFieldScale)))
+		{
+			this->Log()<<"powdermesh requires a cached positive Gaussian width and valid mesh dimensions/scale."<<std::endl;
+			return false;
 		}
 
 		int resfieldPoints = 0;
@@ -1921,6 +1960,8 @@ namespace RunSection
 
 	bool TaskStaticHSResonanceSpectra::BuildCachedSpectrum(const SpinAPI::system_ptr &_system, const SpinAPI::interaction_ptr &_fieldInteraction, const arma::vec &_field0, const arma::vec &_fieldStep, SpectrumCache &_cache)
 	{
+		if (this->sweepCachePowderMesh)
+			return this->BuildPowderMeshSpectrum(_system,_fieldInteraction,_field0,_fieldStep,_cache);
 		// Cached sweep workflow:
 		// - build the field axis once from the AddVector sweep,
 		// - separate field-dependent Zeeman terms from the static Hamiltonian,
@@ -1965,6 +2006,15 @@ namespace RunSection
 		//   project the orientation mesh continuously onto the output field axis.
 		const double dBstep = (steps > 1) ? (field_T[1] - field_T[0]) : 0.0;
 		const double dBabs = std::abs(dBstep);
+		if (this->sweepCacheRefinedRoots && dBabs == 0.0) return false;
+		if (this->sweepCacheRefinedRoots)
+		{
+			// Norms of a vector sweep that crosses B=0 are not an affine
+			// field axis. Refuse it rather than assigning incorrect roots.
+			for (unsigned i=1;i<steps;++i)
+				if (std::abs(field_T[i]-field_T[i-1]-dBstep)>1e-10*std::max(1.,dBabs))
+					return false;
+		}
 
 		const double omega_mw = 2.0 * arma::datum::pi * this->mwFrequencyGHz;
 
@@ -2338,12 +2388,21 @@ namespace RunSection
 
 				const arma::mat Rpowder = Rot;
 				arma::cx_mat rho_oriented;
+				arma::cx_mat Hthermal_static, Hthermal_dHdB;
 				if (useOrientationThermal)
 				{
-					arma::sp_cx_mat Hthermal_sp;
-					if (!space.BaseHamiltonianRotatedZYZ(thermalhamiltonian_list, Rot, Hthermal_sp) ||
-						!space.ThermalStateFromHamiltonian(arma::cx_mat(Hthermal_sp), thermalTemperature, rho_oriented))
+					// Equilibrium populations follow the sweep field. Preserve the
+					// explicitly selected thermal Hamiltonian, which can differ
+					// from the Hamiltonian used to calculate resonance energies.
+					std::vector<std::string> thermalStaticNames, thermalZeemanNames;
+					for (const auto &name : thermalhamiltonian_list)
+						(isZeemanName(name) ? thermalZeemanNames : thermalStaticNames).push_back(name);
+					arma::sp_cx_mat thermalStatic, thermalZeeman;
+					if (!space.BaseHamiltonianRotatedZYZ(thermalStaticNames, Rot, thermalStatic) ||
+						!space.BaseHamiltonianRotatedZYZ(thermalZeemanNames, Rot, thermalZeeman))
 						continue;
+					Hthermal_static = arma::cx_mat(thermalStatic);
+					Hthermal_dHdB = arma::cx_mat(thermalZeeman) / field_T.front();
 				}
 				else
 				{
@@ -2404,6 +2463,73 @@ namespace RunSection
 				}
 				if (!tensor_dim_ok)
 					continue;
+
+				if (this->sweepCacheRefinedRoots)
+				{
+					// Full electronic diagonalization at true resonance fields.
+					// Keep magnetic moments and line weighting in General Resonance;
+					// the task only accumulates field profiles and powder weights.
+					using namespace General::Resonance;
+					std::vector<ResonanceMagneticMomentTerm> terms;
+					for (const auto &spin : detectSpins)
+					{
+						auto zeeman = FindZeemanForSpin(spin, zeemanInteractions);
+						if (zeeman == nullptr) return false;
+						ResonanceMagneticMomentTerm term;
+						term.spin=spin; term.zeeman=zeeman; terms.push_back(term);
+					}
+					std::vector<ResonanceDetectionOperator> channels;
+					std::string rootError;
+					if (!ResonanceMagneticMomentBuilder::BuildTransverseChannels(
+						space,terms,Rot,this->fullTensorRotation,channels,rootError)) return false;
+					arma::cx_mat mx(spaceDim,spaceDim,arma::fill::zeros), my=mx;
+					for (const auto &channel:channels) { mx+=channel.x; my+=channel.y; }
+					std::vector<ResonanceFieldRoot> roots;
+					const double padding=6e-3*lwB_mT;
+					const double low=std::max(1e-12,std::min(field_T.front(),field_T.back())-padding);
+					const double high=std::max(field_T.front(),field_T.back())+padding;
+					if (!ResonanceFieldRoots::Locate(Hstatic,dHdB,low,high,omega_mw,roots,rootError))
+					{
+						this->Log() << "Refined resonance fields failed: " << rootError << std::endl;
+						return false;
+					}
+					const double centerProfile=this->LineshapeValue(0.,lwB_mT);
+					for (const auto &root:roots)
+					{
+						if (useOrientationThermal && !space.ThermalStateFromHamiltonian(
+							Hthermal_static+root.fieldT*Hthermal_dHdB,thermalTemperature,rho_oriented)) return false;
+						ResonanceLineSet lines;
+						if (!ExactResonanceSolver::Generate(arma::sp_cx_mat(Hstatic+root.fieldT*dHdB),
+							rho_oriented,dHdB_sp,mx,my,resonanceRequest,lines,rootError,channels)) return false;
+						for (const auto &line:lines.lines)
+						{
+							if (line.lower!=root.lower || line.upper!=root.upper) continue;
+							ResonanceLineSet single;
+							single.fieldJacobianQualified=true; single.lines.push_back(line);
+							SpectrumPoint peak;
+							if (!ResonanceSpectrumEvaluator::Evaluate(single,resonanceRequest,peak,rootError)) return false;
+							const int center=static_cast<int>(std::llround((root.fieldT-field_T.front())/dBstep));
+							const int half=static_cast<int>(std::ceil(padding/dBabs))+2;
+							const int first=std::max(0,center-half), last=std::min(static_cast<int>(steps)-1,center+half);
+							for (int j=first;j<=last;++j)
+							{
+								const double weight=w*this->LineshapeValue(1e3*(field_T[j]-root.fieldT),lwB_mT)/centerProfile;
+								_cache.total_x[j]+=weight*peak.totalX; _cache.total_y[j]+=weight*peak.totalY;
+								_cache.total_perp[j]+=weight*peak.totalPerpendicular;
+								_cache.cross_x[j]+=weight*peak.crossX; _cache.cross_y[j]+=weight*peak.crossY;
+								for (size_t k=0;k<spin_count;++k)
+								{
+									_cache.spin_x[k][j]+=weight*peak.channels[k].x;
+									_cache.spin_y[k][j]+=weight*peak.channels[k].y;
+									_cache.spin_perp[k][j]+=weight*peak.channels[k].perpendicular;
+									_cache.spin_p[k][j]+=weight*peak.channels[k].plus;
+									_cache.spin_m[k][j]+=weight*peak.channels[k].minus;
+								}
+							}
+						}
+					}
+					continue;
+				}
 
 				if (useApproxCache || useResfieldsCache)
 				{
@@ -2476,7 +2602,11 @@ namespace RunSection
 								const arma::cx_vec Um = eigvec_use.col(m);
 								const arma::cx_vec Vn = eigvec_use.col(n);
 
-
+								if (useOrientationThermal &&
+									!space.ThermalStateFromHamiltonian(
+										Hthermal_static + Bres * Hthermal_dHdB,
+										thermalTemperature, rho_oriented))
+									continue;
 								const double population = std::real(arma::cdot(Um, rho_oriented * Um)) - std::real(arma::cdot(Vn, rho_oriented * Vn));
 
 								if (std::abs(population) < 1e-15)
@@ -2763,6 +2893,12 @@ namespace RunSection
 						if (!have_eig)
 							continue;
 
+						if (useOrientationThermal &&
+							!space.ThermalStateFromHamiltonian(
+								Hthermal_static + field_T[step] * Hthermal_dHdB,
+								thermalTemperature, rho_oriented))
+							continue;
+
 						General::Resonance::ResonanceLineSet resonanceLines;
 						std::string resonanceError;
 						if (!General::Resonance::ExactResonanceSolver::Generate(
@@ -2874,6 +3010,165 @@ namespace RunSection
 		this->ApplyDetectionHarmonic(_cache);
 
 
+		return true;
+	}
+
+	bool TaskStaticHSResonanceSpectra::BuildPowderMeshSpectrum(
+		const SpinAPI::system_ptr &system,const SpinAPI::interaction_ptr &field,
+		const arma::vec &field0,const arma::vec &fieldStep,SpectrumCache &cache)
+	{
+		using namespace General::Resonance;
+		const unsigned steps=this->RunSettings()->Steps();
+		if (!system || !field || steps<2 || field0.n_elem!=3 || fieldStep.n_elem!=3 ||
+			!(field0(2)>0) || !(fieldStep(2)>0) || std::abs(field0(0))+std::abs(field0(1))+
+			std::abs(fieldStep(0))+std::abs(fieldStep(1))>1e-12 || !this->fullTensorRotation ||
+			!this->powderFullSphere || this->powderGammaPoints!=1 ||
+			system->InitialStateFrame()!=SpinAPI::StateFrame::Eigen || !this->initialStateName.empty())
+		{
+			this->Log()<<"powdermesh currently requires full-sphere/full-tensor, gamma=1, a positive ascending z field and full-Hamiltonian thermal equilibrium."<<std::endl;
+			return false;
+		}
+		auto states=system->InitialState();
+		if(states.size()!=1 || states.front()!=nullptr || !(system->Temperature()>0)) return false;
+		std::vector<std::string> hnames=this->hamiltonianH0list;
+		if(hnames.empty()) for(const auto &interaction:system->Interactions())
+			if(SpinAPI::IsStatic(*interaction)) hnames.push_back(interaction->Name());
+		auto thermal=system->ThermalHamiltonianList();
+		auto ordered=hnames;
+		std::sort(ordered.begin(),ordered.end());std::sort(thermal.begin(),thermal.end());
+		if(ordered!=thermal) {this->Log()<<"powdermesh requires thermalhamiltonian to equal hamiltonianh0list."<<std::endl;return false;}
+		auto zeeman=CollectZeemanInteractions(system,hnames);
+		std::vector<std::string> statics,zeenames;
+		for(const auto &name:hnames)
+		{
+			bool isField=false;for(const auto &z:zeeman) if(z->Name()==name) isField=true;
+			(isField?zeenames:statics).push_back(name);
+		}
+		std::vector<SpinAPI::spin_ptr> spins;std::vector<std::string> names;
+		if(!this->ResolveDetectionSpins(system,field,spins,names) || spins.empty()) return false;
+		std::vector<ResonanceMagneticMomentTerm> terms;
+		for(const auto &spin:spins)
+		{
+			ResonanceMagneticMomentTerm term;term.spin=spin;term.zeeman=FindZeemanForSpin(spin,zeeman);
+			if(!term.zeeman) return false;terms.push_back(term);
+		}
+		SpinAPI::SpinSpace space(*system);space.UseSuperoperatorSpace(false);space.UseFullTensorRotation(true);
+		struct Prepared { arma::cx_mat h0,dhdB,mx,my;arma::sp_cx_mat derivative;std::vector<ResonanceDetectionOperator> channels; };
+		const int nu=this->meshCosPoints,np=this->meshPhiPoints,nf=this->meshFieldPoints;
+		const int count=nu*np;
+		std::vector<Prepared> prepared(count);
+		bool clusterAxes=false;this->Properties()->Get("meshclusteraxes",clusterAxes);
+		if(clusterAxes && ((nu-1)%2!=0 || np%4!=0))
+		{this->Log()<<"Axis-clustered mesh requires odd meshcospoints and meshphipoints divisible by four."<<std::endl;return false;}
+		std::vector<double> u(nu),azimuth(np+1);
+		auto angle=[&](int index,int intervals,int quadrants) {
+			if(!clusterAxes) return quadrants*arma::datum::pi*.5*index/intervals;
+			int perQuadrant=intervals/quadrants,sector=std::min(index/perQuadrant,quadrants-1);
+			double t=double(index-sector*perQuadrant)/perQuadrant;
+			return arma::datum::pi*.5*(sector+.5*(1-std::cos(arma::datum::pi*t)));
+		};
+		for(int i=0;i<nu;++i) u[i]=-std::cos(angle(i,nu-1,2));
+		for(int j=0;j<=np;++j) azimuth[j]=angle(j,np,4);
+		for(int i=0;i<nu;++i) for(int j=0;j<np;++j)
+		{
+			double theta=std::acos(std::clamp(u[i],-1.,1.)),phi=azimuth[j],gamma=0.;arma::mat rotation;
+			this->CreatePassiveZYZRotationMatrix(phi,theta,gamma,rotation);
+			auto &p=prepared[i*np+j];arma::sp_cx_mat hs,hz;std::string error;
+			if(statics.empty()) hs=arma::sp_cx_mat(space.HilbertSpaceDimensions(),space.HilbertSpaceDimensions());
+			else if(!space.BaseHamiltonianRotatedZYZ(statics,rotation,hs)) return false;
+			if(!space.BaseHamiltonianRotatedZYZ(zeenames,rotation,hz) ||
+				!ResonanceMagneticMomentBuilder::BuildTransverseChannels(space,terms,rotation,true,p.channels,error)) return false;
+			p.h0=arma::cx_mat(hs);p.derivative=hz/field0(2);p.dhdB=arma::cx_mat(p.derivative);
+			p.mx=arma::zeros<arma::cx_mat>(p.h0.n_rows,p.h0.n_cols);p.my=p.mx;
+			for(const auto &channel:p.channels) {p.mx+=channel.x;p.my+=channel.y;}
+		}
+		const double db=fieldStep(2),width=this->linewidth_mT;
+		// Preserve enough source range for later linewidth checks up to 2*width.
+		const int padding=static_cast<int>(std::ceil(12e-3*width/db))+2;
+		const double first=field0(2)-padding*db;
+		const int bins=steps+2*padding;
+		const double blo=std::max(1e-9,first-.5*db),bhi=first+(bins-.5)*db;
+		std::vector<double> meshFields(nf);
+		for(int i=0;i<nf;++i)
+		{
+			double t=double(i)/(nf-1),scale=this->meshFieldScale;
+			meshFields[i]=scale>0?scale*std::sinh((1-t)*std::asinh(blo/scale)+t*std::asinh(bhi/scale)):(1-t)*blo+t*bhi;
+		}
+		const size_t channels=5+5*spins.size();
+		std::vector<std::vector<double>> mass(channels,std::vector<double>(bins,0.));
+		ResonancePowderMesh mesh(first,db,mass);
+		std::vector<ResonanceMeshNode> previous(count),current(count);
+		this->Log()<<"Powder resonance surface mesh: "<<nu<<" x "<<np<<" orientations, "<<nf<<" field planes; exact full thermal Hamiltonian."<<std::endl;
+		for(int f=0;f<nf;++f)
+		{
+			std::vector<int> success(count,1);
+			#pragma omp parallel for schedule(static)
+			for(int v=0;v<count;++v)
+			{
+				const auto &p=prepared[v];auto &node=current[v];ResonanceLineSet lines;std::string error;
+				if(!ExactResonanceSolver::GenerateFrequencyThermal(p.h0+meshFields[f]*p.dhdB,system->Temperature(),
+					p.derivative,p.mx,p.my,lines,error,p.channels)) {success[v]=0;continue;}
+				node.omega.resize(lines.lines.size());node.strength.resize(lines.lines.size());
+				for(size_t l=0;l<lines.lines.size();++l)
+				{
+					const auto &line=lines.lines[l];const auto &m=line.moment;
+					node.omega[l]=line.omega;auto &w=node.strength[l];w.resize(channels);
+					w[0]=m.x;w[1]=m.y;w[2]=m.perpendicular;w[3]=m.crossX;w[4]=m.crossY;
+					for(size_t k=0;k<spins.size();++k)
+					{
+						const auto &s=m.channels[k];size_t o=5+5*k;
+						w[o]=s.x;w[o+1]=s.y;w[o+2]=s.perpendicular;w[o+3]=s.plus;w[o+4]=s.minus;
+					}
+					for(auto &value:w) value*=line.populationDifference;
+				}
+			}
+			if(std::find(success.begin(),success.end(),0)!=success.end())
+			{this->Log()<<"Exact frequency-surface preparation failed."<<std::endl;return false;}
+			if(f>0) for(int i=0;i<nu-1;++i) for(int j=0;j<np;++j)
+			{
+				int next=(j+1)%np;
+				std::array<const ResonanceMeshNode*,8> cell={&previous[i*np+j],&previous[(i+1)*np+j],
+					&previous[i*np+next],&previous[(i+1)*np+next],&current[i*np+j],&current[(i+1)*np+j],
+					&current[i*np+next],&current[(i+1)*np+next]};
+				mesh.AddCell(cell,meshFields[f-1],meshFields[f],u[i+1]-u[i],azimuth[j+1]-azimuth[j],2*arma::datum::pi*this->mwFrequencyGHz);
+			}
+			previous.swap(current);
+			if(f%std::max(1,nf/10)==0) this->Log()<<"Powder mesh field plane "<<f+1<<"/"<<nf<<std::endl;
+		}
+		cache.steps=steps;cache.spin_names=names;cache.field_mT.resize(steps);
+		for(unsigned i=0;i<steps;++i) cache.field_mT[i]=1000*(field0(2)+i*db);
+		std::string rawFile;
+		if(this->Properties()->Get("meshrawfile",rawFile) && !rawFile.empty())
+		{
+			std::ofstream raw(rawFile);
+			if(!raw) {this->Log()<<"Could not write powder-mesh bin masses."<<std::endl;return false;}
+			raw<<"field_mT,integrated_transverse_line_weight\n"<<std::setprecision(17);
+			for(int i=0;i<bins;++i) raw<<1000*(first+i*db)<<","<<mass[2][i]<<"\n";
+		}
+		// Zero-padded FFT implements the same normalized field Gaussian as the
+		// root route; bin masses already include the frequency delta integral.
+		size_t fftSize=1;while(fftSize<static_cast<size_t>(bins+2*padding)) fftSize*=2;
+		arma::vec kernel(fftSize,arma::fill::zeros);
+		for(int k=-padding;k<=padding;++k) kernel[(k+fftSize)%fftSize]=this->LineshapeValue(1000*k*db,width);
+		const arma::cx_vec kernelFFT=arma::fft(kernel);
+		auto broaden=[&](size_t channel,std::vector<double> &out) {
+			arma::vec source(fftSize,arma::fill::zeros);
+			for(int j=0;j<bins;++j) source[j]=mass[channel][j];
+			arma::vec broadened=arma::real(arma::ifft(arma::fft(source)%kernelFFT));
+			out.resize(steps);
+			for(unsigned j=0;j<steps;++j) out[j]=broadened[j+padding];
+		};
+		broaden(0,cache.total_x);broaden(1,cache.total_y);broaden(2,cache.total_perp);
+		broaden(3,cache.cross_x);broaden(4,cache.cross_y);
+		cache.spin_x.resize(spins.size());cache.spin_y.resize(spins.size());cache.spin_perp.resize(spins.size());
+		cache.spin_p.resize(spins.size());cache.spin_m.resize(spins.size());
+		for(size_t k=0;k<spins.size();++k)
+		{
+			broaden(5+5*k,cache.spin_x[k]);broaden(6+5*k,cache.spin_y[k]);broaden(7+5*k,cache.spin_perp[k]);
+			broaden(8+5*k,cache.spin_p[k]);broaden(9+5*k,cache.spin_m[k]);
+		}
+		for(double value:cache.total_perp) if(!std::isfinite(value)) return false;
+		this->ApplyDetectionHarmonic(cache);
 		return true;
 	}
 

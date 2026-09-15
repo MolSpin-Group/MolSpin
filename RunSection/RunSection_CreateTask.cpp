@@ -57,6 +57,7 @@
 #include "TaskStaticHSDirectSpectra.h"
 #include "TaskStaticHSResonanceSpectra.h"
 #include "General/HS/TaskHSGeneral.h"
+#include "General/Resonance/TaskResonanceGeneral.h"
 #include "General/SS/TaskSSGeneral.h"
 #include "General/MultiSS/TaskMultiSSGeneral.h"
 // #include "TaskDynamicHSDirectSpectra.h"
@@ -107,6 +108,11 @@ namespace RunSection
 		{
 			return std::make_shared<General::MultiSS::TaskMultiSSGeneral>(_obj, *this);
 		}
+
+        // Modular field-swept resonance spectroscopy, independent of propagation.
+        if (_tasktype == "ResonanceGeneral" || _tasktype == "resonancegeneral" ||
+            _tasktype == "resonance-general" || _tasktype == "Resonance-General")
+            return std::make_shared<General::Resonance::TaskResonanceGeneral>(_obj,*this);
 
 		// Create a task of the proper type
 		if (_tasktype.compare("staticss") == 0 || _tasktype.compare("staticivp") == 0)

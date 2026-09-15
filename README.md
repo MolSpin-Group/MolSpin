@@ -46,6 +46,11 @@ The repository-wide migration policy is documented in
 `docs/GENERAL_TASK_ARCHITECTURE.md`; the maintained HSGeneral physics, input and
 validation contract is documented in `docs/HS_GENERAL.md`.
 
+Static resonance development belongs in `RunSection/General/Resonance/` and is
+exposed through `ResonanceGeneral`. Existing resonance inputs can select it by
+changing only the task type; `statichs-resonance-spectra` remains callable. See
+[the input and architecture guide](docs/RESONANCE_GENERAL.md).
+
 Join the Discord server:
 
 https://discord.gg/KXNKPBgchM

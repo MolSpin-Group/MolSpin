@@ -17,6 +17,7 @@
 # Ignore user-specific settings
 CMakeLists.txt.user
 build
+/build-release/
 .idea
 .vscode
 *.Identifier

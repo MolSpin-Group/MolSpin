@@ -60,6 +60,11 @@ namespace RunSection::General::HS
 	public:
 		static bool ValidateTraceSampling(const SpinAPI::system_ptr &_system, std::string &_error);
 		static bool BuildInitialDensity(const SpinAPI::system_ptr &_system, SpinAPI::SpinSpace &_space,
+			arma::cx_mat &_density, std::string &_error, bool _normalizeComponents = true);
+		// Density-only preparation is shared by propagation and resonance; callers
+		// that only need populations avoid an unnecessary density factorization.
+		static bool PrepareDensityForOrientation(const HSExecutionPlan &_plan, SpinAPI::SpinSpace &_space,
+			const HSPreparedState &_reference, const HSOrientation &_orientation,
 			arma::cx_mat &_density, std::string &_error);
 		static bool Prepare(const HSExecutionPlan &_plan, const SpinAPI::system_ptr &_system,
 			SpinAPI::SpinSpace &_space, HSPreparedState &_state,

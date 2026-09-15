@@ -44,6 +44,7 @@ using test_case = std::pair<std::string, test_ptr>; // Function pointer and name
 #include "tests_GeneralPhysicsEquivalence.cpp"
 #include "tests_GeneralSpectroscopyQualification.cpp"
 #include "tests_GeneralResonanceCore.cpp"
+#include "tests_ResonanceGeneral.cpp"
 #include "tests_utility.cpp"
 //////////////////////////////////////////////////////////////////////////////
 // CMake and the normal Makefile target run the complete suite. Developers can
@@ -195,6 +196,7 @@ int main(int argc, char **argv)
 #if GENERALSPECTROSCOPY_TEST == 1
 	AddGeneralSpectroscopyQualificationTests(cases);
 	AddGeneralResonanceCoreTests(cases);
+	AddResonanceGeneralTests(cases);
 #endif
 #if UTIL_TEST == 1 
 	AddUtiltiyTests(cases);

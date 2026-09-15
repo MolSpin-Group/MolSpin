@@ -58,7 +58,8 @@ namespace
 		return spinsys;
 	}
 
-	std::shared_ptr<SpinAPI::SpinSystem> BuildComplexTripletSystem(double eValue = 304.2)
+	std::shared_ptr<SpinAPI::SpinSystem> BuildComplexTripletSystem(double eValue = 304.2,
+		const std::string &thermalHamiltonian = "")
 	{
 		auto spin = std::make_shared<SpinAPI::Spin>(
 			"E", "type=electron;spin=1;tensor=isotropic(1.996);");
@@ -86,8 +87,11 @@ namespace
 		ty->ParseFromSystem(*spinsys);
 		tz->ParseFromSystem(*spinsys);
 
+		const std::string stateProperties = thermalHamiltonian.empty()
+			? "initialstate=Tx,Ty,Tz;weights=0,0.47,0.53;frame=molecular;"
+			: "initialstate=Thermal;frame=eigen;temperature=2.0;thermalhamiltonian=" + thermalHamiltonian + ";";
 		auto props = std::make_shared<MSDParser::ObjectParser>(
-			"spinsyssettings", "initialstate=Tx,Ty,Tz;weights=0,0.47,0.53;frame=molecular;");
+			"spinsyssettings", stateProperties);
 		spinsys->SetProperties(props);
 		return spinsys;
 	}
@@ -173,12 +177,13 @@ namespace
 	}
 
 	bool RunComplexTripletSweep(bool useCache, const std::string &cacheMode, bool useMzBlocks,
-								std::vector<double> &out, double eValue = 304.2, int powderPoints = 32)
+								std::vector<double> &out, double eValue = 304.2, int powderPoints = 32,
+								const std::string &thermalHamiltonian = "")
 	{
 		RunSection::RunSection rs;
-		rs.Add(BuildComplexTripletSystem(eValue));
+		rs.Add(BuildComplexTripletSystem(eValue, thermalHamiltonian));
 
-		MSDParser::ObjectParser settingsParser("general", "steps=181;");
+		MSDParser::ObjectParser settingsParser("general", "steps=181;outputprecision=17;");
 		rs.Add(MSDParser::ObjectType::Settings, settingsParser);
 
 		MSDParser::ObjectParser taskParser(
@@ -1464,6 +1469,34 @@ void AddTaskStaticHSResonanceSpectraTests(std::vector<test_case> &cases)
 		if (normalizedRms >= 1e-10)
 			std::cerr << "Exact cached/uncached normalized RMS mismatch: " << normalizedRms << std::endl;
 		return normalizedRms < 1e-10;
+	}));
+
+	cases.push_back(test_case("Resonance spectra thermal exact cache follows sweep field", []() {
+		// Equilibrium populations must follow B, including when the explicitly
+		// selected thermal Hamiltonian is a subset of the resonance Hamiltonian.
+		for (const std::string thermal : {"D,Z", "Z", "D"})
+		{
+			std::vector<double> cached, uncached;
+			if (!RunComplexTripletSweep(true, "exact", false, cached, 304.2, 12, thermal) ||
+				!RunComplexTripletSweep(false, "exact", false, uncached, 304.2, 12, thermal) ||
+				cached.size() != uncached.size())
+				return false;
+			long double residual = 0.0L, reference = 0.0L;
+			for (size_t i = 0; i < cached.size(); ++i)
+			{
+				const long double difference = cached[i] - uncached[i];
+				residual += difference * difference;
+				reference += static_cast<long double>(uncached[i]) * uncached[i];
+			}
+			const double relativeL2 = std::sqrt(residual / reference);
+			if (!(reference > 0.0L) || !std::isfinite(relativeL2) || relativeL2 >= 1e-10)
+			{
+				std::cerr << "Thermal exact cache mismatch for " << thermal
+					<< ": relative L2=" << relativeL2 << std::endl;
+				return false;
+			}
+		}
+		return true;
 	}));
 
 	cases.push_back(test_case("Resonance spectra canonical uncached Mz block equivalence", []() {

@@ -96,6 +96,10 @@ namespace RunSection
 		bool useSweepCache;
 		bool sweepCacheExact;
 		bool sweepCacheResfields;
+		bool sweepCacheRefinedRoots;
+		bool sweepCachePowderMesh;
+		int meshCosPoints, meshPhiPoints, meshFieldPoints;
+		double meshFieldScale;
 		int sweepCacheResfieldPoints;
 		std::vector<std::string> detectSpinNames;
 		std::string fieldInteractionName;
@@ -144,6 +148,7 @@ namespace RunSection
 		void WriteHeader(std::ostream &_stream);
 		bool GetLinearFieldSweep(const SpinAPI::system_ptr &_system, const SpinAPI::interaction_ptr &_fieldInteraction, arma::vec &_field0, arma::vec &_fieldStep) const;
 		bool BuildCachedSpectrum(const SpinAPI::system_ptr &_system, const SpinAPI::interaction_ptr &_fieldInteraction, const arma::vec &_field0, const arma::vec &_fieldStep, SpectrumCache &_cache);
+		bool BuildPowderMeshSpectrum(const SpinAPI::system_ptr &_system, const SpinAPI::interaction_ptr &_fieldInteraction, const arma::vec &_field0, const arma::vec &_fieldStep, SpectrumCache &_cache);
 
 		std::vector<double> ApplyFieldHarmonic(const std::vector<double> &_field_mT, const std::vector<double> &_channel) const;
 		void ApplyDetectionHarmonic(SpectrumCache &_cache) const;

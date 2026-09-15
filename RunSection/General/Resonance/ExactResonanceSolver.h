@@ -118,7 +118,8 @@ namespace RunSection::General::Resonance
             const SpectrumRequest &request,
             ResonanceLineSet &lineSet,
             std::string &error,
-            const std::vector<ResonanceDetectionOperator> &detectionChannels)
+            const std::vector<ResonanceDetectionOperator> &detectionChannels,
+            bool fieldDomain = true)
         {
             arma::vec dEdB;
             if (!ResonanceFieldJacobian::ResolveDegenerateSubspaces(
@@ -137,13 +138,30 @@ namespace RunSection::General::Resonance
             }
 
             std::vector<Transition> transitions;
-            if (!ResonanceTransitionDetector::Detect(
+            if (fieldDomain && !ResonanceTransitionDetector::Detect(
                     energies,populations,dEdB,0.0,
                     transitions,error,
                     request.populationThreshold,
                     request.minimumSlope,
                     request.maximumDBdOmega))
                 return false;
+
+            if (!fieldDomain)
+            {
+                // A frequency resonance surface can have zero field slope.
+                // Retain every ordered pair; the powder mesh supplies the
+                // multidimensional delta-function Jacobian without 1/domega/dB.
+                for (arma::uword lower=0;lower<energies.n_elem;++lower)
+                    for (arma::uword upper=lower+1;upper<energies.n_elem;++upper)
+                    {
+                        Transition t;
+                        t.lower=lower;t.upper=upper;
+                        t.omega=energies(upper)-energies(lower);
+                        t.populationDifference=populations(lower)-populations(upper);
+                        t.dOmegaDB=std::abs(dEdB(upper)-dEdB(lower));
+                        transitions.push_back(t);
+                    }
+            }
 
             arma::cx_mat muXEigen,muYEigen;
             if (!ResonanceTransitionMoments::Transform(
@@ -196,6 +214,51 @@ namespace RunSection::General::Resonance
         }
 
     public:
+        static bool GenerateFrequencyThermal(
+            const arma::cx_mat &hamiltonian,double temperature,
+            const arma::sp_cx_mat &dHdB,const arma::cx_mat &muX,const arma::cx_mat &muY,
+            ResonanceLineSet &lineSet,std::string &error,
+            const std::vector<ResonanceDetectionOperator> &detectionChannels = {})
+        {
+            error.clear();lineSet.lines.clear();lineSet.fieldJacobianQualified=false;
+            if (!(temperature>0) || !std::isfinite(temperature) || hamiltonian.n_rows==0 ||
+                hamiltonian.n_rows!=hamiltonian.n_cols || !hamiltonian.is_finite())
+            {error="invalid thermal frequency-surface request";return false;}
+            arma::vec energies;arma::cx_mat eigenvectors;
+            if (!arma::eig_sym(energies,eigenvectors,hamiltonian))
+            {error="failed to diagonalize thermal frequency surface";return false;}
+            const double beta=6.582119569e-16*1e9/(8.617333262e-5*temperature);
+            arma::vec populations=arma::exp(-beta*(energies-energies.min()));
+            populations/=arma::accu(populations);
+            const arma::cx_mat density=eigenvectors*arma::diagmat(populations)*eigenvectors.t();
+            if (!ValidateOperators(hamiltonian.n_rows,density,dHdB,muX,muY,detectionChannels,error)) return false;
+            SpectrumRequest request;
+            return GenerateFromValidatedEigensystem(energies,eigenvectors,density,dHdB,
+                muX,muY,request,lineSet,error,detectionChannels,false);
+        }
+
+        static bool GenerateFrequency(
+            const arma::cx_mat &hamiltonian,const arma::cx_mat &density,
+            const arma::sp_cx_mat &dHdB,const arma::cx_mat &muX,const arma::cx_mat &muY,
+            ResonanceLineSet &lineSet,std::string &error,
+            const std::vector<ResonanceDetectionOperator> &detectionChannels = {})
+        {
+            error.clear();lineSet.lines.clear();lineSet.fieldJacobianQualified=false;
+            const auto dim=hamiltonian.n_rows;
+            if (dim==0 || hamiltonian.n_cols!=dim || !hamiltonian.is_finite() ||
+                !ValidateOperators(dim,density,dHdB,muX,muY,detectionChannels,error))
+            {
+                if (error.empty()) error="invalid frequency-surface Hamiltonian";
+                return false;
+            }
+            arma::vec energies;arma::cx_mat eigenvectors;
+            if (!arma::eig_sym(energies,eigenvectors,hamiltonian))
+            { error="failed to diagonalize frequency-surface Hamiltonian";return false; }
+            SpectrumRequest request;
+            return GenerateFromValidatedEigensystem(energies,eigenvectors,density,dHdB,
+                muX,muY,request,lineSet,error,detectionChannels,false);
+        }
+
         static bool Generate(
             const arma::sp_cx_mat &hamiltonian,
             const arma::cx_mat &density,

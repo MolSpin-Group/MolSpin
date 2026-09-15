@@ -107,6 +107,18 @@ set(SOURCES_RUNSECTION
         ${PATH_SOURCE_RUNSECTION}/General/Resonance/ResonanceTransitionMoments.cpp
         ${PATH_SOURCE_RUNSECTION}/General/Resonance/GeneralResonanceHamiltonian.cpp
         ${PATH_SOURCE_RUNSECTION}/General/Resonance/ResonanceSpectrumEvaluator.cpp
+        ${PATH_SOURCE_RUNSECTION}/General/Resonance/ResonanceDiagnostics.cpp
+        ${PATH_SOURCE_RUNSECTION}/General/Resonance/ResonanceExecutionPlan.cpp
+        ${PATH_SOURCE_RUNSECTION}/General/Resonance/ResonanceSpectrumProcessing.cpp
+        ${PATH_SOURCE_RUNSECTION}/General/Resonance/ResonanceDiagonalization.cpp
+        ${PATH_SOURCE_RUNSECTION}/General/Resonance/ResonanceSystemPreparation.cpp
+        ${PATH_SOURCE_RUNSECTION}/General/Resonance/ResonanceOrientationSampler.cpp
+        ${PATH_SOURCE_RUNSECTION}/General/Resonance/ResonanceFieldSweep.cpp
+        ${PATH_SOURCE_RUNSECTION}/General/Resonance/ResonanceExactCalculation.cpp
+        ${PATH_SOURCE_RUNSECTION}/General/Resonance/ResonanceExactSweep.cpp
+        ${PATH_SOURCE_RUNSECTION}/General/Resonance/ResonanceHybridCalculation.cpp
+        ${PATH_SOURCE_RUNSECTION}/General/Resonance/ResonanceMeshCalculation.cpp
+        ${PATH_SOURCE_RUNSECTION}/General/Resonance/TaskResonanceGeneral.cpp
         ${PATH_SOURCE_RUNSECTION}/General/HS/HSExecutionPlan.cpp
         ${PATH_SOURCE_RUNSECTION}/General/HS/HSStatePreparation.cpp
         ${PATH_SOURCE_RUNSECTION}/General/HS/HSOrientationSampler.cpp
