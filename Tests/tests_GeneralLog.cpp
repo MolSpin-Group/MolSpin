@@ -24,6 +24,10 @@ bool test_general_log_system_inventory_contains_dimensions_and_initial_state()
     auto up=std::make_shared<SpinAPI::State>("Up","spin(E)=|1/2>;");
     auto system=std::make_shared<SpinAPI::SpinSystem>("System");
     system->Add(spin); system->Add(up);
+    auto field=std::make_shared<SpinAPI::Interaction>("B0",
+        "type=zeeman;spins=E;field=0 0 7;prefactor=0.001;commonprefactor=true;");
+    system->Add(field);
+    if(!system->ValidateInteractions().empty()) return false;
     if(!up->ParseFromSystem(*system)) return false;
     system->SetProperties(std::make_shared<MSDParser::ObjectParser>("properties","initialstate=Up;"));
     std::ostringstream log;
@@ -31,7 +35,11 @@ bool test_general_log_system_inventory_contains_dimensions_and_initial_state()
     const std::string text=log.str();
     return text.find("Hilbert dimension=2")!=std::string::npos &&
         text.find("Liouville dimension=4")!=std::string::npos &&
-        text.find("1*Up")!=std::string::npos;
+        text.find("1*Up")!=std::string::npos &&
+        text.find("field(input)=[0,0,7]")!=std::string::npos &&
+        text.find("prefactor=0.001, commonprefactor=true")!=std::string::npos &&
+        text.find("prefactor*field(T)=[0,0,0.007]")!=std::string::npos &&
+        text.find("field(T)=[0,0,7]")==std::string::npos;
 }
 
 void AddGeneralLogTests(std::vector<test_case> &cases)

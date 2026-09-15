@@ -2041,6 +2041,48 @@ bool test_spinapi_strain_component_mapping()
 }
 //////////////////////////////////////////////////////////////////////////////
 
+bool test_spinapi_zeeman_field_prefactor_units_are_equivalent()
+{
+    auto spin=std::make_shared<SpinAPI::Spin>("E",
+        "type=electron;spin=1/2;tensor=isotropic(2);");
+    auto millitesla=std::make_shared<SpinAPI::Interaction>("mT",
+        "type=zeeman;spins=E;field=0 0 7;prefactor=0.001;commonprefactor=true;");
+    auto tesla=std::make_shared<SpinAPI::Interaction>("T",
+        "type=zeeman;spins=E;field=0 0 0.007;prefactor=1;commonprefactor=true;");
+    SpinAPI::SpinSystem system("System");
+    system.Add(spin);system.Add(millitesla);system.Add(tesla);
+    if(!system.ValidateInteractions().empty()) return false;
+    SpinAPI::SpinSpace space(system);
+    arma::cx_mat a,b;arma::sp_cx_mat sa,sb;
+    // Both matrix representations and both Hilbert/Liouville forms must
+    // apply the interaction prefactor once, independently of the log.
+    for(bool superspace : {false,true})
+    {
+        space.UseSuperoperatorSpace(superspace);
+        if(!space.InteractionOperator(millitesla,a)||!space.InteractionOperator(tesla,b)||
+           !space.InteractionOperator(millitesla,sa)||!space.InteractionOperator(tesla,sb)) return false;
+        if(arma::norm(a-b,"fro")>1e-13 || arma::norm(a-arma::cx_mat(sa),"fro")>1e-13 ||
+           arma::norm(b-arma::cx_mat(sb),"fro")>1e-13) return false;
+        if(!superspace)
+        {
+            arma::vec energies;
+            if(!arma::eig_sym(energies,a)) return false;
+            const double expectedGap=87.9410005*2.0*0.007;
+            if(std::abs(energies(1)-energies(0)-expectedGap)>1e-13) return false;
+        }
+    }
+    space.UseSuperoperatorSpace(false);
+    arma::mat rotation;
+    SpinAPI::CreateZYZRotationMatrix(0.37,0.82,-0.21,rotation);
+    if(!space.InteractionOperatorRotatedZYZ(millitesla,rotation,sa)||
+       !space.InteractionOperatorRotatedZYZ(tesla,rotation,sb)||
+       arma::norm(sa-sb,"fro")>1e-13) return false;
+    if(!space.InteractionOperatorRotated_SA(millitesla,rotation,sa)||
+       !space.InteractionOperatorRotated_SA(tesla,rotation,sb)||
+       arma::norm(sa-sb,"fro")>1e-13) return false;
+    return true;
+}
+
 bool test_spinapi_zeeman_orientation_rotates_gtensor()
 {
 	auto spin = std::make_shared<SpinAPI::Spin>("E", "type=electron;spin=1/2;tensor=matrix(1 0 0; 0 2 0; 0 0 3);");
@@ -3662,6 +3704,7 @@ void AddSpinAPITests(std::vector<test_case> &_cases)
 	_cases.push_back(test_case("SpinAPI::PowderGrid SOPHE and projection helpers", test_spinapi_powder_grid_sophe_projection_helpers));
 	_cases.push_back(test_case("SpinSpace::Powder Hamiltonian helper matches explicit builders", test_spinapi_powder_hamiltonian_helper_matches_explicit_builders));
 	_cases.push_back(test_case("SpinSpace::Zeeman orientation rotates g-tensor", test_spinapi_zeeman_orientation_rotates_gtensor));
+    _cases.push_back(test_case("SpinSpace::Zeeman field-prefactor unit equivalence", test_spinapi_zeeman_field_prefactor_units_are_equivalent));
 	_cases.push_back(test_case("SpinSpace::Rotated Zeeman Hamiltonian follows powder orientation", test_spinapi_rotated_zeeman_hamiltonian_follows_powder_orientation));
 	_cases.push_back(test_case("SpinSpace::ZFS formalism and orientation", test_spinapi_zfs_formalism_and_orientation));
 	_cases.push_back(test_case("SpinSpace::Rotated quadratic spin identity powder", test_spinapi_rotated_quadraticspin_matches_plain_for_identity_powder));

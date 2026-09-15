@@ -196,7 +196,18 @@ namespace RunSection::General::Log
                 log << std::endl;
                 log << "    field treatment=" << FieldTypeName(interaction->FieldType());
                 const arma::vec field = interaction->Field();
-                if (field.n_elem >= 3) log << ", field(T)=" << Vector3(field);
+                // Field() is the input vector; Prefactor() is applied later by
+                // SpinSpace. Calling the raw vector a field in tesla is
+                // misleading when, for example, prefactor=0.001 converts mT.
+                if (field.n_elem >= 3) log << ", field(input)=" << Vector3(field);
+                log << ", prefactor=" << std::setprecision(10) << interaction->Prefactor()
+                    << ", commonprefactor=" << (interaction->AddCommonPrefactor() ? "true" : "false");
+                if (interaction->Type() == SpinAPI::InteractionType::SingleSpin &&
+                    interaction->AddCommonPrefactor() && field.n_elem >= 3)
+                {
+                    const arma::vec scaledField = interaction->Prefactor() * field;
+                    log << ", prefactor*field(T)=" << Vector3(scaledField) << " (before tensor factors)";
+                }
                 if (interaction->HasTimeDependence())
                     log << ", time-dependent=yes";
                 log << std::endl;
