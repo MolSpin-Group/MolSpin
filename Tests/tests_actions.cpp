@@ -16,6 +16,7 @@
 #include "ActionRotateVector.h"
 #include "ActionLogSpace.h"
 #include "Interaction.h"
+#include "Operator.h"
 #include "Pulse.h"
 #include "PulseSequence.h"
 #include "RunSection.h"
@@ -1218,9 +1219,93 @@ bool test_action_multiss_profile_rate_target_permissions()
         check("rateprofile=instantaneous;eventtime=1;transferfraction=0.5;", true);
 }
 
+bool test_actiontargets_writable_functions_and_readonly_getters()
+{
+    double x=2.0,y=3.0;int calls=0;
+    auto check=+[](const double &v) { return std::isfinite(v)&&v>=0; };
+    RunSection::ActionScalar target([&]() { return x; },
+        [&](const double &v) { ++calls; if(v>10) return false; x=y=v;return true; },
+        check,[&]() { x=2.0;y=3.0; });
+    if(target.IsReadonly()||!target.IsFunctional()||!target.HasCheck()) return false;
+    auto copy=target;
+    double dummy=0;RunSection::ActionScalar assigned(dummy,nullptr);
+    assigned=copy;
+    if(!assigned.Set(4)||x!=4||y!=4) return false;
+    if(assigned.Set(-1)||calls!=1||x!=4||y!=4) return false;
+    if(assigned.Set(11)||calls!=2||x!=4||y!=4) return false;
+    assigned.Reset();if(x!=2||y!=3) return false;
+    RunSection::ActionScalar getter([&]() { return x; });
+    if(!getter.IsReadonly()||!getter.IsFunctional()||getter.Set(9)) return false;
+    x=7;getter.Reset();if(x!=7||getter.Get()!=7) return false;
+    assigned=getter;
+    if(!assigned.IsReadonly()||assigned.Set(8)) return false;
+    assigned.Reset();if(x!=7) return false;
+    // Single-value functional targets may use the default scalar reset.
+    RunSection::ActionScalar scalar([&]() { return x; },
+        [&](const double &v) { x=v;return true; },check);
+    if(!scalar.Set(9)) return false;
+    scalar.Reset();return x==7;
+}
+
+bool test_action_operator_shared_rate_updates_and_resets_all_components()
+{
+    auto system=std::make_shared<SpinAPI::SpinSystem>("test");
+    system->Add(std::make_shared<SpinAPI::Spin>("E","type=electron;spin=1/2;"));
+    auto op=std::make_shared<SpinAPI::Operator>("relax",
+        "type=relaxationrandomfields;spins=E;rate1=0.1;rate2=0.2;rate3=0.3;");
+    system->Add(op);
+    if(!system->ValidateOperators({system}).empty()) return false;
+    std::map<std::string,RunSection::ActionScalar> scalars;
+    std::map<std::string,RunSection::ActionVector> vectors;
+    system->GetActionTargets(scalars,vectors);
+    MSDParser::ObjectParser parser("scan","scalar=test.relax.rate;value=0.4;first=2;last=2;loop=true;");
+    RunSection::ActionAddScalar scan(parser,scalars,vectors);
+    if(!scan.Validate()) return false;
+    scan.Step(2);
+    if(!equal_double(op->Rate1(),.5)||!equal_double(op->Rate2(),.5)||!equal_double(op->Rate3(),.5)) return false;
+    if(!scalars.at("test.relax.rate2").Set(.7)) return false;
+    if(!equal_double(op->Rate1(),.5)||!equal_double(op->Rate2(),.7)||!equal_double(op->Rate3(),.5)) return false;
+    scan.Step(3); // A looping action resets after its last step.
+    return equal_double(op->Rate1(),.1)&&equal_double(op->Rate2(),.2)&&equal_double(op->Rate3(),.3);
+}
+
+bool test_action_operator_rates_reject_invalid_values_without_mutation()
+{
+    auto system=std::make_shared<SpinAPI::SpinSystem>("test");
+    system->Add(std::make_shared<SpinAPI::Spin>("E","type=electron;spin=1/2;"));
+    auto op=std::make_shared<SpinAPI::Operator>("relax",
+        "type=relaxationrandomfields;spins=E;rate=0.1;");
+    system->Add(op);
+    if(!system->ValidateOperators({system}).empty()) return false;
+    std::map<std::string,RunSection::ActionScalar> scalars;
+    std::map<std::string,RunSection::ActionVector> vectors;
+    system->GetActionTargets(scalars,vectors);
+    for(const auto &suffix : {"rate","rate1","rate2","rate3"})
+    {
+        auto &target=scalars.at(std::string("test.relax.")+suffix);
+        if(!target.HasCheck()||target.IsReadonly()) return false;
+        for(double bad : {-1.0,std::numeric_limits<double>::quiet_NaN(),
+                          std::numeric_limits<double>::infinity(),-std::numeric_limits<double>::infinity()})
+        {
+            if(target.Set(bad)) return false;
+            if(!equal_double(op->Rate1(),.1)||!equal_double(op->Rate2(),.1)||!equal_double(op->Rate3(),.1)) return false;
+        }
+        if(!target.Set(0)) return false;
+        target.Reset();
+    }
+    MSDParser::ObjectParser parser("invalid_scan","scalar=test.relax.rate;value=-0.2;");
+    RunSection::ActionAddScalar scan(parser,scalars,vectors);
+    if(!scan.Validate()) return false;
+    scan.Step(2);
+    return equal_double(op->Rate1(),.1)&&equal_double(op->Rate2(),.1)&&equal_double(op->Rate3(),.1);
+}
+
 // Add all the Action classes test cases
 void AddActionsTests(std::vector<test_case> &_cases)
 {
+	_cases.push_back(test_case("Action writable functions preserve validation, copies and reset", test_actiontargets_writable_functions_and_readonly_getters));
+	_cases.push_back(test_case("Action operator shared rate updates and resets all components", test_action_operator_shared_rate_updates_and_resets_all_components));
+	_cases.push_back(test_case("Action operator rates reject invalid values without mutation", test_action_operator_rates_reject_invalid_values_without_mutation));
 	_cases.push_back(test_case("RunSection::ActionScalar test with check function", test_actiontargets_scalar));
 	_cases.push_back(test_case("RunSection::ActionVector test with check function", test_actiontargets_vector));
 	_cases.push_back(test_case("Action AddScalar", test_action_addscalar));

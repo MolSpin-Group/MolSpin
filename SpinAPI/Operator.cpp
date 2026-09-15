@@ -37,16 +37,29 @@ namespace SpinAPI
 			return scalars;
 		}
 
-		auto CheckFinite = [](const double &_d)
+		auto CheckRate = [](const double &_d)
 		{
-			return std::isfinite(_d);
+			return std::isfinite(_d) && _d >= 0.0;
 		};
 
-		RunSection::ActionScalar rate1 = RunSection::ActionScalar(this->rate1);
-		RunSection::ActionScalar rate2 = RunSection::ActionScalar(this->rate2);
-		RunSection::ActionScalar rate3 = RunSection::ActionScalar(this->rate3);
+		RunSection::ActionScalar rate1(this->rate1, +CheckRate);
+		RunSection::ActionScalar rate2(this->rate2, +CheckRate);
+		RunSection::ActionScalar rate3(this->rate3, +CheckRate);
+		// Match input rate= semantics: write all three rates together.
+		// Read rate1 as before; component-specific actions remain independent.
+		RunSection::ActionScalar rate(
+			[this]() { return this->rate1; },
+			[this](const double &value) {
+				this->rate1 = this->rate2 = this->rate3 = value;
+				return true;
+			}, +CheckRate,
+			[this, initial1 = this->rate1, initial2 = this->rate2, initial3 = this->rate3]() {
+				this->rate1 = initial1;
+				this->rate2 = initial2;
+				this->rate3 = initial3;
+			});
 
-		RunSection::NamedActionScalar rate_named = RunSection::NamedActionScalar(_system + "." + this->Name() + ".rate", rate1);
+		RunSection::NamedActionScalar rate_named = RunSection::NamedActionScalar(_system + "." + this->Name() + ".rate", rate);
 		RunSection::NamedActionScalar rate1_named = RunSection::NamedActionScalar(_system + "." + this->Name() + ".rate1", rate1);
 		RunSection::NamedActionScalar rate2_named = RunSection::NamedActionScalar(_system + "." + this->Name() + ".rate2", rate2);
 		RunSection::NamedActionScalar rate3_named = RunSection::NamedActionScalar(_system + "." + this->Name() + ".rate3", rate3);
@@ -203,8 +216,6 @@ namespace SpinAPI
 			else
 				std::cout << "Warning: Ignored invalid rate \"" << rate << "\" specified for Operator object " << this->Name() << "!" << std::endl;
 		}
-
-		//RunSection::ActionScalar r1 = RunSection::ActionScalar(this->rate1,&this)
 
 		// Get a list of spins that should be affected by the operator
 		std::vector<std::string> spinlist;
