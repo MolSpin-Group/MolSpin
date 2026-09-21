@@ -147,7 +147,7 @@ $(PATH_SPINAPI)/SpinSpace.o: $(PATH_SPINAPI)/SpinSpace.cpp $(PATH_SPINAPI)/SpinS
 # --------------------------------------------------------------------------
 # General compilation rule
 # --------------------------------------------------------------------------
-%.o: %.cpp %.h
+%.o: %.cpp
 	$(CC) $(CFLAGS) $(SEARCHDIR_MOLSPIN) $< -o $@
 # --------------------------------------------------------------------------
 # Unit testing module
