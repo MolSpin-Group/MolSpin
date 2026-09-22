@@ -59,12 +59,6 @@ namespace RunSection::General::HS
 				"\" uses a thermal initial state, which cannot be combined with stochastic trace sampling";
 			return false;
 		}
-		if (!system->Operators().empty())
-		{
-			error = "spin system \"" + system->Name() +
-				"\" contains explicit relaxation operators; general dissipators require density evolution and are intentionally incompatible with pure-state trace sampling";
-			return false;
-		}
 		if (system->InitialStateCoherences() != SpinAPI::InitialStateCoherenceMode::Keep)
 		{
 			error = "spin system \"" + system->Name() +
@@ -234,7 +228,7 @@ namespace RunSection::General::HS
 			// keep large nuclear-spin calculations at O(N M), not O(N^2), where
 			// M is the number of Monte-Carlo factors. Density construction is
 			// reserved for algorithms that intrinsically require it (timeinf or
-			// dissipative density propagation; the latter is rejected for stochastic HS).
+			// dissipative density propagation). Stochastic relaxation acts on factors.
 			state.density.reset();
 			state.stochastic = true;
 
@@ -278,7 +272,7 @@ namespace RunSection::General::HS
 			// Direct calculations rotate a density matrix; stochastic calculations
 			// rotate factors only when the represented density is genuinely
 			// orientation dependent. Check stochastic State support sparsely before
-			// deciding whether the dense fallback rotation cache is necessary.
+			// applying sparse embedded single-spin rotations.
 			if (state.stochastic)
 			{
 				arma::sp_cx_mat support;
@@ -287,16 +281,6 @@ namespace RunSection::General::HS
 				{
 					error = "failed to determine molecular-frame trace-sample rotation symmetry";
 					return false;
-				}
-
-				if (!state.rotationInvariant)
-				{
-					if (!space.CreateStateRotationCache(arma::cx_mat(support), state.rotationCache))
-					{
-						error = "failed to prepare molecular-frame trace-sample rotations";
-						return false;
-					}
-					state.hasRotationCache = true;
 				}
 			}
 			else if (!space.CreateStateRotationCache(state.density, state.rotationCache))
@@ -328,10 +312,10 @@ namespace RunSection::General::HS
 			// samples for every crystallite is an unbiased common-random-number
 			// estimator and avoids constructing any N x N rotation operator.
 			if (reference.frame == SpinAPI::StateFrame::Molecular &&
-				!reference.rotationInvariant && reference.hasRotationCache)
+				!reference.rotationInvariant)
 			{
 				if (!space.RotateStateFactors(reference.factors, orientation.frameToLab,
-					reference.rotationCache, state.factors))
+					state.factors))
 				{
 					error = "failed to rotate initial trace-sampling factors for the current orientation";
 					return false;

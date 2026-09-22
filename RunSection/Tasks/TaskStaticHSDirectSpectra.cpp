@@ -7,6 +7,7 @@
 /////////////////////////////////////////////////////////////////////////
 #include <iostream>
 #include "TaskStaticHSDirectSpectra.h"
+#include "../General/HS/HSPropagator.h"
 #include "Transition.h"
 #include "Operator.h"
 #include "Settings.h"
@@ -104,21 +105,23 @@ namespace RunSection
 			space.SetReactionOperatorType(this->reactionOperators);
 
 			arma::cx_mat rho0;
-			if (!this->BuildInitialDensityMatrix(*i, space, rho0, this->Log()))
+			if (!useTraceSampling && !this->BuildInitialDensityMatrix(*i, space, rho0, this->Log()))
 			{
 				this->Log() << "Skipping SpinSystem \"" << (*i)->Name() << "\" as no valid initial state could be constructed." << std::endl;
 				continue;
 			}
 
-			const int dim = static_cast<int>(rho0.n_rows);
+			const int dim = static_cast<int>(space.HilbertSpaceDimensions());
 			this->Log() << "Hilbert Space Size " << dim << " x " << dim << std::endl;
 
 			arma::cx_mat traceSampleFactors;
+			std::mt19937 relaxationMaster;
 			if (useTraceSampling)
 			{
 				std::random_device randomDevice;
 				std::mt19937 generator(randomDevice());
 				this->SeedRandomGenerator(spectraOptions, generator, this->Log());
+				relaxationMaster = generator;
 				std::string error;
 				if (!this->BuildTraceSamples(*i, space, spectraOptions, generator, traceSampleFactors, this->Log(), error))
 				{
@@ -167,8 +170,19 @@ namespace RunSection
 			std::vector<SpinAPI::HilbertRelaxationPhenomenologicalTerm> phenomenological_relaxation_terms;
 			std::vector<SpinAPI::operator_ptr> explicit_relaxation_operators;
 			bool use_density_matrix = false;
+			SpinAPI::HilbertStochasticRelaxationCache stochasticRelaxation;
+			if (useTraceSampling)
+			{
+				std::string error;
+				if (!space.PrepareStochasticRelaxationHilbert((*i)->Operators(), stochasticRelaxation, error))
+				{ this->Log() << "ERROR: " << error << std::endl; return false; }
+				if (!stochasticRelaxation.Empty())
+					this->Log() << "Propagation strategy: stochastic Hilbert trajectories with symmetric second-order relaxation splitting; no density propagation." << std::endl;
+			}
+
 			for (auto j = (*i)->operators_cbegin(); j != (*i)->operators_cend(); j++)
 			{
+				if (useTraceSampling) continue;
 				if ((*j)->Type() == SpinAPI::OperatorType::RelaxationPhenomenological)
 				{
 					if (this->AddPhenomenologicalTerm((*j), phenomenological_relaxation_terms))
@@ -186,6 +200,12 @@ namespace RunSection
 					use_density_matrix = true;
 					this->Log() << "Added powder-aware relaxation operator \"" << (*j)->Name() << "\" to Hilbert-space propagation.\n";
 				}
+				else if (!(*j)->IsValid() || SpinAPI::HasNonzeroRelaxationRate(*j))
+				{
+					this->Log() << "ERROR: unsupported Hilbert density relaxation Operator \"" << (*j)->Name() << "\"." << std::endl;
+					return false;
+				}
+
 			}
 			const bool use_phenomenological_relaxation = !phenomenological_relaxation_terms.empty();
 			const bool use_only_phenomenological_relaxation = use_phenomenological_relaxation && explicit_relaxation_operators.empty();
@@ -517,7 +537,14 @@ namespace RunSection
 			const SpinAPI::StateFrame initialStateFrame = (*i)->InitialStateFrame();
 			SpinAPI::HilbertStateRotationCache initialStateRotationCache;
 			const SpinAPI::HilbertStateRotationCache *initialStateRotationCachePtr = nullptr;
-			if (initialStateFrame == SpinAPI::StateFrame::Molecular)
+			if (useTraceSampling && initialStateFrame == SpinAPI::StateFrame::Molecular)
+			{
+				arma::sp_cx_mat support;
+				if (!space.GetState((*i)->InitialState().front(), support) ||
+					!space.IsStateRotationInvariant(support, initialStateRotationCache.rotationInvariant))
+				{ this->Log() << "ERROR: failed to prepare stochastic state rotation" << std::endl; return false; }
+			}
+			else if (initialStateFrame == SpinAPI::StateFrame::Molecular)
 			{
 				if (!space.CreateStateRotationCache(rho0, initialStateRotationCache))
 				{
@@ -571,7 +598,7 @@ namespace RunSection
 				initialStateFrame != SpinAPI::StateFrame::Molecular ||
 				initialStateRotationCache.rotationInvariant;
 			const bool reuseInitialFactor = useTraceSampling
-												? initialStateFrame != SpinAPI::StateFrame::Molecular
+												? initialDensityOrientationInvariant
 												: (!use_density_matrix && initialDensityOrientationInvariant && !dephaseInitialState);
 			arma::cx_mat orientationInvariantInitialFactor;
 			if (reuseInitialFactor)
@@ -648,7 +675,7 @@ namespace RunSection
 
 					if (pulse_ptr->Type() == SpinAPI::PulseType::LongPulseStaticField || pulse_ptr->Type() == SpinAPI::PulseType::LongPulse)
 					{
-						unsigned int steps = static_cast<unsigned int>(std::abs(pulse_ptr->Pulsetime() / pulse_dt));
+						unsigned int steps = static_cast<unsigned int>(stochasticRelaxation.Empty() ? std::abs(pulse_ptr->Pulsetime() / pulse_dt) : std::ceil(pulse_ptr->Pulsetime() / pulse_dt));
 
 						if (include_initial_step)
 						{
@@ -659,20 +686,22 @@ namespace RunSection
 
 						for (unsigned int n = 1; n <= steps; ++n)
 						{
-							current_time += pulse_dt;
+							const double interval = stochasticRelaxation.Empty() ? pulse_dt : std::min(pulse_dt, pulse_ptr->Pulsetime() - (n-1)*pulse_dt);
+							current_time += interval;
 							pulse_times.push_back(current_time);
-							pulse_dts.push_back(pulse_dt);
+							pulse_dts.push_back(interval);
 						}
 					}
 
 					if (timerelaxation != 0.0)
 					{
-						unsigned int steps = static_cast<unsigned int>(std::abs(timerelaxation / pulse_dt));
+						unsigned int steps = static_cast<unsigned int>(stochasticRelaxation.Empty() ? std::abs(timerelaxation / pulse_dt) : std::ceil(timerelaxation / pulse_dt));
 						for (unsigned int n = 1; n <= steps; ++n)
 						{
-							current_time += pulse_dt;
+							const double interval = stochasticRelaxation.Empty() ? pulse_dt : std::min(pulse_dt, timerelaxation - (n-1)*pulse_dt);
+							current_time += interval;
 							pulse_times.push_back(current_time);
-							pulse_dts.push_back(pulse_dt);
+							pulse_dts.push_back(interval);
 						}
 					}
 				}
@@ -757,6 +786,7 @@ namespace RunSection
 				spaces[t] = base_space;
 			}
 
+			std::vector<std::string> stochasticErrors(orientationSampleCount);
 #pragma omp parallel for schedule(static) if (orientationSampleCount > 1)
 			for (size_t orientationSample = 0; orientationSample < orientationSampleCount; ++orientationSample)
 			{
@@ -767,6 +797,23 @@ namespace RunSection
 				tid = omp_get_thread_num();
 #endif
 				SpinAPI::SpinSpace &space_thread = spaces[tid];
+				auto relaxationGenerator = SpinAPI::StochasticRelaxationGenerator(relaxationMaster, orientationSample);
+				General::HS::HSExecutionPlan stochasticPlan;
+				stochasticPlan.precision = precision;
+				stochasticPlan.krylovSize = krylovsize > 0 ? krylovsize : 16;
+				stochasticPlan.propagation = propmethod == "autoexpm" ? General::HS::PropagationMethod::AutoExpm :
+					propmethod == "krylov" ? General::HS::PropagationMethod::Krylov : General::HS::PropagationMethod::Exponential;
+				General::HS::HSRelaxationContext stochasticContext;
+				stochasticContext.mode = General::HS::HSRelaxationPropagationMode::StochasticTrajectories;
+				stochasticContext.stochasticCache = stochasticRelaxation;
+				General::HS::HSPropagator stochasticPropagator(stochasticPlan, space_thread);
+				auto stochasticStep = [&](const arma::sp_cx_mat &hamiltonian, const arma::sp_cx_mat &reaction,
+					double interval, arma::cx_mat &state) {
+					if (!stochasticErrors[orientationSample].empty()) return false;
+					return stochasticPropagator.StepStochastic(hamiltonian, reaction, interval, state,
+						stochasticContext, relaxationGenerator, stochasticErrors[orientationSample]);
+				};
+
 
 				const auto &grid_point = grid[grid_num];
 				double theta = grid_point.theta;
@@ -790,6 +837,7 @@ namespace RunSection
 				double alpha = gamma;
 				if (!this->CreateRotationMatrix(alpha, theta, phi, Rot_mat))
 				{
+					if (!stochasticRelaxation.Empty()) stochasticErrors[orientationSample] = "Failed to obtain rotation matrix for powder orientation.";
 					this->Log() << "Failed to obtain rotation matrix for powder orientation." << std::endl;
 				}
 
@@ -822,6 +870,7 @@ namespace RunSection
 					}
 					if (!hamiltonianBuilt)
 					{
+						if (!stochasticRelaxation.Empty()) stochasticErrors[orientationSample] = "failed to construct powder Hamiltonian";
 						this->Log() << "Failed to obtain orientation-specific powder Hamiltonians for SpinSystem \"" << (*i)->Name() << "\"." << std::endl;
 						continue;
 					}
@@ -832,7 +881,8 @@ namespace RunSection
 				{
 					if (!space_thread.Hamiltonian(H))
 					{
-						this->Log() << "Failed to obtain the Hamiltonian in Hilbert Space." << std::endl;
+						if (!stochasticRelaxation.Empty()) stochasticErrors[orientationSample] = "Failed to obtain the Hamiltonian in Hilbert Space.";
+					this->Log() << "Failed to obtain the Hamiltonian in Hilbert Space." << std::endl;
 						continue;
 					}
 					relaxation_basis_hamiltonian = H;
@@ -1486,13 +1536,11 @@ namespace RunSection
 				}
 
 				arma::cx_mat B;
-				if (useTraceSampling && initialStateFrame == SpinAPI::StateFrame::Molecular)
+				if (useTraceSampling && initialStateFrame == SpinAPI::StateFrame::Molecular && !initialDensityOrientationInvariant)
 				{
-					if (initialStateRotationCachePtr == nullptr ||
-						!space_thread.RotateStateFactors(traceSampleFactors, Rot_mat,
-														 *initialStateRotationCachePtr, B))
+					if (!space_thread.RotateStateFactors(traceSampleFactors, Rot_mat, B))
 					{
-						this->Log() << "Failed to rotate trace-sampling factors for powder orientation." << std::endl;
+						stochasticErrors[orientationSample] = "failed to rotate stochastic state factors";
 						continue;
 					}
 				}
@@ -1579,6 +1627,7 @@ namespace RunSection
 									arma::sp_cx_mat pulse_operator;
 									if (!space_thread.PulseOperatorOnStatevector((*pulse), pulse_operator))
 									{
+										if (!stochasticRelaxation.Empty()) stochasticErrors[orientationSample] = "failed to create a stochastic pulse operator";
 										this->Log() << "Failed to create a pulse operator in HS." << std::endl;
 										continue;
 									}
@@ -1593,6 +1642,7 @@ namespace RunSection
 									arma::sp_cx_mat pulse_operator;
 									if (!space_thread.PulseOperatorOnStatevector((*pulse), pulse_operator))
 									{
+										if (!stochasticRelaxation.Empty()) stochasticErrors[orientationSample] = "failed to create a stochastic pulse operator";
 										this->Log() << "Failed to create a pulse operator in HS." << std::endl;
 										continue;
 									}
@@ -1601,14 +1651,20 @@ namespace RunSection
 									std::pair<arma::sp_cx_mat, arma::cx_mat> G;
 
 									// Get the propagator and put it into the array together with the initial state
-									arma::sp_cx_mat A_sp = arma::conv_to<arma::sp_cx_mat>::from(arma::expmat(arma::conv_to<arma::cx_mat>::from((A + (arma::cx_double(0.0, -1.0) * pulse_operator)) * (*pulse)->Timestep())));
+									arma::sp_cx_mat A_sp;
+									if (stochasticRelaxation.Empty()) A_sp = arma::sp_cx_mat(arma::expmat(arma::cx_mat((A + arma::cx_double(0,-1)*pulse_operator) * (*pulse)->Timestep())));
 									G = std::pair<arma::sp_cx_mat, arma::cx_mat>(A_sp, B);
 
-									unsigned int steps = static_cast<unsigned int>(std::abs((*pulse)->Pulsetime() / (*pulse)->Timestep()));
+									unsigned int steps = static_cast<unsigned int>(stochasticRelaxation.Empty() ? std::abs((*pulse)->Pulsetime() / (*pulse)->Timestep()) : std::ceil((*pulse)->Pulsetime() / (*pulse)->Timestep()));
 									for (unsigned int n = 1; n <= steps; n++)
 									{
 										// Take a step, "first" is propagator and "second" is current state
-										B = G.first * G.second;
+										if (!stochasticRelaxation.Empty())
+										{
+											const double interval = std::min((*pulse)->Timestep(), (*pulse)->Pulsetime() - (n-1)*(*pulse)->Timestep());
+											if (!stochasticStep(H + pulse_operator, K, interval, B)) break;
+										}
+										else B = G.first * G.second;
 
 										// Get the new current state vector matrix
 										G.second = B;
@@ -1626,14 +1682,23 @@ namespace RunSection
 									arma::sp_cx_mat pulse_operator;
 									if (!space_thread.PulseOperatorOnStatevector((*pulse), pulse_operator))
 									{
+										if (!stochasticRelaxation.Empty()) stochasticErrors[orientationSample] = "failed to create a stochastic pulse operator";
 										this->Log() << "Failed to create a pulse operator in HS." << std::endl;
 										continue;
 									}
 
-									unsigned int steps = static_cast<unsigned int>(std::abs((*pulse)->Pulsetime() / (*pulse)->Timestep()));
+									unsigned int steps = static_cast<unsigned int>(stochasticRelaxation.Empty() ? std::abs((*pulse)->Pulsetime() / (*pulse)->Timestep()) : std::ceil((*pulse)->Pulsetime() / (*pulse)->Timestep()));
 									for (unsigned int n = 1; n <= steps; n++)
 									{
-										double t = n * (*pulse)->Timestep();
+										if (!stochasticRelaxation.Empty())
+										{
+											const double interval = std::min((*pulse)->Timestep(), (*pulse)->Pulsetime() - (n-1)*(*pulse)->Timestep());
+											const double middle = (n-1)*(*pulse)->Timestep() + 0.5*interval;
+											if (!stochasticStep(H + std::cos((*pulse)->Frequency()*middle)*pulse_operator, K, interval, B)) break;
+										}
+										else
+										{
+											double t = n * (*pulse)->Timestep();
 										double pulse_factor = std::cos((*pulse)->Frequency() * t);
 										arma::sp_cx_mat A_sp = arma::conv_to<arma::sp_cx_mat>::from(
 											arma::expmat(
@@ -1641,6 +1706,7 @@ namespace RunSection
 													(A + (arma::cx_double(0.0, -1.0) * pulse_operator * pulse_factor)) * (*pulse)->Timestep())));
 
 										B = A_sp * B;
+										}
 
 										if (has_pulse_output && pulse_step_index < ExptValuesPulseOrientation.n_rows)
 										{
@@ -1658,15 +1724,21 @@ namespace RunSection
 
 								// Create array containing a propagator and the current state of each system
 								std::pair<arma::sp_cx_mat, arma::cx_mat> G;
-								arma::sp_cx_mat A_sp = arma::conv_to<arma::sp_cx_mat>::from(arma::expmat(arma::conv_to<arma::cx_mat>::from(A * (*pulse)->Timestep())));
+								arma::sp_cx_mat A_sp;
+								if (stochasticRelaxation.Empty()) A_sp = arma::sp_cx_mat(arma::expmat(arma::cx_mat(A * (*pulse)->Timestep())));
 								// Get the propagator and put it into the array together with the initial state
 								G = std::pair<arma::sp_cx_mat, arma::cx_mat>(A_sp, B);
 
-								unsigned int steps = static_cast<unsigned int>(std::abs(timerelaxation / (*pulse)->Timestep()));
+								unsigned int steps = static_cast<unsigned int>(stochasticRelaxation.Empty() ? std::abs(timerelaxation / (*pulse)->Timestep()) : std::ceil(timerelaxation / (*pulse)->Timestep()));
 								for (unsigned int n = 1; n <= steps; n++)
 								{
 									// Take a step, "first" is propagator and "second" is current state
-									B = G.first * G.second;
+									if (!stochasticRelaxation.Empty())
+									{
+										const double interval = std::min((*pulse)->Timestep(), timerelaxation - (n-1)*(*pulse)->Timestep());
+										if (!stochasticStep(H, K, interval, B)) break;
+									}
+									else B = G.first * G.second;
 
 									// Get the new current state density vector
 									G.second = B;
@@ -1698,7 +1770,15 @@ namespace RunSection
 				}
 
 				// Propagate the system in time using the specified method
-				if (method_timeevo && propmethod == "autoexpm")
+				if (method_timeevo && !stochasticRelaxation.Empty())
+				{
+					for (int k = 0; k < num_steps; ++k)
+					{
+						record_expectation(ExptValuesOrientation, k, B);
+						if (k+1 < num_steps && !stochasticStep(H, K, dt, B)) break;
+					}
+				}
+				else if (method_timeevo && propmethod == "autoexpm")
 				{
 					arma::mat M; // used for variable estimation
 					arma::sp_cx_mat H_prop = H - arma::cx_double(0.0, 1.0) * K;
@@ -1844,6 +1924,10 @@ namespace RunSection
 					rho_integrated_partial[tid] += weight * X;
 				}
 			}
+
+			for (const auto &error : stochasticErrors)
+				if (!error.empty())
+				{ this->Log() << "ERROR: " << error << std::endl; return false; }
 
 			if (method_timeevo)
 			{
@@ -2363,11 +2447,54 @@ namespace RunSection
 				_error = "spin system \"" + system->Name() + "\" must define exactly one non-thermal initial State for stochastic trace sampling";
 				return false;
 			}
-			if (!system->Operators().empty())
+			SpinAPI::SpinSpace space(system);
+			SpinAPI::HilbertStochasticRelaxationCache cache;
+			if (!space.PrepareStochasticRelaxationHilbert(system->Operators(), cache, _error)) return false;
+			std::string method;
+			this->Properties()->Get("method", method);
+			if (!cache.Empty() && method == "timeinf")
 			{
-				_error = "spin system \"" + system->Name() + "\" contains relaxation operators; stochastic spectra currently require factor propagation without relaxation";
+				_error = "stochastic relaxation requires finite-time propagation; method=timeinf constructs a density/superspace solve";
 				return false;
 			}
+			if (!cache.Empty())
+			{
+				// Validate elapsed-time inputs before the parallel orientation loop.
+				std::vector<std::tuple<std::string,double>> sequence;
+				if (this->Properties()->GetPulseSequence("pulsesequence",sequence))
+					for (const auto &entry : sequence)
+					{
+						auto pulses=system->Pulses();
+						auto found=std::find_if(pulses.begin(),pulses.end(),[&](const SpinAPI::pulse_ptr &p){return p && p->Name()==std::get<0>(entry);});
+						if(found==pulses.end() || !std::isfinite(std::get<1>(entry)) || std::get<1>(entry)<0)
+						{_error="invalid stochastic pulse sequence or delay";return false;}
+						const auto &pulse=*found;
+						int powderPoints=0, gammaPoints=1;
+						this->Properties()->Get("powdersamplingpoints",powderPoints);
+						this->Properties()->Get("powdergammapoints",gammaPoints);
+						double orientationAngle=0.0;
+						arma::vec explicitOrientation;
+						const bool oriented=powderPoints>1 || gammaPoints>1 ||
+							this->Properties()->Get("powdertheta",orientationAngle) ||
+							this->Properties()->Get("powderphi",orientationAngle) ||
+							this->Properties()->Get("powdergamma",orientationAngle) ||
+							this->Properties()->Get("powder_theta",orientationAngle) ||
+							this->Properties()->Get("powder_phi",orientationAngle) ||
+							this->Properties()->Get("powder_gamma",orientationAngle) ||
+							this->Properties()->Get("powderorientation",explicitOrientation) ||
+							this->Properties()->Get("powder_orientation",explicitOrientation);
+						if(oriented && pulse->Type()!=SpinAPI::PulseType::InstantPulse)
+							for(bool ignoreTensor:pulse->IgnoreTensorsList())
+								if(!ignoreTensor)
+								{_error="anisotropic finite-field Pulse cannot be powder-rotated by the legacy Pulse API";return false;}
+
+						if(pulse->Type()!=SpinAPI::PulseType::InstantPulse && pulse->Type()!=SpinAPI::PulseType::LongPulse && pulse->Type()!=SpinAPI::PulseType::LongPulseStaticField)
+						{_error="unsupported Pulse type for stochastic relaxation";return false;}
+						if(!std::isfinite(pulse->Timestep()) || pulse->Timestep()<=0 || !std::isfinite(pulse->Pulsetime()) || pulse->Pulsetime()<0)
+						{_error="stochastic pulse duration/timestep must be finite with a positive timestep";return false;}
+					}
+			}
+
 			if (system->InitialStateCoherences() != SpinAPI::InitialStateCoherenceMode::Keep)
 			{
 				_error = "spin system \"" + system->Name() + "\" requests initial-state dephasing, which cannot be represented by pure-state trace samples";

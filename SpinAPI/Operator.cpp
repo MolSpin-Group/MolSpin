@@ -10,6 +10,7 @@
 #include "Operator.h"
 #include "ObjectParser.h"
 #include "SpinSystem.h"
+#include "Spin.h"
 #include <algorithm>
 #include <cctype>
 
@@ -110,6 +111,7 @@ namespace SpinAPI
 	{
 		// Validation may be repeated after a system is edited. Rebuild derived
 		// fields from the parser rather than accumulating stale spin pointers.
+		this->isValid = false;
 		this->type = OperatorType::Unspecified;
 		this->spins.clear();
 		this->rate1 = 0.0;
@@ -234,6 +236,19 @@ namespace SpinAPI
 					}
 				}
 			}
+		}
+
+		// PS = I/4 - S1.S2 is a singlet projector only for two distinct
+		// physical spin-1/2 particles. Compare with the requested list too:
+		// unresolved names must not turn an invalid request into a valid pair.
+		if (this->type == OperatorType::RelaxationDephasing &&
+			(spinlist.size() != 2 || this->spins.size() != 2 ||
+			 this->spins[0] == this->spins[1] ||
+			 this->spins[0]->S() != 1 || this->spins[1]->S() != 1))
+		{
+			std::cout << "Failed to validate Operator \"" << this->Name()
+				<< "\": relaxationdephasing requires exactly two distinct resolved spin-1/2 spins." << std::endl;
+			return false;
 		}
 
 		this->isValid = true;

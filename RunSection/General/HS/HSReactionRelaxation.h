@@ -22,15 +22,19 @@
 
 namespace RunSection::General::HS
 {
+	enum class HSRelaxationPropagationMode { None, DensityMatrix, StochasticTrajectories };
+
 	struct HSRelaxationContext
 	{
+		HSRelaxationPropagationMode mode = HSRelaxationPropagationMode::None;
+		SpinAPI::HilbertStochasticRelaxationCache stochasticCache;
 		SpinAPI::HilbertRelaxationCache explicitCache;
 		std::vector<SpinAPI::HilbertRelaxationPhenomenologicalTerm> phenomenologicalTerms;
 		arma::cx_mat phenomenologicalBasis;
 		bool hasExplicit = false;
 		bool hasPhenomenological = false;
 
-		bool Empty() const { return !hasExplicit && !hasPhenomenological; }
+		bool Empty() const { return !hasExplicit && !hasPhenomenological && stochasticCache.Empty(); }
 	};
 
 	class HSReactionRelaxation
@@ -47,6 +51,7 @@ namespace RunSection::General::HS
 			std::string &_error);
 
 		bool HasRelaxation() const;
+		HSRelaxationPropagationMode PropagationMode() const;
 		bool PrepareRelaxation(const HSOrientation &_orientation,
 			const arma::sp_cx_mat &_basisHamiltonian, HSRelaxationContext &_context,
 			std::string &_error) const;

@@ -90,12 +90,6 @@ namespace RunSection::General::HS
 	{
 		error.clear();
 		if (system == nullptr) { error = "cannot prepare reactions for a null spin system"; return false; }
-		if (plan.IsStochastic() && !system->Operators().empty())
-		{
-			error = "general Hilbert-space relaxation acts on density matrices and cannot be combined with pure-state trace sampling; use sampling=direct";
-			return false;
-		}
-
 		if (!PrepareReactionChannels(error)) return false;
 
 		for (const auto &op : system->Operators())
@@ -104,6 +98,17 @@ namespace RunSection::General::HS
 			{
 				error = "encountered an invalid Hilbert-space relaxation operator";
 				return false;
+			}
+			if (plan.IsStochastic())
+			{
+				const auto kind = SpinAPI::StochasticRelaxationKindHilbert(op, error);
+				if (kind == SpinAPI::HilbertStochasticRelaxationKind::Unsupported) return false;
+				if (kind != SpinAPI::HilbertStochasticRelaxationKind::None && plan.UsesTimeInfinityYields())
+				{
+					error = "stochastic relaxation requires finite-time propagation; method=timeinf constructs a density/superspace solve";
+					return false;
+				}
+				continue;
 			}
 			if (op->Type() == SpinAPI::OperatorType::RelaxationPhenomenological)
 			{
@@ -181,6 +186,15 @@ namespace RunSection::General::HS
 		return system != nullptr && !system->Operators().empty();
 	}
 
+	HSRelaxationPropagationMode HSReactionRelaxation::PropagationMode() const
+	{
+		if (!HasRelaxation()) return HSRelaxationPropagationMode::None;
+		if (!plan.IsStochastic()) return HSRelaxationPropagationMode::DensityMatrix;
+		for (const auto &op : system->Operators())
+			if (SpinAPI::HasNonzeroRelaxationRate(op)) return HSRelaxationPropagationMode::StochasticTrajectories;
+		return HSRelaxationPropagationMode::None;
+	}
+
 	bool HSReactionRelaxation::PrepareRelaxation(const HSOrientation &orientation,
 		const arma::sp_cx_mat &basisHamiltonian, HSRelaxationContext &context,
 		std::string &error) const
@@ -188,6 +202,11 @@ namespace RunSection::General::HS
 		context = HSRelaxationContext();
 		error.clear();
 		if (system == nullptr) { error = "cannot prepare relaxation for a null spin system"; return false; }
+		context.mode = PropagationMode();
+		if (plan.IsStochastic())
+			return space.PrepareStochasticRelaxationHilbert(system->Operators(),
+				context.stochasticCache, error, &orientation.frameToLab);
+
 
 		for (const auto &op : system->Operators())
 		{
@@ -303,6 +322,9 @@ namespace RunSection::General::HS
 	{
 		error.clear();
 		superoperator.reset();
+		if (!context.stochasticCache.Empty())
+		{ error = "stochastic relaxation has no implicit density fallback"; return false; }
+
 		if (context.hasExplicit)
 		{
 			if (!space.RelaxationSuperoperatorHilbert(context.explicitCache, superoperator))

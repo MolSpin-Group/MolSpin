@@ -17,6 +17,7 @@
 #include "SpinSpace.h"
 #include "HSExecutionPlan.h"
 #include "HSOrientationSampler.h"
+#include "HSReactionRelaxation.h"
 #include "SpinAPIfwd.h"
 #include <iosfwd>
 #include <functional>
@@ -43,6 +44,12 @@ namespace RunSection::General::HS
 			const arma::sp_cx_mat &_reactionMid, const arma::sp_cx_mat &_hamiltonianEnd,
 			const arma::sp_cx_mat &_reactionEnd, double _dt, arma::cx_mat &_factors,
 			std::string &_error);
+		bool StepStochastic(const arma::sp_cx_mat &, const arma::sp_cx_mat &, double,
+			arma::cx_mat &, const HSRelaxationContext &, std::mt19937 &, std::string &);
+		bool StepDynamicRK4Stochastic(const arma::sp_cx_mat &, const arma::sp_cx_mat &,
+			const arma::sp_cx_mat &, const arma::sp_cx_mat &, const arma::sp_cx_mat &,
+			const arma::sp_cx_mat &, double, arma::cx_mat &, const HSRelaxationContext &,
+			std::mt19937 &, std::string &);
 		bool StepDensity(const arma::sp_cx_mat &_hamiltonian, const arma::sp_cx_mat &_reaction,
 			double _dt, arma::cx_mat &_density, const HSReactionRelaxation &_relaxation,
 			const HSRelaxationContext &_context, std::string &_error);
@@ -66,7 +73,8 @@ namespace RunSection::General::HS
 			const SpinAPI::system_ptr &_system, const HSOrientation &_orientation,
 			const arma::sp_cx_mat &_baseHamiltonian, const arma::sp_cx_mat &_baseReaction,
 			const HSReactionRelaxation &_relaxation, const HSRelaxationContext &_context,
-			bool _densityMode, arma::cx_mat &_factors, arma::cx_mat &_density,
+			HSRelaxationPropagationMode _mode, std::mt19937 &_relaxationGenerator,
+			arma::cx_mat &_factors, arma::cx_mat &_density,
 			double &_elapsedTime, const HSPulseTimelineObserver &_observer,
 			std::ostream &_log, std::string &_error);
 

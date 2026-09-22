@@ -46,6 +46,10 @@ The repository-wide migration policy is documented in
 `docs/GENERAL_TASK_ARCHITECTURE.md`; the maintained HSGeneral physics, input and
 validation contract is documented in `docs/HS_GENERAL.md`.
 
+Singlet–triplet dephasing through the standard `Operator` object is available
+for stochastic Hilbert trajectories. See the
+[stochastic relaxation guide and tests](RunSection/General/HS/STOCHASTIC_RELAXATION.md).
+
 Static resonance development belongs in `RunSection/General/Resonance/` and is
 exposed through `ResonanceGeneral`. Existing resonance inputs can select it by
 changing only the task type; `statichs-resonance-spectra` remains callable. See

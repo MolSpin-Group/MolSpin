@@ -219,12 +219,15 @@ namespace RunSection::General::HS
 				this->Log() << "ERROR: " << error << "." << std::endl;
 				return false;
 			}
-			if (reaction.HasRelaxation() && plan.propagation != PropagationMethod::RK4)
+			if (reaction.PropagationMode() == HSRelaxationPropagationMode::DensityMatrix && plan.propagation != PropagationMethod::RK4)
 			{
 				this->Log() << "Relaxation operators detected: HSGeneral will use density-matrix "
 					<< "propagation with exponential Hamiltonian/reaction splitting by default; "
 					<< "propagationmethod=rk4 explicitly requests full density RK4." << std::endl;
 			}
+
+			if (reaction.PropagationMode() == HSRelaxationPropagationMode::StochasticTrajectories)
+				this->Log() << "Relaxation operators use stochastic Hilbert trajectories with a symmetric second-order split (no density propagation)." << std::endl;
 
 			HSObservableCollector observables;
 			if (!observables.Prepare(plan, system, space, this->Log(), error))
@@ -289,6 +292,7 @@ namespace RunSection::General::HS
 		std::random_device randomDevice;
 		std::mt19937 generator(randomDevice());
 		HSStatePreparation::SeedGenerator(plan, generator, this->Log());
+		const std::mt19937 relaxationMaster = generator;
 		std::vector<double> freeTimes;
 		if (!BuildFreeEvolutionTimes(plan.totalTime, plan.timeStep, freeTimes, error))
 		{
@@ -328,7 +332,8 @@ namespace RunSection::General::HS
 			}
 			HSHamiltonianBuilder hamiltonianBuilder(plan, space);
 			HSPropagator propagator(plan, space);
-			const bool useDensityPropagation = reaction.HasRelaxation();
+			const auto relaxationMode = reaction.PropagationMode();
+			const bool useDensityPropagation = relaxationMode == HSRelaxationPropagationMode::DensityMatrix;
 
 			arma::mat averagedFree;
 			if (plan.calculation == Calculation::TimeEvolution)
@@ -342,6 +347,7 @@ namespace RunSection::General::HS
 			for (size_t orientationIndex = 0; orientationIndex < orientations.size(); ++orientationIndex)
 			{
 				const auto &orientation = orientations[orientationIndex];
+				auto relaxationGenerator = SpinAPI::StochasticRelaxationGenerator(relaxationMaster, orientationIndex);
 				::RunSection::General::Log::PrintOrientationProgress(this->Log(), orientationIndex, orientations.size());
 				HSOrientedState orientedState;
 				if (!HSStatePreparation::PrepareForOrientation(plan, space, prepared,
@@ -402,7 +408,7 @@ namespace RunSection::General::HS
 				if (plan.hasPulseSequence &&
 					!propagator.ApplyPulsePreparationSequence(plan.pulseSequence, system, orientation,
 						staticHamiltonian, staticReaction, reaction, relaxationContext,
-						useDensityPropagation, factors, density, pulseElapsed,
+						relaxationMode, relaxationGenerator, factors, density, pulseElapsed,
 						pulseObserver, this->Log(), error))
 				{
 					this->Log() << "ERROR: " << error << "." << std::endl;
@@ -509,9 +515,9 @@ namespace RunSection::General::HS
 							? propagator.StepDensityDynamicRK4(hamiltonianStart, reactionStart,
 								hamiltonianMid, reactionMid, hamiltonianEnd, reactionEnd,
 								interval, density, reaction, relaxationContext, error)
-							: propagator.StepDynamicRK4(hamiltonianStart, reactionStart,
+							: propagator.StepDynamicRK4Stochastic(hamiltonianStart, reactionStart,
 								hamiltonianMid, reactionMid, hamiltonianEnd, reactionEnd,
-								interval, factors, error);
+								interval, factors, relaxationContext, relaxationGenerator, error);
 						if (!propagated)
 						{
 							this->Log() << "ERROR: " << error << "." << std::endl;
@@ -544,8 +550,8 @@ namespace RunSection::General::HS
 								return false;
 							}
 						}
-						else if (!propagator.Step(hamiltonian, reactionOperator,
-							interval, factors, error))
+						else if (!propagator.StepStochastic(hamiltonian, reactionOperator,
+							interval, factors, relaxationContext, relaxationGenerator, error))
 						{
 							this->Log() << "ERROR: " << error << "." << std::endl;
 							return false;

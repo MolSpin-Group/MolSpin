@@ -47,8 +47,14 @@ seed = 12345;
 
 with the nuclear spins omitted from the singlet State definition.
 
-A general relaxation dissipator cannot be combined with pure-state trace
-sampling and is rejected. Use `sampling=direct` for density-matrix relaxation.
+The normal `Operator` object with `type=relaxationdephasing`, exactly two
+distinct spin-1/2 spins, and `rate` in ns^-1 also supports stochastic Hilbert
+trajectories. No additional relaxation keyword is needed. The combined
+Hamiltonian/reaction/relaxation propagation uses a symmetric second-order split.
+Other nonzero relaxation operators currently require `sampling=direct`;
+unsupported stochastic combinations fail explicitly. See the
+[implementation and validation guide](../../RunSection/General/HS/STOCHASTIC_RELAXATION.md)
+for supported tasks, limitations, and a runnable comparison.
 
 ## Powder and SO(3)
 

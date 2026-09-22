@@ -25,9 +25,9 @@
 namespace RunSection::General::HS
 {
 	// Reference state prepared once per SpinSystem. Direct calculations keep a
-	// normalized density/factorization; stochastic calculations additionally
-	// keep the sampled Hilbert factors. Molecular-frame rotation generators are
-	// cached here so the powder loop never reconstructs state-rotation operators.
+	// normalized density/factorization; stochastic calculations keep only
+	// sampled Hilbert factors. Direct molecular rotations use a cached generator;
+	// stochastic rotations apply sparse embedded single-spin operators.
 	struct HSPreparedState
 	{
 		arma::cx_mat density;

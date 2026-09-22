@@ -5,6 +5,7 @@
 // (c) 2025 Quantum Biology and Computational Physics Group.
 // See LICENSE.txt for license information.
 /////////////////////////////////////////////////////////////////////////
+#include "../General/HS/HSRelaxationValidation.h"
 #include <iostream>
 #include "TaskStaticHSSymmetricDecay.h"
 #include "Transition.h"
@@ -31,6 +32,11 @@ namespace RunSection
 	// -----------------------------------------------------
 	bool TaskStaticHSSymmetricDecay::RunLocal()
 	{
+		std::string relaxationError;
+		if (!General::HS::ValidateNoRelaxation(this->SpinSystems(),
+			"TaskStaticHSSymmetricDecay propagation representation", relaxationError))
+		{ this->Log() << "ERROR: " << relaxationError << std::endl; return false; }
+
 		this->Log() << "Running method StaticHS-SymmetricDecay." << std::endl;
 
 		// Check if a rate constant was given

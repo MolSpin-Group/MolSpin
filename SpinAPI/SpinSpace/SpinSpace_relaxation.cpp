@@ -317,35 +317,13 @@ namespace SpinAPI
 		}
 		else if (_operator->Type() == OperatorType::RelaxationDephasing)
 		{
-			auto spins = _operator->Spins();
-
-			std::vector<MatrixType> Sx_operators;
-			std::vector<MatrixType> Sy_operators;
-			std::vector<MatrixType> Sz_operators;
-
-			for (auto i = spins.cbegin(); i != spins.cend(); i++)
-			{
-				if (!this->Contains(*i))
-					continue;
-
-				MatrixType Sxtmp;
-				MatrixType Sytmp;
-				MatrixType Sztmp;
-				if (!this->CreateRotatedSpinTripletInBasis((*i), _basisrotation, channelSpatialRotation, Sxtmp, Sytmp, Sztmp))
-					return false;
-
-				Sx_operators.push_back(Sxtmp);
-				Sy_operators.push_back(Sytmp);
-				Sz_operators.push_back(Sztmp);
-			}
-
-			if (Sx_operators.size() < 2)
-				return false;
-
-			MatrixType E;
-			E.eye(Sx_operators[0].n_rows, Sx_operators[0].n_cols);
-			MatrixType Psinglet = (1.0 / 4.0) * E - (Sx_operators[0] * Sx_operators[1] + Sy_operators[0] * Sy_operators[1] + Sz_operators[0] * Sz_operators[1]);
-			MatrixType Ptriplet = E - Psinglet;
+			arma::sp_cx_mat singlet, triplet;
+			if (!this->SingletTripletProjectors(_operator, singlet, triplet)) return false;
+			// A common spatial rotation leaves the ST channel invariant. Only
+			// the caller's Hilbert basis transformation remains to be applied.
+			MatrixType Psinglet(singlet), Ptriplet(triplet);
+			this->TransformOperatorToBasis(_basisrotation, Psinglet);
+			this->TransformOperatorToBasis(_basisrotation, Ptriplet);
 
 			MatrixType PLsinglet;
 			MatrixType PRsinglet;
@@ -601,36 +579,10 @@ namespace SpinAPI
 		}
 		else if (_operator->Type() == OperatorType::RelaxationDephasing)
 		{
-			auto spins = _operator->Spins();
-			std::vector<arma::sp_cx_mat> Sx_operators;
-			std::vector<arma::sp_cx_mat> Sy_operators;
-			std::vector<arma::sp_cx_mat> Sz_operators;
-
-			for (auto i = spins.cbegin(); i != spins.cend(); i++)
+			arma::sp_cx_mat Psinglet, Ptriplet;
+			if (!this->SingletTripletProjectors(_operator, Psinglet, Ptriplet)) return false;
+			if (_operator->Rate1() != 0.0)
 			{
-				if (!this->Contains(*i))
-					continue;
-
-				arma::sp_cx_mat Sx;
-				arma::sp_cx_mat Sy;
-				arma::sp_cx_mat Sz;
-				if (!create_triplet(*i, Sx, Sy, Sz))
-				{
-					continue;
-				}
-
-				Sx_operators.push_back(Sx);
-				Sy_operators.push_back(Sy);
-				Sz_operators.push_back(Sz);
-			}
-
-			if (Sx_operators.size() >= 2 && _operator->Rate1() != 0.0)
-			{
-				arma::sp_cx_mat E = arma::speye<arma::sp_cx_mat>(Sx_operators[0].n_rows, Sx_operators[0].n_cols);
-				arma::sp_cx_mat Psinglet = (1.0 / 4.0) * E -
-										   (Sx_operators[0] * Sx_operators[1] + Sy_operators[0] * Sy_operators[1] + Sz_operators[0] * Sz_operators[1]);
-				arma::sp_cx_mat Ptriplet = E - Psinglet;
-
 				HilbertRelaxationDephasingTerm term;
 				term.Psinglet = Psinglet;
 				term.Ptriplet = Ptriplet;
@@ -643,6 +595,7 @@ namespace SpinAPI
 				added = true;
 			}
 		}
+
 		else if (_operator->Type() == OperatorType::RelaxationRandomFields)
 		{
 			auto spins = _operator->Spins();
@@ -1149,5 +1102,154 @@ namespace SpinAPI
 	bool SpinSpace::RelaxationOperatorFrameChange(const operator_ptr &_operator, arma::sp_cx_mat _rotationmatrix, arma::sp_cx_mat &_out) const
 	{
 		return this->RelaxationOperatorFrameChange(_operator, arma::cx_mat(_rotationmatrix), _out);
+	}
+}
+
+namespace SpinAPI
+{
+	bool HasNonzeroRelaxationRate(const operator_ptr &op)
+	{
+		if (!op) return false;
+		switch (op->Type())
+		{
+		case OperatorType::RelaxationDephasing:
+		case OperatorType::RelaxationT1:
+		case OperatorType::RelaxationT2:
+		case OperatorType::RelaxationLindbladDoubleSpin:
+			return op->Rate1() != 0.0;
+		case OperatorType::RelaxationPhenomenological:
+			return op->Rate1() != 0.0 || op->Rate2() != 0.0;
+		default:
+			return op->Rate1() != 0.0 || op->Rate2() != 0.0 || op->Rate3() != 0.0;
+		}
+	}
+
+	HilbertStochasticRelaxationKind StochasticRelaxationKindHilbert(
+		const operator_ptr &op, std::string &error)
+	{
+		error.clear();
+		if (!op || !op->IsValid())
+		{
+			error = "invalid relaxation Operator in stochastic Hilbert propagation";
+			return HilbertStochasticRelaxationKind::Unsupported;
+		}
+		if (!HasNonzeroRelaxationRate(op)) return HilbertStochasticRelaxationKind::None;
+		if (op->Type() == OperatorType::RelaxationDephasing)
+			return HilbertStochasticRelaxationKind::RandomUnitary;
+		error = "relaxation operator \"" + op->Name() +
+			"\" does not currently provide a stochastic Hilbert-state unraveling";
+		return HilbertStochasticRelaxationKind::Unsupported;
+	}
+
+	bool SpinSpace::SingletTripletProjectors(const operator_ptr &op,
+		arma::sp_cx_mat &singlet, arma::sp_cx_mat &triplet, std::string *error) const
+	{
+		if (error) error->clear();
+		singlet.reset(); triplet.reset();
+		const auto selected = op ? op->Spins() : std::vector<spin_ptr>();
+		if (!op || !op->IsValid() || selected.size() != 2 ||
+			!selected[0] || !selected[1] || selected[0] == selected[1] ||
+			selected[0]->S() != 1 || selected[1]->S() != 1 ||
+			!this->Contains(selected[0]) || !this->Contains(selected[1]))
+		{
+			if (error) *error = "relaxationdephasing requires exactly two distinct resolved spin-1/2 spins in the active spin space";
+			return false;
+		}
+		arma::sp_cx_mat sx1, sy1, sz1, sx2, sy2, sz2;
+		if (!this->CreateSpinOperatorTriplet(selected[0], sx1, sy1, sz1) ||
+			!this->CreateSpinOperatorTriplet(selected[1], sx2, sy2, sz2))
+		{
+			if (error) *error = "failed to embed the singlet-triplet spin operators";
+			return false;
+		}
+		const arma::sp_cx_mat identity = arma::speye<arma::sp_cx_mat>(sx1.n_rows, sx1.n_cols);
+		singlet = 0.25 * identity - (sx1 * sx2 + sy1 * sy2 + sz1 * sz2);
+		triplet = identity - singlet;
+		return true;
+	}
+
+	bool SpinSpace::PrepareStochasticRelaxationHilbert(const std::vector<operator_ptr> &operators,
+		HilbertStochasticRelaxationCache &cache, std::string &error,
+		const arma::mat *spatialRotation) const
+	{
+		cache = HilbertStochasticRelaxationCache(); error.clear();
+		if (spatialRotation && (spatialRotation->n_rows != 3 || spatialRotation->n_cols != 3 ||
+			!spatialRotation->is_finite() ||
+			arma::norm(spatialRotation->t() * (*spatialRotation) - arma::eye<arma::mat>(3,3), "fro") > 1e-10 ||
+			std::abs(arma::det(*spatialRotation) - 1.0) > 1e-10))
+		{ error = "stochastic relaxation requires a proper finite spatial rotation"; return false; }
+		HilbertStochasticRelaxationCache prepared;
+		for (const auto &op : operators)
+		{
+			const auto kind = StochasticRelaxationKindHilbert(op, error);
+			if (kind == HilbertStochasticRelaxationKind::Unsupported) return false;
+			if (kind == HilbertStochasticRelaxationKind::None) continue;
+			arma::sp_cx_mat ps, pt;
+			if (!this->SingletTripletProjectors(op, ps, pt, &error)) return false;
+			// A joint global spin rotation leaves PS/PT invariant; do not rotate
+			// or diagonalize a dense operator at every powder point.
+			HilbertRandomUnitaryRelaxationTerm term;
+			term.U = ps - pt;
+			term.eventRate = op->Rate1() / 2.0;
+			term.involutory = true;
+			prepared.terms.push_back(std::move(term));
+		}
+		cache = std::move(prepared);
+		return true;
+	}
+
+	std::mt19937 StochasticRelaxationGenerator(std::mt19937 source, unsigned long long stream)
+	{
+		std::vector<std::mt19937::result_type> seed{0x5354524cU, 0x554e4954U,
+			static_cast<std::mt19937::result_type>(stream & 0xffffffffULL),
+			static_cast<std::mt19937::result_type>(stream >> 32)};
+		for (unsigned int i = 0; i < 8; ++i) seed.push_back(source());
+		std::seed_seq sequence(seed.begin(), seed.end());
+		return std::mt19937(sequence);
+	}
+
+	bool ApplyStochasticRelaxationHilbert(const HilbertStochasticRelaxationCache &cache,
+		double dt, arma::cx_mat &factors, std::mt19937 &generator, std::string &error)
+	{
+		error.clear();
+		if (!std::isfinite(dt) || dt < 0.0)
+		{ error = "stochastic relaxation interval must be finite and non-negative"; return false; }
+		if (cache.Empty() || dt == 0.0) return true; // no RNG consumption
+		if (factors.is_empty())
+		{ error = "stochastic relaxation requires nonempty Hilbert trajectories"; return false; }
+		double totalRate = 0.0;
+		std::vector<double> rates;
+		for (const auto &term : cache.terms)
+		{
+			if (!std::isfinite(term.eventRate) || term.eventRate <= 0.0 ||
+				term.U.n_rows != factors.n_rows || term.U.n_cols != factors.n_rows)
+			{ error = "invalid cached stochastic relaxation rate or Hilbert dimension"; return false; }
+			rates.push_back(term.eventRate); totalRate += term.eventRate;
+		}
+		if (cache.terms.size() == 1 && cache.terms.front().involutory)
+		{
+			// E[U rho U†] at Poisson event rate lambda. For U²=I, odd
+			// event parity has p=(1-exp(-2 lambda dt))/2. For ST lambda=k/2.
+			const double probability = -0.5 * std::expm1(-2.0 * totalRate * dt);
+			std::bernoulli_distribution flip(probability);
+			for (arma::uword column = 0; column < factors.n_cols; ++column)
+				if (flip(generator)) factors.col(column) = cache.terms.front().U * factors.col(column);
+			return true;
+		}
+		const double mean = totalRate * dt;
+		if (!std::isfinite(mean))
+		{ error = "total stochastic relaxation event count overflows; reduce timestep"; return false; }
+		// Superposed Poisson process, with independently marked events. This
+		// samples exp(dt sum_j R_j), including NONCOMMUTING U_j. Drawing an
+		// independent parity for each channel in a fixed order would not.
+		std::poisson_distribution<unsigned long long> count(mean);
+		std::discrete_distribution<size_t> channel(rates.begin(), rates.end());
+		for (arma::uword column = 0; column < factors.n_cols; ++column)
+		{
+			const auto events = count(generator);
+			for (unsigned long long event = 0; event < events; ++event)
+				factors.col(column) = cache.terms[channel(generator)].U * factors.col(column);
+		}
+		return true;
 	}
 }

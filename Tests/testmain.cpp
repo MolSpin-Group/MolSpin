@@ -27,6 +27,7 @@ using test_case = std::pair<std::string, test_ptr>; // Function pointer and name
 //////////////////////////////////////////////////////////////////////////////
 // Files with the other test functions
 #include "tests_spinapi.cpp"
+#include "tests_StochasticRelaxation.cpp"
 #include "tests_msdparser.cpp"
 #include "tests_actions.cpp"
 #include "tests_TaskStaticHSSymmetricDecay.cpp"
@@ -147,6 +148,7 @@ int main(int argc, char **argv)
 
 #if SPINAPI_TEST == 1
 	AddSpinAPITests(cases);
+	AddStochasticRelaxationTests(cases);
 #endif
 #if MSDPARSER_TEST == 1 
 	AddMSDParserTests(cases);

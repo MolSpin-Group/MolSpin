@@ -265,14 +265,19 @@ namespace SpinAPI
 			// Also puts a CompleteState object into cstate if it returns true
 			if (_state->GetCompleteState(tmpspin, cstate))
 			{
-				// Remove the spins in the CompleteState from the spin list, as they are all handled here
-				for (auto i = cstate.cbegin(); i != cstate.cend(); i++)
+				// GetState(cstate, ..., false) tensors group members in active
+				// SpinSpace order, which can differ from their State declaration.
+				// Track that same order before permuting the completed result.
+				for (auto i = spinlist.begin(); i != spinlist.end();)
 				{
-					spinlist.erase(std::remove(spinlist.begin(), spinlist.end(), i->first), spinlist.end());
-
-					// Also, construct the basis order of the spins
-					if (i->first != tmpspin)
-						basis.push_back(i->first);
+					const bool member = std::any_of(cstate.begin(), cstate.end(),
+						[&](const auto &entry) { return entry.first == *i; });
+					if (member)
+					{
+						basis.push_back(*i);
+						i = spinlist.erase(i);
+					}
+					else ++i;
 				}
 
 				// Get the state vector for the subset of spins (the CompleteState)
@@ -330,14 +335,19 @@ namespace SpinAPI
 			// Also puts a CompleteState object into cstate if it returns true
 			if (_state->GetCompleteState(tmpspin, cstate))
 			{
-				// Remove the spins in the CompleteState from the spin list, as they are all handled here
-				for (auto i = cstate.cbegin(); i != cstate.cend(); i++)
+				// GetState(cstate, ..., false) tensors group members in active
+				// SpinSpace order, which can differ from their State declaration.
+				// Track that same order before permuting the completed result.
+				for (auto i = spinlist.begin(); i != spinlist.end();)
 				{
-					spinlist.erase(std::remove(spinlist.begin(), spinlist.end(), i->first), spinlist.end());
-
-					// Also, construct the basis order of the spins
-					if (i->first != tmpspin)
-						basis.push_back(i->first);
+					const bool member = std::any_of(cstate.begin(), cstate.end(),
+						[&](const auto &entry) { return entry.first == *i; });
+					if (member)
+					{
+						basis.push_back(*i);
+						i = spinlist.erase(i);
+					}
+					else ++i;
 				}
 
 				// Get the state vector for the subset of spins (the CompleteState)
@@ -409,6 +419,34 @@ namespace SpinAPI
 				leadingStateSupport = false;
 				break;
 			}
+		}
+
+		// GetStateSubSpace concatenates complete entangled groups without a
+		// basis permutation. That is safe only when each group is contiguous
+		// in the fixed leading block. For interleaved groups use the correctly
+		// ordered support-projector route below, which is also SU(Z) sampling.
+		for (size_t first = 0; leadingStateSupport && first < fixedSpinCount;)
+		{
+			CompleteState group;
+			if (!_state->GetCompleteState(this->spins[first], group))
+			{
+				leadingStateSupport = false;
+				break;
+			}
+			size_t next = first;
+			for (size_t index = first; index < fixedSpinCount; ++index)
+			{
+				const bool member = std::any_of(group.begin(), group.end(),
+					[&](const auto &entry) { return entry.first == this->spins[index]; });
+				if (member && index != next)
+				{
+					leadingStateSupport = false;
+					break;
+				}
+				if (member) ++next;
+			}
+			if (next == first) leadingStateSupport = false;
+			first = next;
 		}
 
 		if (_method == TraceSamplingMethod::SUZ && leadingStateSupport && fixedSpinCount > 0)
@@ -623,14 +661,19 @@ namespace SpinAPI
 			// Also puts a CompleteState object into cstate if it returns true
 			if (_state->GetCompleteState(tmpspin, cstate))
 			{
-				// Remove the spins in the CompleteState from the spin list, as they are all handled here
-				for (auto i = cstate.cbegin(); i != cstate.cend(); i++)
+				// GetState(cstate, ..., false) tensors group members in active
+				// SpinSpace order, which can differ from their State declaration.
+				// Track that same order before permuting the completed result.
+				for (auto i = spinlist.begin(); i != spinlist.end();)
 				{
-					spinlist.erase(std::remove(spinlist.begin(), spinlist.end(), i->first), spinlist.end());
-
-					// Also, construct the basis order of the spins
-					if (i->first != tmpspin)
-						basis.push_back(i->first);
+					const bool member = std::any_of(cstate.begin(), cstate.end(),
+						[&](const auto &entry) { return entry.first == *i; });
+					if (member)
+					{
+						basis.push_back(*i);
+						i = spinlist.erase(i);
+					}
+					else ++i;
 				}
 
 				// Get the state vector
@@ -698,14 +741,19 @@ namespace SpinAPI
 			// Also puts a CompleteState object into cstate if it returns true
 			if (_state->GetCompleteState(tmpspin, cstate))
 			{
-				// Remove the spins in the CompleteState from the spin list, as they are all handled here
-				for (auto i = cstate.cbegin(); i != cstate.cend(); i++)
+				// GetState(cstate, ..., false) tensors group members in active
+				// SpinSpace order, which can differ from their State declaration.
+				// Track that same order before permuting the completed result.
+				for (auto i = spinlist.begin(); i != spinlist.end();)
 				{
-					spinlist.erase(std::remove(spinlist.begin(), spinlist.end(), i->first), spinlist.end());
-
-					// Also, construct the basis order of the spins
-					if (i->first != tmpspin)
-						basis.push_back(i->first);
+					const bool member = std::any_of(cstate.begin(), cstate.end(),
+						[&](const auto &entry) { return entry.first == *i; });
+					if (member)
+					{
+						basis.push_back(*i);
+						i = spinlist.erase(i);
+					}
+					else ++i;
 				}
 
 				// Get the state vector
@@ -906,6 +954,28 @@ namespace SpinAPI
 
 		const arma::cx_double imaginaryUnit(0.0, 1.0);
 		_operator = arma::expmat(-imaginaryUnit * angle * generator);
+		return true;
+	}
+
+	bool SpinSpace::RotateStateFactors(const arma::cx_mat &factors, const arma::mat &rotation,
+		arma::cx_mat &out) const
+	{
+		if (factors.n_rows != this->HilbertSpaceDimensions() || factors.n_cols == 0) return false;
+		arma::vec axis; double angle=0.0;
+		if (!RotationMatrixToAxisAngle(rotation, axis, angle)) return false;
+		out=factors;
+		if (std::abs(angle)<1e-12) return true;
+		// Generators on different spins commute. Their tensor-product action
+		// needs only sparse embedded single-spin rotations, never a D x D
+		// density or a dense total-angular-momentum propagator.
+		for (const auto &spin : this->spins)
+		{
+			const arma::cx_mat generator(axis(0)*spin->Sx()+axis(1)*spin->Sy()+axis(2)*spin->Sz());
+			const arma::sp_cx_mat local(arma::expmat(arma::cx_double(0,-angle)*generator));
+			arma::sp_cx_mat embedded;
+			if (!this->CreateOperator(local,spin,embedded)) return false;
+			out=embedded*out;
+		}
 		return true;
 	}
 

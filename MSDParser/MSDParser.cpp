@@ -152,6 +152,7 @@ namespace MSDParser
 
 		// Put spins into other objects - this can only be done now that all spins have been loaded
 		int failed = 0;
+		bool invalidOperators = false;
 		for (auto i = this->systems.cbegin(); i != this->systems.cend(); i++)
 		{
 			// Prepare the state objects
@@ -172,6 +173,7 @@ namespace MSDParser
 
 			// Prepare Operator objects
 			auto failedOperators = (*i)->ValidateOperators(this->systems);
+			if (!failedOperators.empty()) invalidOperators = true;
 			for (auto j = failedOperators.cbegin(); j != failedOperators.cend(); j++)
 			{
 				std::cout << "Failed to load operator object " << (*j)->Name() << "!" << std::endl;
@@ -222,6 +224,10 @@ namespace MSDParser
 				failed += 1;
 			}
 		}
+
+		// Failed Operators are removed by SpinSystem validation. Never run a
+		// different physical model after silently losing requested relaxation.
+		if (invalidOperators) return false;
 
 		if(failed > 0)
 		{

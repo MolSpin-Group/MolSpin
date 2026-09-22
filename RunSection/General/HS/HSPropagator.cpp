@@ -2,9 +2,9 @@
 // HSPropagator implementation (RunSection::General::HS)
 // ------------------
 // Hilbert-factor propagation uses dB/dt = (-iH-K)B. Density propagation uses
-// drho/dt = -i[H,rho] - {K,rho} + R[rho]. General dissipators therefore select
-// density propagation, with exponential coherent/reaction half-steps around the
-// dissipative finite step unless propagationmethod=rk4 is requested explicitly.
+// drho/dt = -i[H,rho] - {K,rho} + R[rho]. Direct relaxation uses density
+// propagation. Supported stochastic relaxation uses random-unitary factor
+// updates around the deterministic step; other nonzero mechanisms are rejected.
 //
 // Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
 // (c) 2026 Quantum Biology and Computational Physics Group.
@@ -126,6 +126,27 @@ namespace RunSection::General::HS
 		const arma::cx_mat k4 = end * (factors + dt * k3);
 		factors += (dt / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4);
 		return factors.is_finite();
+	}
+
+	bool HSPropagator::StepStochastic(const arma::sp_cx_mat &H, const arma::sp_cx_mat &K,
+		double dt, arma::cx_mat &factors, const HSRelaxationContext &context,
+		std::mt19937 &generator, std::string &error)
+	{
+		// Symmetric weak second-order split, irrespective of the order of the
+		// inner deterministic method. The relaxation-only map is exact.
+		return SpinAPI::ApplyStochasticRelaxationHilbert(context.stochasticCache, 0.5*dt, factors, generator, error) &&
+			Step(H, K, dt, factors, error) &&
+			SpinAPI::ApplyStochasticRelaxationHilbert(context.stochasticCache, 0.5*dt, factors, generator, error);
+	}
+
+	bool HSPropagator::StepDynamicRK4Stochastic(const arma::sp_cx_mat &H0, const arma::sp_cx_mat &K0,
+		const arma::sp_cx_mat &Hm, const arma::sp_cx_mat &Km, const arma::sp_cx_mat &H1,
+		const arma::sp_cx_mat &K1, double dt, arma::cx_mat &factors,
+		const HSRelaxationContext &context, std::mt19937 &generator, std::string &error)
+	{
+		return SpinAPI::ApplyStochasticRelaxationHilbert(context.stochasticCache, 0.5*dt, factors, generator, error) &&
+			StepDynamicRK4(H0, K0, Hm, Km, H1, K1, dt, factors, error) &&
+			SpinAPI::ApplyStochasticRelaxationHilbert(context.stochasticCache, 0.5*dt, factors, generator, error);
 	}
 
 	bool HSPropagator::StepDensity(const arma::sp_cx_mat &hamiltonian,
@@ -256,12 +277,14 @@ namespace RunSection::General::HS
 		const SpinAPI::system_ptr &system, const HSOrientation &orientation,
 		const arma::sp_cx_mat &baseHamiltonian, const arma::sp_cx_mat &baseReaction,
 		const HSReactionRelaxation &relaxation, const HSRelaxationContext &context,
-		bool densityMode, arma::cx_mat &factors, arma::cx_mat &density,
+		HSRelaxationPropagationMode mode, std::mt19937 &relaxationGenerator,
+		arma::cx_mat &factors, arma::cx_mat &density,
 		double &elapsedTime, const HSPulseTimelineObserver &observer,
 		std::ostream &log, std::string &error)
 	{
 		error.clear();
 		elapsedTime = 0.0;
+		const bool densityMode = mode == HSRelaxationPropagationMode::DensityMatrix;
 		if (sequence.empty()) return true;
 		if (system == nullptr) { error = "cannot apply a pulse sequence to a null spin system"; return false; }
 		if (plan.IsDynamic())
@@ -291,7 +314,7 @@ namespace RunSection::General::HS
 					return this->StepDensity(H, baseReaction, dt, density, relaxation, context, error);
 				return this->StepDensitySplit(H, baseReaction, dt, density, relaxation, context, error);
 			}
-			return this->Step(H, baseReaction, dt, factors, error);
+			return this->StepStochastic(H, baseReaction, dt, factors, context, relaxationGenerator, error);
 		};
 
 		bool emittedInitialFinitePulseState = false;
@@ -377,7 +400,8 @@ namespace RunSection::General::HS
 					}
 					double amplitude = 1.0;
 					if (type == SpinAPI::PulseType::LongPulse)
-						amplitude = std::cos(pulse->Frequency() * target);
+						amplitude = std::cos(pulse->Frequency() *
+							(mode == HSRelaxationPropagationMode::StochasticTrajectories ? target - 0.5*interval : target));
 					const arma::sp_cx_mat H = baseHamiltonian + amplitude * pulseOperator;
 					if (!propagate(H, interval)) return false;
 					pulseElapsed = target;
