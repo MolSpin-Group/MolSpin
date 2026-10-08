@@ -77,8 +77,11 @@ namespace RunSection::General::Resonance
         double thermalTemperatureK = 300.0;
         bool fullTensorRotation = true;
         double minimumCumulativeOverlapWeight = 0.0;
-        std::size_t maximumComponentsPerCoreTransition = 0;
+        std::size_t maximumComponentsPerCoreTransition = 65536;
         double mergeFrequencyToleranceRadNs = 0.0;
+        HybridNuclearCompositionMode compositionMode =
+            HybridNuclearCompositionMode::Auto;
+        double compressionTolerance_mT = 0.0;
     };
 
     class HybridNuclearResonancePreparation
@@ -332,7 +335,9 @@ namespace RunSection::General::Resonance
                 partition.minimumCumulativeOverlapWeight>1.0 ||
                 !std::isfinite(
                     partition.mergeFrequencyToleranceRadNs) ||
-                partition.mergeFrequencyToleranceRadNs<0.0)
+                partition.mergeFrequencyToleranceRadNs<0.0 ||
+                !std::isfinite(partition.compressionTolerance_mT) ||
+                partition.compressionTolerance_mT<0.0)
             {
                 error =
                     "hybrid composition controls are invalid";
@@ -767,6 +772,10 @@ namespace RunSection::General::Resonance
                 partition.maximumComponentsPerCoreTransition;
             point.hybrid.mergeFrequencyToleranceRadNs=
                 partition.mergeFrequencyToleranceRadNs;
+            point.hybrid.compositionMode=
+                partition.compositionMode;
+            point.hybrid.compressionTolerance_mT=
+                partition.compressionTolerance_mT;
             point.hybrid.nuclei.reserve(
                 partition.nuclei.size());
 

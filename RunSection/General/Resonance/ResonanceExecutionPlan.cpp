@@ -253,6 +253,25 @@ namespace RunSection::General::Resonance
             properties.Get("hybrid_minimum_cumulative_overlap_weight",
                            plan.hybridMinimumCumulativeOverlapWeight);
 
+        if (!properties.Get("hybridcomposition", plan.hybridCompositionMode))
+            properties.Get("hybrid_composition", plan.hybridCompositionMode);
+        plan.hybridCompositionMode=
+            ResonanceLowercase(plan.hybridCompositionMode);
+        if (plan.hybridCompositionMode!="auto" &&
+            plan.hybridCompositionMode!="explicit" &&
+            plan.hybridCompositionMode!="compressed")
+        {
+            log << "Hybrid composition must be auto, explicit, or compressed." << std::endl;
+            return false;
+        }
+
+        if (!properties.Get("hybridcompressiontolerancemt",
+                            plan.hybridCompressionTolerance_mT) &&
+            !properties.Get("hybridcompressiontolerance",
+                            plan.hybridCompressionTolerance_mT))
+            properties.Get("hybrid_compression_tolerance_mt",
+                           plan.hybridCompressionTolerance_mT);
+
         int hybridMaximumComponents = 0;
         if (properties.Get("hybridmaximumcomponentspercoretransition", hybridMaximumComponents) ||
             properties.Get("hybrid_maximum_components_per_core_transition", hybridMaximumComponents))
@@ -262,7 +281,10 @@ namespace RunSection::General::Resonance
                 log << "Hybrid maximum component count must be non-negative." << std::endl;
                 return false;
             }
-            plan.hybridMaximumComponentsPerCoreTransition = static_cast<std::size_t>(hybridMaximumComponents);
+            plan.hybridMaximumComponentsPerCoreTransition =
+                hybridMaximumComponents==0
+                ? 65536
+                : static_cast<std::size_t>(hybridMaximumComponents);
         }
 
         if (plan.resonanceSolverMode == "hybrid")
@@ -296,12 +318,18 @@ namespace RunSection::General::Resonance
                 plan.hybridOverlapThreshold < 0.0 || plan.hybridOverlapThreshold > 1.0 ||
                 !std::isfinite(plan.hybridMinimumCumulativeOverlapWeight) ||
                 plan.hybridMinimumCumulativeOverlapWeight < 0.0 ||
-                plan.hybridMinimumCumulativeOverlapWeight > 1.0)
+                plan.hybridMinimumCumulativeOverlapWeight > 1.0 ||
+                !std::isfinite(plan.hybridCompressionTolerance_mT) ||
+                (plan.hybridCompressionTolerance_mT < 0.0 &&
+                 plan.hybridCompressionTolerance_mT != -1.0))
             {
                 log << "Invalid explicit hybrid resonance numerical controls." << std::endl;
                 return false;
             }
-            log << "General Resonance solver = explicit hybrid nuclear treatment." << std::endl;
+            log << "General Resonance solver = explicitly partitioned hybrid nuclear treatment." << std::endl;
+            log << "Hybrid nuclear composition = " << plan.hybridCompositionMode
+                << ", component limit = "
+                << plan.hybridMaximumComponentsPerCoreTransition << "." << std::endl;
         }
 
         log << "Full-Hamiltonian resonance detection model: mwfrequency = " << plan.mwFrequencyGHz

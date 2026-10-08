@@ -37,6 +37,7 @@
 #define MOD_RunSection_General_Resonance_HybridNuclearResonanceSolver
 
 #include "ResonanceFieldJacobian.h"
+#include "HybridNuclearShiftKernel.h"
 #include "ResonanceTransitionMoments.h"
 #include "ResonanceTypes.h"
 
@@ -72,8 +73,11 @@ namespace RunSection::General::Resonance
         std::vector<HybridNuclearResonanceNucleus> nuclei;
 
         double minimumCumulativeOverlapWeight = 0.0;
-        std::size_t maximumComponentsPerCoreTransition = 0;
+        std::size_t maximumComponentsPerCoreTransition = 65536;
         double mergeFrequencyToleranceRadNs = 0.0;
+        HybridNuclearCompositionMode compositionMode =
+            HybridNuclearCompositionMode::Auto;
+        double compressionTolerance_mT = 0.0;
     };
 
     struct HybridNuclearResonanceReport
@@ -87,6 +91,12 @@ namespace RunSection::General::Resonance
         std::size_t mergedComponents = 0;
         std::size_t outputComponents = 0;
         std::size_t maximumIntermediateComponents = 0;
+        std::size_t formalCartesianComponents = 0;
+        bool formalCartesianOverflow = false;
+        HybridNuclearCompositionMode compositionBackend =
+            HybridNuclearCompositionMode::Explicit;
+        std::vector<std::size_t> maximumComponentsAfterStage;
+        double maximumConvolutionWeightError = 0.0;
         double maximumDiscardedNuclearWeightFraction = 0.0;
         bool pruningApplied = false;
         bool mergingApplied = false;
@@ -762,7 +772,9 @@ namespace RunSection::General::Resonance
                 hybrid.minimumCumulativeOverlapWeight > 1.0 ||
                 !std::isfinite(
                     hybrid.mergeFrequencyToleranceRadNs) ||
-                hybrid.mergeFrequencyToleranceRadNs < 0.0)
+                hybrid.mergeFrequencyToleranceRadNs < 0.0 ||
+                !std::isfinite(hybrid.compressionTolerance_mT) ||
+                hybrid.compressionTolerance_mT < 0.0)
             {
                 error =
                     "invalid independent multi-nucleus composition request";
@@ -938,6 +950,33 @@ namespace RunSection::General::Resonance
                     {
                         std::vector<MultiPartialComponent>
                             next;
+                        const std::size_t componentLimit=
+                            hybrid.maximumComponentsPerCoreTransition==0
+                            ? 65536
+                            : hybrid.maximumComponentsPerCoreTransition;
+                        const std::size_t dimension=
+                            static_cast<std::size_t>(factor.dimension);
+                        if (dimension==0 || dimension>
+                            std::numeric_limits<std::size_t>::max()/dimension)
+                        {
+                            error =
+                                "independent multi-nucleus component count overflow";
+                            return false;
+                        }
+                        const std::size_t localComponents=
+                            dimension*dimension;
+                        if (partials.size()>
+                                std::numeric_limits<std::size_t>::max()/
+                                    localComponents ||
+                            partials.size()*localComponents>
+                                componentLimit)
+                        {
+                            error =
+                                "independent multi-nucleus component cap exceeded";
+                            return false;
+                        }
+                        next.reserve(
+                            partials.size()*localComponents);
                         const auto &lowerManifold =
                             factor.nuclear[lower];
                         const auto &upperManifold =
@@ -1338,6 +1377,68 @@ namespace RunSection::General::Resonance
             return std::isfinite(omega);
         }
 
+        static bool TrackedIndependentCoreGap(
+            arma::uword lowerReference,
+            arma::uword upperReference,
+            const IndependentMultiPointSolution &displaced,
+            const IndependentMultiTrackingMaps &maps,
+            double &gap)
+        {
+            if (lowerReference >= maps.core.size() ||
+                upperReference >= maps.core.size())
+                return false;
+            const arma::uword lower=maps.core[lowerReference];
+            const arma::uword upper=maps.core[upperReference];
+            if (lower >= displaced.core.coreEnergies.n_elem ||
+                upper >= displaced.core.coreEnergies.n_elem)
+                return false;
+            gap=displaced.core.coreEnergies(upper)-
+                displaced.core.coreEnergies(lower);
+            return std::isfinite(gap);
+        }
+
+        static bool TrackedIndependentNuclearShift(
+            std::size_t factorIndex,
+            arma::uword lowerReference,
+            arma::uword upperReference,
+            arma::uword lowerNuclearReference,
+            arma::uword upperNuclearReference,
+            const IndependentMultiPointSolution &displaced,
+            const IndependentMultiTrackingMaps &maps,
+            double &shift)
+        {
+            if (factorIndex >= displaced.factors.size() ||
+                factorIndex >= maps.nuclear.size() ||
+                lowerReference >= maps.core.size() ||
+                upperReference >= maps.core.size() ||
+                lowerReference >= maps.nuclear[factorIndex].size() ||
+                upperReference >= maps.nuclear[factorIndex].size() ||
+                lowerNuclearReference >=
+                    maps.nuclear[factorIndex][lowerReference].size() ||
+                upperNuclearReference >=
+                    maps.nuclear[factorIndex][upperReference].size())
+                return false;
+
+            const arma::uword lower=maps.core[lowerReference];
+            const arma::uword upper=maps.core[upperReference];
+            const arma::uword r=
+                maps.nuclear[factorIndex][lowerReference]
+                    [lowerNuclearReference];
+            const arma::uword s=
+                maps.nuclear[factorIndex][upperReference]
+                    [upperNuclearReference];
+            if (lower >= displaced.factors[factorIndex].nuclear.size() ||
+                upper >= displaced.factors[factorIndex].nuclear.size() ||
+                r >= displaced.factors[factorIndex].nuclear[lower].energies.n_elem ||
+                s >= displaced.factors[factorIndex].nuclear[upper].energies.n_elem)
+                return false;
+
+            shift=
+                displaced.factors[factorIndex].nuclear[upper].energies(s)-
+                displaced.factors[factorIndex].nuclear[lower].energies(r);
+            return std::isfinite(shift);
+        }
+
         static bool SolveTrackedIndependentMultiDisplacement(
             const HybridNuclearResonancePointProvider &provider,
             double fieldT,
@@ -1367,6 +1468,339 @@ namespace RunSection::General::Resonance
                 minimumCoreOverlap,
                 minimumNuclearOverlap,
                 maps,error);
+        }
+
+        static bool BuildCompressedIndependentMultiLines(
+            const IndependentMultiPointSolution &center,
+            const IndependentMultiPointSolution &plusH,
+            const IndependentMultiPointSolution &minusH,
+            const IndependentMultiPointSolution &plusHH,
+            const IndependentMultiPointSolution &minusHH,
+            const IndependentMultiTrackingMaps &mapPlusH,
+            const IndependentMultiTrackingMaps &mapMinusH,
+            const IndependentMultiTrackingMaps &mapPlusHH,
+            const IndependentMultiTrackingMaps &mapMinusHH,
+            const HybridNuclearResonanceRequest &hybrid,
+            const HybridNuclearResonanceFieldResponseRequest &fieldResponse,
+            const SpectrumRequest &request,
+            ResonanceLineSet &lineSet,
+            HybridNuclearResonanceReport &report,
+            std::string &error)
+        {
+            if (hybrid.minimumCumulativeOverlapWeight > 0.0)
+            {
+                error =
+                    "compressed hybrid composition is incompatible with path-wise cumulative-overlap pruning; set hybridminimumcumulativeoverlapweight=0";
+                return false;
+            }
+
+            report = HybridNuclearResonanceReport{};
+            report.nucleusCount=center.factors.size();
+            report.productNuclearDimension=
+                center.productNuclearDimension;
+            report.largestDiagonalizedNuclearDimension=
+                center.largestDiagonalizedNuclearDimension;
+            report.compositionBackend=
+                HybridNuclearCompositionMode::Compressed;
+            report.maximumComponentsAfterStage.assign(
+                center.factors.size(),0);
+
+            report.formalCartesianComponents=1;
+            for (const auto &factor:center.factors)
+            {
+                const std::size_t dimension=
+                    static_cast<std::size_t>(factor.dimension);
+                if (dimension!=0 &&
+                    dimension>
+                        std::numeric_limits<std::size_t>::max()/dimension)
+                {
+                    report.formalCartesianComponents=
+                        std::numeric_limits<std::size_t>::max();
+                    report.formalCartesianOverflow=true;
+                    break;
+                }
+                const std::size_t local=dimension*dimension;
+                if (report.formalCartesianComponents!=0 &&
+                    local>
+                        std::numeric_limits<std::size_t>::max()/
+                            report.formalCartesianComponents)
+                {
+                    report.formalCartesianComponents=
+                        std::numeric_limits<std::size_t>::max();
+                    report.formalCartesianOverflow=true;
+                    break;
+                }
+                report.formalCartesianComponents*=local;
+            }
+
+            const double productDimension=
+                static_cast<double>(center.productNuclearDimension);
+            const double h=fieldResponse.fieldStepT;
+            const double hh=0.5*h;
+            const double omegaMw=2.0*arma::datum::pi*
+                request.microwaveFrequencyGHz;
+            const arma::uword coreDimension=
+                center.core.coreEnergies.n_elem;
+
+            for (arma::uword lower=0;lower<coreDimension;++lower)
+            {
+                for (arma::uword upper=lower+1;
+                     upper<coreDimension;++upper)
+                {
+                    ++report.coreTransitions;
+                    const double corePopulationDifference=
+                        center.core.corePopulations(lower)-
+                        center.core.corePopulations(upper);
+                    const double populationDifference=
+                        corePopulationDifference/productDimension;
+                    if (std::abs(populationDifference)<
+                        request.populationThreshold)
+                        continue;
+
+                    TransitionMoment coreMoment;
+                    if (center.core.detectionChannelsEigen.empty())
+                    {
+                        coreMoment=
+                            ResonanceTransitionMoments::Evaluate(
+                                center.core.muXEigen,
+                                center.core.muYEigen,
+                                lower,upper);
+                    }
+                    else if (!ResonanceTransitionMoments::EvaluateResolved(
+                            center.core.muXEigen,
+                            center.core.muYEigen,
+                            center.core.detectionChannelsEigen,
+                            lower,upper,coreMoment,error))
+                        return false;
+
+                    double corePlusH=0.0,coreMinusH=0.0;
+                    double corePlusHH=0.0,coreMinusHH=0.0;
+                    if (!TrackedIndependentCoreGap(
+                            lower,upper,plusH,mapPlusH,corePlusH) ||
+                        !TrackedIndependentCoreGap(
+                            lower,upper,minusH,mapMinusH,coreMinusH) ||
+                        !TrackedIndependentCoreGap(
+                            lower,upper,plusHH,mapPlusHH,corePlusHH) ||
+                        !TrackedIndependentCoreGap(
+                            lower,upper,minusHH,mapMinusHH,coreMinusHH))
+                    {
+                        error=
+                            "non-finite tracked exact-core transition frequency";
+                        return false;
+                    }
+
+                    HybridNuclearShiftComponent coreComponent;
+                    coreComponent.omegaRadNs=
+                        center.core.coreEnergies(upper)-
+                        center.core.coreEnergies(lower);
+                    coreComponent.slopeH_RadNsT=
+                        (corePlusH-coreMinusH)/(2.0*h);
+                    coreComponent.slopeHH_RadNsT=
+                        (corePlusHH-coreMinusHH)/(2.0*hh);
+                    coreComponent.weight=1.0;
+
+                    std::vector<std::vector<
+                        HybridNuclearShiftComponent>> factors;
+                    factors.reserve(center.factors.size());
+
+                    for (std::size_t k=0;
+                         k<center.factors.size();++k)
+                    {
+                        const auto &factor=center.factors[k];
+                        const auto &lowerManifold=
+                            factor.nuclear[lower];
+                        const auto &upperManifold=
+                            factor.nuclear[upper];
+                        std::vector<HybridNuclearShiftComponent> local;
+                        const std::size_t localCapacity=
+                            static_cast<std::size_t>(factor.dimension)*
+                            static_cast<std::size_t>(factor.dimension);
+                        local.reserve(localCapacity);
+
+                        for (arma::uword r=0;r<factor.dimension;++r)
+                        {
+                            for (arma::uword s=0;s<factor.dimension;++s)
+                            {
+                                const arma::cx_double overlap=arma::cdot(
+                                    upperManifold.eigenvectors.col(s),
+                                    lowerManifold.eigenvectors.col(r));
+                                double overlapWeight=std::norm(overlap);
+                                if (!std::isfinite(overlapWeight) ||
+                                    overlapWeight<0.0 ||
+                                    overlapWeight>1.0+1.0e-10)
+                                {
+                                    error=
+                                        "invalid independent nuclear-state overlap weight";
+                                    return false;
+                                }
+                                overlapWeight=std::min(1.0,overlapWeight);
+                                if (overlapWeight<factor.overlapThreshold)
+                                {
+                                    report.pruningApplied=true;
+                                    continue;
+                                }
+
+                                double shiftPlusH=0.0,shiftMinusH=0.0;
+                                double shiftPlusHH=0.0,shiftMinusHH=0.0;
+                                if (!TrackedIndependentNuclearShift(
+                                        k,lower,upper,r,s,
+                                        plusH,mapPlusH,shiftPlusH) ||
+                                    !TrackedIndependentNuclearShift(
+                                        k,lower,upper,r,s,
+                                        minusH,mapMinusH,shiftMinusH) ||
+                                    !TrackedIndependentNuclearShift(
+                                        k,lower,upper,r,s,
+                                        plusHH,mapPlusHH,shiftPlusHH) ||
+                                    !TrackedIndependentNuclearShift(
+                                        k,lower,upper,r,s,
+                                        minusHH,mapMinusHH,shiftMinusHH))
+                                {
+                                    error=
+                                        "non-finite tracked independent nuclear shift";
+                                    return false;
+                                }
+
+                                HybridNuclearShiftComponent component;
+                                component.omegaRadNs=
+                                    upperManifold.energies(s)-
+                                    lowerManifold.energies(r);
+                                component.slopeH_RadNsT=
+                                    (shiftPlusH-shiftMinusH)/(2.0*h);
+                                component.slopeHH_RadNsT=
+                                    (shiftPlusHH-shiftMinusHH)/(2.0*hh);
+                                component.weight=overlapWeight;
+                                local.push_back(component);
+                            }
+                        }
+                        if (local.empty())
+                        {
+                            error=
+                                "all independent nuclear branches were removed by the overlap threshold";
+                            return false;
+                        }
+                        factors.push_back(std::move(local));
+                    }
+
+                    HybridNuclearShiftKernelOptions options;
+                    options.mode=HybridNuclearCompositionMode::Compressed;
+                    options.fieldTolerance_mT=
+                        hybrid.compressionTolerance_mT;
+                    options.linewidth_mT=request.linewidth_mT;
+                    options.microwaveOmegaRadNs=omegaMw;
+                    options.minimumSlopeRadNsT=request.minimumSlope;
+                    options.referenceSlopeRadNsT=
+                        omegaMw/fieldResponse.fieldT;
+                    options.maximumComponents=
+                        hybrid.maximumComponentsPerCoreTransition==0
+                        ? 65536
+                        : hybrid.maximumComponentsPerCoreTransition;
+
+                    std::vector<HybridNuclearShiftComponent> composed;
+                    HybridNuclearShiftKernelReport kernelReport;
+                    if (!HybridNuclearShiftKernel::Compose(
+                            coreComponent,factors,options,
+                            composed,kernelReport,error))
+                        return false;
+
+                    if (report.generatedComponents >
+                        std::numeric_limits<std::size_t>::max()-
+                            kernelReport.generatedCandidates)
+                        report.generatedComponents=
+                            std::numeric_limits<std::size_t>::max();
+                    else
+                        report.generatedComponents +=
+                            kernelReport.generatedCandidates;
+                    report.retainedComponents += composed.size();
+                    report.mergedComponents +=
+                        kernelReport.mergedComponents;
+                    report.mergingApplied =
+                        report.mergingApplied ||
+                        kernelReport.mergedComponents>0;
+                    report.maximumIntermediateComponents=std::max(
+                        report.maximumIntermediateComponents,
+                        kernelReport.maximumIntermediateComponents);
+                    report.maximumConvolutionWeightError=std::max(
+                        report.maximumConvolutionWeightError,
+                        kernelReport.relativeWeightError);
+                    for (std::size_t k=0;
+                         k<kernelReport.componentsAfterStage.size();++k)
+                    {
+                        report.maximumComponentsAfterStage[k]=std::max(
+                            report.maximumComponentsAfterStage[k],
+                            kernelReport.componentsAfterStage[k]);
+                    }
+
+                    double retainedWeight=0.0;
+                    for (const auto &component:composed)
+                        retainedWeight += component.weight;
+                    double retainedFraction=
+                        retainedWeight/productDimension;
+                    if (!std::isfinite(retainedFraction) ||
+                        retainedFraction>1.0+1.0e-9)
+                    {
+                        error=
+                            "compressed independent nuclear overlap weight is not normalized";
+                        return false;
+                    }
+                    retainedFraction=std::max(0.0,
+                        std::min(1.0,retainedFraction));
+                    report.maximumDiscardedNuclearWeightFraction=std::max(
+                        report.maximumDiscardedNuclearWeightFraction,
+                        1.0-retainedFraction);
+
+                    for (const auto &component:composed)
+                    {
+                        const double convergenceError=std::abs(
+                            component.slopeHH_RadNsT-
+                            component.slopeH_RadNsT);
+                        const double convergenceScale=std::max(
+                            std::abs(component.slopeHH_RadNsT),
+                            std::abs(component.slopeH_RadNsT));
+                        const double convergenceTolerance=
+                            fieldResponse.jacobianAbsoluteTolerance+
+                            fieldResponse.jacobianRelativeTolerance*
+                                convergenceScale;
+                        if (convergenceError>convergenceTolerance)
+                        {
+                            error=
+                                "compressed multi-nucleus finite-difference field derivative did not converge";
+                            return false;
+                        }
+
+                        const double slope=
+                            std::abs(component.slopeHH_RadNsT);
+                        if (slope<request.minimumSlope)
+                            continue;
+                        const double dBdOmega=1.0/slope;
+                        if (!std::isfinite(dBdOmega) ||
+                            dBdOmega>request.maximumDBdOmega)
+                            continue;
+
+                        ResonanceLine line;
+                        line.lower=lower;
+                        line.upper=upper;
+                        line.omega=component.omegaRadNs;
+                        line.populationDifference=populationDifference;
+                        line.dOmegaDB=slope;
+                        line.dBdOmega=dBdOmega;
+                        line.moment=ResonanceTransitionMoments::Scale(
+                            coreMoment,component.weight);
+                        if (!std::isfinite(line.omega) ||
+                            !std::isfinite(line.populationDifference) ||
+                            !ResonanceTransitionMoments::IsFinite(line.moment))
+                        {
+                            error=
+                                "non-finite compressed multinuclear resonance line";
+                            return false;
+                        }
+                        lineSet.lines.push_back(std::move(line));
+                    }
+                }
+            }
+
+            lineSet.fieldJacobianQualified=true;
+            report.outputComponents=lineSet.lines.size();
+            return true;
         }
 
     private:
@@ -1477,27 +1911,84 @@ namespace RunSection::General::Resonance
                 return false;
             }
 
-            if (centerPoint.hybrid.
-                    mergeFrequencyToleranceRadNs > 0.0)
-            {
-                error =
-                    "multi-nucleus field response requires unmerged center components";
-                return false;
-            }
-
             IndependentMultiPointSolution center;
             if (!SolveIndependentMultiPoint(
                     centerPoint,request,
                     center,error))
                 return false;
 
-            std::vector<IndependentMultiComponent>
-                components;
-            if (!BuildIndependentMultiComponents(
-                    center,centerPoint.hybrid,
-                    request,components,
-                    report,error))
+            std::size_t formalComponents=1;
+            bool formalOverflow=false;
+            for (const auto &factor:center.factors)
+            {
+                const std::size_t dimension=
+                    static_cast<std::size_t>(factor.dimension);
+                std::size_t localComponents=0;
+                if (dimension != 0 &&
+                    dimension >
+                        std::numeric_limits<std::size_t>::max()/dimension)
+                {
+                    localComponents=
+                        std::numeric_limits<std::size_t>::max();
+                    formalOverflow=true;
+                }
+                else
+                    localComponents=dimension*dimension;
+                if (formalComponents != 0 &&
+                    localComponents >
+                        std::numeric_limits<std::size_t>::max()/
+                            formalComponents)
+                {
+                    formalComponents=
+                        std::numeric_limits<std::size_t>::max();
+                    formalOverflow=true;
+                }
+                else
+                    formalComponents*=localComponents;
+            }
+
+            HybridNuclearCompositionMode backend=
+                centerPoint.hybrid.compositionMode;
+            if (backend==HybridNuclearCompositionMode::Auto)
+            {
+                backend=
+                    formalOverflow ||
+                    formalComponents>
+                        (centerPoint.hybrid.
+                            maximumComponentsPerCoreTransition==0
+                         ? 65536
+                         : centerPoint.hybrid.
+                            maximumComponentsPerCoreTransition)
+                    ? HybridNuclearCompositionMode::Compressed
+                    : HybridNuclearCompositionMode::Explicit;
+            }
+            if (backend==HybridNuclearCompositionMode::Compressed &&
+                centerPoint.hybrid.compressionTolerance_mT<=0.0)
+            {
+                error=
+                    "automatic compressed hybrid composition requires a positive compression tolerance";
                 return false;
+            }
+            if (backend==HybridNuclearCompositionMode::Explicit &&
+                centerPoint.hybrid.mergeFrequencyToleranceRadNs>0.0)
+            {
+                error=
+                    "multi-nucleus field response requires unmerged center components";
+                return false;
+            }
+            if (backend==HybridNuclearCompositionMode::Explicit &&
+                (formalOverflow ||
+                 formalComponents>
+                    (centerPoint.hybrid.
+                        maximumComponentsPerCoreTransition==0
+                     ? 65536
+                     : centerPoint.hybrid.
+                        maximumComponentsPerCoreTransition)))
+            {
+                error=
+                    "explicit hybrid nuclear component cap exceeded before allocation";
+                return false;
+            }
 
             const double h =
                 fieldResponse.fieldStepT;
@@ -1547,6 +2038,31 @@ namespace RunSection::General::Resonance
                         minimumNuclearStateOverlap,
                     minusHH,mapMinusHH,error))
                 return false;
+
+            if (backend==HybridNuclearCompositionMode::Compressed)
+            {
+                return BuildCompressedIndependentMultiLines(
+                    center,plusH,minusH,plusHH,minusHH,
+                    mapPlusH,mapMinusH,mapPlusHH,mapMinusHH,
+                    centerPoint.hybrid,fieldResponse,request,
+                    lineSet,report,error);
+            }
+
+            std::vector<IndependentMultiComponent>
+                components;
+            HybridNuclearResonanceRequest explicitRequest=
+                centerPoint.hybrid;
+            explicitRequest.compositionMode=
+                HybridNuclearCompositionMode::Explicit;
+            if (!BuildIndependentMultiComponents(
+                    center,explicitRequest,
+                    request,components,
+                    report,error))
+                return false;
+            report.formalCartesianComponents=formalComponents;
+            report.formalCartesianOverflow=formalOverflow;
+            report.compositionBackend=
+                HybridNuclearCompositionMode::Explicit;
 
             for (auto component:components)
             {

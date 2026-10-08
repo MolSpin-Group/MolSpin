@@ -85,7 +85,9 @@ namespace RunSection
 		  hybridJacobianAbsoluteTolerance(1.0e-5),
 		  hybridOverlapThreshold(1.0e-14),
 		  hybridMinimumCumulativeOverlapWeight(0.0),
-		  hybridMaximumComponentsPerCoreTransition(0)
+		  hybridMaximumComponentsPerCoreTransition(65536),
+		  hybridCompositionMode("auto"),
+		  hybridCompressionTolerance_mT(-1.0)
 	{
 	}
 
@@ -1097,9 +1099,17 @@ namespace RunSection
 			this->hybridMinimumCumulativeOverlapWeight;
 		partitionRequest.maximumComponentsPerCoreTransition =
 			this->hybridMaximumComponentsPerCoreTransition;
-		// Finite-difference branch tracking is currently qualified only for
-		// unmerged center components. Merging remains disabled in this task gate.
 		partitionRequest.mergeFrequencyToleranceRadNs = 0.0;
+		partitionRequest.compositionMode =
+			this->hybridCompositionMode=="explicit"
+			? HybridNuclearCompositionMode::Explicit
+			: (this->hybridCompositionMode=="compressed"
+				? HybridNuclearCompositionMode::Compressed
+				: HybridNuclearCompositionMode::Auto);
+		partitionRequest.compressionTolerance_mT =
+			this->hybridCompressionTolerance_mT>=0.0
+			? this->hybridCompressionTolerance_mT
+			: 0.05*std::abs(this->linewidth_mT);
 
 		HybridNuclearResonancePartition partition;
 		std::string hybridError;
@@ -1223,6 +1233,11 @@ namespace RunSection
 		std::size_t maxLargestDiagonalizedNuclearDimension = 0;
 		double maxDiscardedWeight = 0.0;
 		bool anyPruning = false;
+		bool anyCompression = false;
+		std::size_t maxFormalComponents = 0;
+		bool formalOverflow = false;
+		std::size_t maxCompactComponents = 0;
+		double maxWeightError = 0.0;
 
 		// Sequential on purpose in R2K-B: the finite-difference provider
 		// temporarily mutates and restores shared physical Zeeman fields. A later
@@ -1316,6 +1331,20 @@ namespace RunSection
 					maxDiscardedWeight,
 					report.maximumDiscardedNuclearWeightFraction);
 				anyPruning = anyPruning || report.pruningApplied;
+				anyCompression = anyCompression ||
+					report.compositionBackend==
+						HybridNuclearCompositionMode::Compressed;
+				maxFormalComponents = std::max(
+					maxFormalComponents,
+					report.formalCartesianComponents);
+				formalOverflow = formalOverflow ||
+					report.formalCartesianOverflow;
+				maxCompactComponents = std::max(
+					maxCompactComponents,
+					report.maximumIntermediateComponents);
+				maxWeightError = std::max(
+					maxWeightError,
+					report.maximumConvolutionWeightError);
 			}
 		}
 
@@ -1328,8 +1357,18 @@ namespace RunSection
 						<< maxLargestDiagonalizedNuclearDimension
 						<< "; max discarded nuclear weight = "
 						<< maxDiscardedWeight
-						<< "; pruning = " << (anyPruning ? "yes" : "no") << "."
-						<< std::endl;
+						<< "; pruning = " << (anyPruning ? "yes" : "no")
+						<< "; composition = "
+						<< (anyCompression ? "compressed" : "explicit")
+						<< "; formal components/core transition = ";
+			if (formalOverflow)
+				this->Log() << "overflow";
+			else
+				this->Log() << maxFormalComponents;
+			this->Log() << "; max compact components = "
+						<< maxCompactComponents
+						<< "; max weight error = "
+						<< maxWeightError << "." << std::endl;
 		}
 
 		this->Data() << this->RunSettings()->CurrentStep() << " ";
@@ -1608,6 +1647,20 @@ namespace RunSection
 		if (!this->Properties()->Get("hybridminimumcumulativeoverlapweight", this->hybridMinimumCumulativeOverlapWeight))
 			this->Properties()->Get("hybrid_minimum_cumulative_overlap_weight", this->hybridMinimumCumulativeOverlapWeight);
 
+		if (!this->Properties()->Get("hybridcomposition", this->hybridCompositionMode))
+			this->Properties()->Get("hybrid_composition", this->hybridCompositionMode);
+		this->hybridCompositionMode=ToLower(this->hybridCompositionMode);
+		if (this->hybridCompositionMode!="auto" &&
+			this->hybridCompositionMode!="explicit" &&
+			this->hybridCompositionMode!="compressed")
+		{
+			this->Log() << "Hybrid composition must be auto, explicit, or compressed." << std::endl;
+			return false;
+		}
+		if (!this->Properties()->Get("hybridcompressiontolerancemt", this->hybridCompressionTolerance_mT) &&
+			!this->Properties()->Get("hybridcompressiontolerance", this->hybridCompressionTolerance_mT))
+			this->Properties()->Get("hybrid_compression_tolerance_mt", this->hybridCompressionTolerance_mT);
+
 		int hybridMaximumComponents = 0;
 		if (this->Properties()->Get("hybridmaximumcomponentspercoretransition", hybridMaximumComponents) ||
 			this->Properties()->Get("hybrid_maximum_components_per_core_transition", hybridMaximumComponents))
@@ -1618,7 +1671,9 @@ namespace RunSection
 				return false;
 			}
 			this->hybridMaximumComponentsPerCoreTransition =
-				static_cast<std::size_t>(hybridMaximumComponents);
+				hybridMaximumComponents==0
+				? 65536
+				: static_cast<std::size_t>(hybridMaximumComponents);
 		}
 
 		if (this->resonanceSolverMode == "hybrid")
@@ -1647,12 +1702,17 @@ namespace RunSection
 				!std::isfinite(this->hybridJacobianAbsoluteTolerance) || this->hybridJacobianAbsoluteTolerance < 0.0 ||
 				!std::isfinite(this->hybridOverlapThreshold) || this->hybridOverlapThreshold < 0.0 || this->hybridOverlapThreshold > 1.0 ||
 				!std::isfinite(this->hybridMinimumCumulativeOverlapWeight) ||
-				this->hybridMinimumCumulativeOverlapWeight < 0.0 || this->hybridMinimumCumulativeOverlapWeight > 1.0)
+				this->hybridMinimumCumulativeOverlapWeight < 0.0 || this->hybridMinimumCumulativeOverlapWeight > 1.0 ||
+				!std::isfinite(this->hybridCompressionTolerance_mT) ||
+				(this->hybridCompressionTolerance_mT<0.0 && this->hybridCompressionTolerance_mT!=-1.0))
 			{
 				this->Log() << "Invalid explicit hybrid resonance numerical controls." << std::endl;
 				return false;
 			}
-			this->Log() << "General Resonance solver = explicit hybrid nuclear treatment." << std::endl;
+			this->Log() << "General Resonance solver = explicitly partitioned hybrid nuclear treatment." << std::endl;
+			this->Log() << "Hybrid nuclear composition = " << this->hybridCompositionMode
+				<< ", component limit = "
+				<< this->hybridMaximumComponentsPerCoreTransition << "." << std::endl;
 		}
 
 		this->Log() << "Full-Hamiltonian resonance detection model: mwfrequency = " << this->mwFrequencyGHz

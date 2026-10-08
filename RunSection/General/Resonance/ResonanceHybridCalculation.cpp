@@ -296,9 +296,17 @@ namespace RunSection::General::Resonance
         partitionRequest.fullTensorRotation = plan.fullTensorRotation;
         partitionRequest.minimumCumulativeOverlapWeight = plan.hybridMinimumCumulativeOverlapWeight;
         partitionRequest.maximumComponentsPerCoreTransition = plan.hybridMaximumComponentsPerCoreTransition;
-        // Finite-difference branch tracking is currently qualified only for
-        // unmerged center components. Merging remains disabled in this task gate.
         partitionRequest.mergeFrequencyToleranceRadNs = 0.0;
+        partitionRequest.compositionMode =
+            plan.hybridCompositionMode=="explicit"
+            ? HybridNuclearCompositionMode::Explicit
+            : (plan.hybridCompositionMode=="compressed"
+                ? HybridNuclearCompositionMode::Compressed
+                : HybridNuclearCompositionMode::Auto);
+        partitionRequest.compressionTolerance_mT =
+            plan.hybridCompressionTolerance_mT>=0.0
+            ? plan.hybridCompressionTolerance_mT
+            : 0.05*std::abs(plan.linewidth_mT);
 
         HybridNuclearResonancePartition partition;
         std::string hybridError;
@@ -348,6 +356,12 @@ namespace RunSection::General::Resonance
         std::size_t maxLargestDiagonalizedNuclearDimension = 0;
         double maxDiscardedWeight = 0.0;
         bool anyPruning = false;
+        bool anyCompression = false;
+        std::size_t maxFormalComponents = 0;
+        bool formalOverflow = false;
+        std::size_t maxCompactComponents = 0;
+        double maxWeightError = 0.0;
+        std::vector<std::size_t> maxStageComponents;
 
         // Sequential on purpose in R2K-B: the finite-difference provider
         // temporarily mutates and restores shared physical Zeeman fields. A later
@@ -432,6 +446,29 @@ namespace RunSection::General::Resonance
                 maxDiscardedWeight =
                     std::max(maxDiscardedWeight, report.maximumDiscardedNuclearWeightFraction);
                 anyPruning = anyPruning || report.pruningApplied;
+                anyCompression = anyCompression ||
+                    report.compositionBackend==
+                        HybridNuclearCompositionMode::Compressed;
+                maxFormalComponents=std::max(
+                    maxFormalComponents,
+                    report.formalCartesianComponents);
+                formalOverflow=formalOverflow ||
+                    report.formalCartesianOverflow;
+                maxCompactComponents=std::max(
+                    maxCompactComponents,
+                    report.maximumIntermediateComponents);
+                maxWeightError=std::max(
+                    maxWeightError,
+                    report.maximumConvolutionWeightError);
+                if (maxStageComponents.size()<
+                    report.maximumComponentsAfterStage.size())
+                    maxStageComponents.resize(
+                        report.maximumComponentsAfterStage.size(),0);
+                for (std::size_t k=0;
+                     k<report.maximumComponentsAfterStage.size();++k)
+                    maxStageComponents[k]=std::max(
+                        maxStageComponents[k],
+                        report.maximumComponentsAfterStage[k]);
             }
         }
 
@@ -441,7 +478,27 @@ namespace RunSection::General::Resonance
                 << " perturbative nuclei; product nuclear dimension = " << maxProductNuclearDimension
                 << "; largest nuclear diagonalization = " << maxLargestDiagonalizedNuclearDimension
                 << "; max discarded nuclear weight = " << maxDiscardedWeight
-                << "; pruning = " << (anyPruning ? "yes" : "no") << "." << std::endl;
+                << "; pruning = " << (anyPruning ? "yes" : "no")
+                << "; composition = "
+                << (anyCompression ? "compressed" : "explicit")
+                << "; formal components/core transition = ";
+            if (formalOverflow)
+                log << "overflow";
+            else
+                log << maxFormalComponents;
+            log << "; max compact components = " << maxCompactComponents
+                << "; max weight error = " << maxWeightError;
+            if (!maxStageComponents.empty())
+            {
+                log << "; stage counts = [";
+                for (std::size_t k=0;k<maxStageComponents.size();++k)
+                {
+                    if (k>0) log << ",";
+                    log << maxStageComponents[k];
+                }
+                log << "]";
+            }
+            log << "." << std::endl;
         }
 
         sample = ResonanceSample();

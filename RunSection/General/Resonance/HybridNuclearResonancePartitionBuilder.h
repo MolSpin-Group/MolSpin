@@ -66,8 +66,11 @@ namespace RunSection::General::Resonance
         bool fullTensorRotation = true;
 
         double minimumCumulativeOverlapWeight = 0.0;
-        std::size_t maximumComponentsPerCoreTransition = 0;
+        std::size_t maximumComponentsPerCoreTransition = 65536;
         double mergeFrequencyToleranceRadNs = 0.0;
+        HybridNuclearCompositionMode compositionMode =
+            HybridNuclearCompositionMode::Auto;
+        double compressionTolerance_mT = 0.0;
     };
 
     class HybridNuclearResonancePartitionBuilder
@@ -322,7 +325,9 @@ namespace RunSection::General::Resonance
                 request.minimumCumulativeOverlapWeight>1.0 ||
                 !std::isfinite(
                     request.mergeFrequencyToleranceRadNs) ||
-                request.mergeFrequencyToleranceRadNs<0.0)
+                request.mergeFrequencyToleranceRadNs<0.0 ||
+                !std::isfinite(request.compressionTolerance_mT) ||
+                request.compressionTolerance_mT<0.0)
             {
                 error=
                     "explicit hybrid composition controls are invalid";
@@ -372,6 +377,10 @@ namespace RunSection::General::Resonance
                 request.maximumComponentsPerCoreTransition;
             partition.mergeFrequencyToleranceRadNs=
                 request.mergeFrequencyToleranceRadNs;
+            partition.compositionMode=
+                request.compositionMode;
+            partition.compressionTolerance_mT=
+                request.compressionTolerance_mT;
 
             for (const auto &spin:systemSpins)
             {

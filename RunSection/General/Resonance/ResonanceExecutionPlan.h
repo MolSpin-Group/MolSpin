@@ -65,7 +65,10 @@ namespace RunSection::General::Resonance
         double hybridJacobianAbsoluteTolerance = 1.0e-5;
         double hybridOverlapThreshold = 1.0e-14;
         double hybridMinimumCumulativeOverlapWeight = 0.0;
-        std::size_t hybridMaximumComponentsPerCoreTransition = 0;
+        std::size_t hybridMaximumComponentsPerCoreTransition = 65536;
+        std::string hybridCompositionMode = "auto";
+        // Negative means derive 5% of the requested linewidth.
+        double hybridCompressionTolerance_mT = -1.0;
 
         ResonanceSweepMode sweepMode = ResonanceSweepMode::Exact;
         bool meshClusterAxes = false;

@@ -6651,6 +6651,596 @@ namespace
                    1.0e-14*scale;
     }
 
+    double GRC_HybridKernelSignal(
+        const std::vector<RunSection::General::Resonance::
+            HybridNuclearShiftComponent> &components,
+        double omegaMw,double fieldOffset_mT,double linewidth_mT)
+    {
+        using namespace RunSection::General::Resonance;
+        double signal=0.0;
+        for (const auto &component:components)
+        {
+            const double slope=std::abs(component.slopeHH_RadNsT);
+            if (!(slope>0.0))
+                continue;
+            const double detuning_mT=
+                1.0e3*(component.omegaRadNs-omegaMw)/slope-
+                fieldOffset_mT;
+            signal += component.weight/slope*
+                ResonanceLineshape::Evaluate(
+                    Lineshape::Gaussian,detuning_mT,linewidth_mT);
+        }
+        return signal;
+    }
+
+    bool GRC_BuildQuadrupolarV51Point(
+        double fieldT,
+        RunSection::General::Resonance::HybridNuclearResonancePoint &point)
+    {
+        using namespace RunSection::General::Resonance;
+        arma::cx_mat sx,sy,sz,id2;
+        GRC_R2GA_SpinHalfOperators(sx,sy,sz,id2);
+        SpinAPI::Spin vanadium(
+            "V","type=nucleus;spin=7/2;isotope=51V;"
+                "tensor=isotropic(1);");
+        const arma::cx_mat ix(vanadium.Sx());
+        const arma::cx_mat iy(vanadium.Sy());
+        const arma::cx_mat iz(vanadium.Sz());
+        const arma::cx_mat id8=arma::eye<arma::cx_mat>(8,8);
+
+        constexpr double gammaE=175.21;
+        constexpr double gammaN=-0.07045513257526152;
+        point=HybridNuclearResonancePoint{};
+        point.coreHamiltonian=arma::sp_cx_mat(gammaE*fieldT*sz);
+        point.coreDensity.zeros(2,2);
+        point.coreDensity(1,1)=1.0;
+        point.coreDHdB=arma::sp_cx_mat(gammaE*sz);
+        point.coreMuX=sx;
+        point.coreMuY=sy;
+
+        HybridNuclearResonanceNucleus nucleus;
+        nucleus.hyperfineCoreNuclear=
+            0.31*arma::kron(sx,ix)+
+            0.07*arma::kron(sx,iy)-
+            0.04*arma::kron(sx,iz)-
+            0.03*arma::kron(sy,ix)+
+            0.27*arma::kron(sy,iy)+
+            0.06*arma::kron(sy,iz)+
+            0.08*arma::kron(sz,ix)-
+            0.05*arma::kron(sz,iy)+
+            0.43*arma::kron(sz,iz);
+        const arma::cx_mat quadrupole=
+            0.012*(iz*iz-(15.75/3.0)*id8)+
+            0.004*(ix*ix-iy*iy)+
+            0.003*(ix*iy+iy*ix);
+        nucleus.nuclearHamiltonian=
+            gammaN*fieldT*iz+quadrupole;
+        nucleus.nuclearDHdB=arma::sp_cx_mat(gammaN*iz);
+        nucleus.nuclearDimension=8;
+        nucleus.overlapThreshold=1.0e-14;
+        point.hybrid.nuclei={nucleus};
+        point.hybrid.maximumComponentsPerCoreTransition=65536;
+        return true;
+    }
+
+    bool GRC_TestHybridCompressedQuadrupolarV51Parity()
+    {
+        using namespace RunSection::General::Resonance;
+        constexpr double fieldT=0.341;
+        const auto provider=[](HybridNuclearCompositionMode mode)
+        {
+            return HybridNuclearResonancePointProvider(
+                [mode](double field,
+                    HybridNuclearResonancePoint &point,
+                    std::string &error)
+                {
+                    error.clear();
+                    if (!GRC_BuildQuadrupolarV51Point(field,point))
+                        return false;
+                    point.hybrid.compositionMode=mode;
+                    point.hybrid.compressionTolerance_mT=1.0e-6;
+                    return true;
+                });
+        };
+
+        SpectrumRequest request;
+        request.microwaveFrequencyGHz=9.5;
+        request.linewidth_mT=0.10;
+        request.populationThreshold=1.0e-15;
+        request.minimumSlope=1.0e-15;
+        HybridNuclearResonanceFieldResponseRequest response;
+        response.fieldT=fieldT;
+        response.fieldStepT=1.0e-4;
+        response.minimumCoreStateOverlap=0.99;
+        response.minimumNuclearStateOverlap=0.90;
+        response.jacobianRelativeTolerance=1.0e-5;
+        response.jacobianAbsoluteTolerance=1.0e-5;
+
+        ResonanceLineSet explicitLines,compactLines;
+        HybridNuclearResonanceReport explicitReport,compactReport;
+        std::string error;
+        if (!GRC_GenerateFirstOrderFiniteDifference(
+                provider(HybridNuclearCompositionMode::Explicit),
+                response,request,explicitLines,explicitReport,error) ||
+            !GRC_GenerateFirstOrderFiniteDifference(
+                provider(HybridNuclearCompositionMode::Compressed),
+                response,request,compactLines,compactReport,error))
+            return false;
+
+        SpectrumPoint explicitPoint,compactPoint;
+        if (!ResonanceSpectrumEvaluator::Evaluate(
+                explicitLines,request,explicitPoint,error) ||
+            !ResonanceSpectrumEvaluator::Evaluate(
+                compactLines,request,compactPoint,error))
+            return false;
+        const double scale=std::max(
+            1.0,std::abs(explicitPoint.totalPerpendicular));
+        return compactReport.productNuclearDimension==8 &&
+            compactReport.formalCartesianComponents==64 &&
+            compactReport.compositionBackend==
+                HybridNuclearCompositionMode::Compressed &&
+            compactReport.maximumConvolutionWeightError<1.0e-12 &&
+            std::abs(explicitPoint.totalPerpendicular-
+                compactPoint.totalPerpendicular)<1.0e-8*scale;
+    }
+
+    bool GRC_TestHybridCompressedKernelConvergence()
+    {
+        using namespace RunSection::General::Resonance;
+
+        const double omegaMw=2.0*arma::datum::pi*9.5;
+        HybridNuclearShiftComponent core;
+        core.omegaRadNs=omegaMw+0.013;
+        core.slopeH_RadNsT=175.31;
+        core.slopeHH_RadNsT=175.30;
+        core.weight=1.0;
+
+        std::vector<std::vector<HybridNuclearShiftComponent>> factors(2);
+        for (std::size_t k=0;k<factors.size();++k)
+        {
+            for (int r=0;r<8;++r)
+            {
+                for (int s=0;s<8;++s)
+                {
+                    HybridNuclearShiftComponent component;
+                    component.omegaRadNs=
+                        (s-r)*(0.0017+0.0003*k)+
+                        (s*s-r*r)*1.0e-5;
+                    component.slopeH_RadNsT=
+                        (s-r)*(1.7e-3+2.0e-4*k);
+                    component.slopeHH_RadNsT=
+                        component.slopeH_RadNsT+
+                        (r+s-7)*1.0e-7;
+                    component.weight=1.0/8.0;
+                    factors[k].push_back(component);
+                }
+            }
+        }
+
+        HybridNuclearShiftKernelOptions options;
+        options.mode=HybridNuclearCompositionMode::Explicit;
+        options.fieldTolerance_mT=0.0;
+        options.linewidth_mT=0.10;
+        options.microwaveOmegaRadNs=omegaMw;
+        options.minimumSlopeRadNsT=1.0e-12;
+        options.maximumComponents=10000;
+
+        std::vector<HybridNuclearShiftComponent> exact;
+        HybridNuclearShiftKernelReport exactReport;
+        std::string error;
+        if (!HybridNuclearShiftKernel::Compose(
+                core,factors,options,exact,exactReport,error) ||
+            exact.size()!=4096 ||
+            exactReport.formalCartesianComponents!=4096)
+            return false;
+
+        double previousError=std::numeric_limits<double>::infinity();
+        std::size_t previousCount=0;
+        for (const double tolerance:{0.020,0.005,0.001})
+        {
+            options.mode=HybridNuclearCompositionMode::Compressed;
+            options.fieldTolerance_mT=tolerance;
+            std::vector<HybridNuclearShiftComponent> compact;
+            HybridNuclearShiftKernelReport report;
+            if (!HybridNuclearShiftKernel::Compose(
+                    core,factors,options,compact,report,error) ||
+                report.backend!=HybridNuclearCompositionMode::Compressed ||
+                report.relativeWeightError>1.0e-12 ||
+                compact.empty() || compact.size()>exact.size())
+                return false;
+
+            double error2=0.0,reference2=0.0;
+            for (int i=-40;i<=40;++i)
+            {
+                const double offset=0.01*i;
+                const double reference=GRC_HybridKernelSignal(
+                    exact,omegaMw,offset,0.10);
+                const double value=GRC_HybridKernelSignal(
+                    compact,omegaMw,offset,0.10);
+                error2+=(value-reference)*(value-reference);
+                reference2+=reference*reference;
+            }
+            const double relative=std::sqrt(error2/
+                std::max(reference2,1.0e-300));
+            if (!std::isfinite(relative) ||
+                relative>previousError+2.0e-4)
+                return false;
+            previousError=relative;
+            if (previousCount!=0 && compact.size()<previousCount)
+                return false;
+            previousCount=compact.size();
+        }
+        return previousError<2.0e-3;
+    }
+
+    bool GRC_TestHybridCompressedKernelFiveVScaling()
+    {
+        using namespace RunSection::General::Resonance;
+
+        const double omegaMw=2.0*arma::datum::pi*9.5;
+        HybridNuclearShiftComponent core{
+            omegaMw,175.2,175.2,1.0};
+        std::vector<std::vector<HybridNuclearShiftComponent>> factors(5);
+        for (std::size_t k=0;k<factors.size();++k)
+        {
+            for (int r=0;r<8;++r)
+            {
+                for (int s=0;s<8;++s)
+                {
+                    HybridNuclearShiftComponent component;
+                    component.omegaRadNs=
+                        (s-r)*(0.0010+0.00013*k)+
+                        (s*s-r*r)*2.0e-6;
+                    component.slopeH_RadNsT=
+                        (s-r)*(2.0e-4+1.0e-5*k);
+                    component.slopeHH_RadNsT=
+                        component.slopeH_RadNsT;
+                    // A dense, normalized overlap matrix exercises all 64
+                    // local branches without discarding off-diagonal terms.
+                    component.weight=1.0/8.0;
+                    factors[k].push_back(component);
+                }
+            }
+        }
+
+        HybridNuclearShiftKernelOptions options;
+        options.mode=HybridNuclearCompositionMode::Auto;
+        options.fieldTolerance_mT=0.01;
+        options.linewidth_mT=1.0;
+        options.microwaveOmegaRadNs=omegaMw;
+        options.minimumSlopeRadNsT=1.0e-12;
+        options.maximumComponents=65536;
+
+        std::vector<HybridNuclearShiftComponent> compact;
+        HybridNuclearShiftKernelReport report;
+        std::string error;
+        options.mode=HybridNuclearCompositionMode::Explicit;
+        if (HybridNuclearShiftKernel::Compose(
+                core,factors,options,compact,report,error) ||
+            error!=
+                "explicit hybrid nuclear component cap exceeded before allocation" ||
+            !compact.empty())
+            return false;
+
+        options.mode=HybridNuclearCompositionMode::Auto;
+        if (!HybridNuclearShiftKernel::Compose(
+                core,factors,options,compact,report,error))
+            return false;
+
+        return
+            report.formalCartesianComponents==1073741824ULL &&
+            !report.formalCartesianOverflow &&
+            report.backend==HybridNuclearCompositionMode::Compressed &&
+            report.componentsAfterStage.size()==5 &&
+            report.maximumIntermediateComponents<=65536 &&
+            compact.size()<=65536 &&
+            report.relativeWeightError<1.0e-12 &&
+            std::abs(report.outputWeight-32768.0)<1.0e-8;
+    }
+
+    bool GRC_TestHybridCompressedTwoV51FieldResponse()
+    {
+        using namespace RunSection::General::Resonance;
+
+        GRC_ZfsHybridModel model;
+        const auto orientation=GRC_Orientation(0.23,0.71,-0.31);
+        const double frequency=9.5;
+        const double fieldT=2.0*arma::datum::pi*frequency/
+            (GRC_MU_B_OVER_HBAR*model.gz);
+
+        const auto makeProvider=[&](HybridNuclearCompositionMode mode,
+                                    double tolerance)
+        {
+            return HybridNuclearResonancePointProvider(
+                [&,mode,tolerance](double field,
+                    HybridNuclearResonancePoint &point,
+                    std::string &error)
+                {
+                    if (!GRC_R2GB_BuildZfsMultiPoint(
+                            model,orientation,{0.43,0.67},
+                            false,field,point,error))
+                        return false;
+                    point.hybrid.compositionMode=mode;
+                    point.hybrid.compressionTolerance_mT=tolerance;
+                    point.hybrid.maximumComponentsPerCoreTransition=65536;
+                    return true;
+                });
+        };
+
+        SpectrumRequest request;
+        request.microwaveFrequencyGHz=frequency;
+        request.linewidth_mT=0.10;
+        request.populationThreshold=1.0e-15;
+        request.minimumSlope=1.0e-15;
+        const auto response=GRC_R2GB_Response(fieldT,1.0e-4);
+
+        ResonanceLineSet explicitLines,compactLines,compactFineLines;
+        HybridNuclearResonanceReport explicitReport,compactReport,
+            compactFineReport;
+        auto fineResponse=response;
+        fineResponse.fieldStepT=0.5*response.fieldStepT;
+        std::string error;
+        if (!GRC_GenerateFirstOrderFiniteDifference(
+                makeProvider(HybridNuclearCompositionMode::Explicit,0.0),
+                response,request,explicitLines,explicitReport,error) ||
+            !GRC_GenerateFirstOrderFiniteDifference(
+                makeProvider(HybridNuclearCompositionMode::Compressed,1.0e-6),
+                response,request,compactLines,compactReport,error) ||
+            !GRC_GenerateFirstOrderFiniteDifference(
+                makeProvider(HybridNuclearCompositionMode::Compressed,1.0e-6),
+                fineResponse,request,compactFineLines,
+                compactFineReport,error))
+            return false;
+
+        SpectrumPoint explicitPoint,compactPoint,compactFinePoint;
+        if (!ResonanceSpectrumEvaluator::Evaluate(
+                explicitLines,request,explicitPoint,error) ||
+            !ResonanceSpectrumEvaluator::Evaluate(
+                compactLines,request,compactPoint,error) ||
+            !ResonanceSpectrumEvaluator::Evaluate(
+                compactFineLines,request,compactFinePoint,error))
+            return false;
+
+        const double scale=std::max(
+            1.0,std::abs(explicitPoint.totalPerpendicular));
+        return
+            explicitReport.compositionBackend==
+                HybridNuclearCompositionMode::Explicit &&
+            compactReport.compositionBackend==
+                HybridNuclearCompositionMode::Compressed &&
+            compactReport.formalCartesianComponents==4096 &&
+            compactReport.maximumConvolutionWeightError<1.0e-12 &&
+            std::abs(explicitPoint.totalPerpendicular-
+                compactPoint.totalPerpendicular)<1.0e-7*scale &&
+            std::abs(compactPoint.totalPerpendicular-
+                compactFinePoint.totalPerpendicular)<1.0e-7*scale;
+    }
+
+    bool GRC_TestHybridCompressedTwoV51PowderRegression()
+    {
+        using namespace RunSection::General::Resonance;
+
+        GRC_ZfsHybridModel model;
+        const double frequency=9.5;
+        const double fieldT=2.0*arma::datum::pi*frequency/
+            (GRC_MU_B_OVER_HBAR*model.gz);
+        const std::vector<RunSection::General::HS::HSOrientation> orientations={
+            GRC_Orientation(0.0,0.31,0.0),
+            GRC_Orientation(0.71,1.07,-0.23),
+            GRC_Orientation(-1.1,2.03,0.62)};
+
+        SpectrumRequest request;
+        request.microwaveFrequencyGHz=frequency;
+        request.linewidth_mT=0.10;
+        request.populationThreshold=1.0e-15;
+        request.minimumSlope=1.0e-15;
+        constexpr int halfFieldPoints=6;
+        constexpr double fieldSpacingT=5.0e-5;
+        std::vector<double> explicitPowder(
+            2*halfFieldPoints+1,0.0);
+        std::vector<double> compactPowder(
+            explicitPowder.size(),0.0);
+        std::string error;
+        for (int fieldIndex=-halfFieldPoints;
+             fieldIndex<=halfFieldPoints;++fieldIndex)
+        {
+            const double sampleFieldT=
+                fieldT+fieldSpacingT*fieldIndex;
+            const auto response=
+                GRC_R2GB_Response(sampleFieldT,1.0e-4);
+            const std::size_t outputIndex=
+                static_cast<std::size_t>(
+                    fieldIndex+halfFieldPoints);
+
+            for (const auto &orientation:orientations)
+            {
+                const auto makeProvider=
+                    [&](HybridNuclearCompositionMode mode)
+                {
+                    return HybridNuclearResonancePointProvider(
+                        [&,mode](double field,
+                            HybridNuclearResonancePoint &point,
+                            std::string &localError)
+                        {
+                            if (!GRC_R2GB_BuildZfsMultiPoint(
+                                    model,orientation,{0.39,0.64},
+                                    false,field,point,localError))
+                                return false;
+                            point.hybrid.compositionMode=mode;
+                            point.hybrid.compressionTolerance_mT=1.0e-5;
+                            point.hybrid.maximumComponentsPerCoreTransition=65536;
+                            return true;
+                        });
+                };
+
+                ResonanceLineSet explicitLines,compactLines;
+                HybridNuclearResonanceReport explicitReport,compactReport;
+                if (!GRC_GenerateFirstOrderFiniteDifference(
+                        makeProvider(
+                            HybridNuclearCompositionMode::Explicit),
+                        response,request,explicitLines,
+                        explicitReport,error) ||
+                    !GRC_GenerateFirstOrderFiniteDifference(
+                        makeProvider(
+                            HybridNuclearCompositionMode::Compressed),
+                        response,request,compactLines,
+                        compactReport,error))
+                    return false;
+
+                SpectrumPoint explicitPoint,compactPoint;
+                if (!ResonanceSpectrumEvaluator::Evaluate(
+                        explicitLines,request,explicitPoint,error) ||
+                    !ResonanceSpectrumEvaluator::Evaluate(
+                        compactLines,request,compactPoint,error))
+                    return false;
+                explicitPowder[outputIndex]+=
+                    explicitPoint.totalPerpendicular/
+                    static_cast<double>(orientations.size());
+                compactPowder[outputIndex]+=
+                    compactPoint.totalPerpendicular/
+                    static_cast<double>(orientations.size());
+            }
+        }
+
+        double reference2=0.0,error2=0.0,maxReference=0.0;
+        double maxError=0.0,explicitIntegral=0.0,compactIntegral=0.0;
+        std::size_t explicitPeak=0,compactPeak=0;
+        for (std::size_t i=0;i<explicitPowder.size();++i)
+        {
+            reference2+=explicitPowder[i]*explicitPowder[i];
+            const double difference=
+                compactPowder[i]-explicitPowder[i];
+            error2+=difference*difference;
+            maxReference=std::max(
+                maxReference,std::abs(explicitPowder[i]));
+            maxError=std::max(maxError,std::abs(difference));
+            if (explicitPowder[i]>explicitPowder[explicitPeak])
+                explicitPeak=i;
+            if (compactPowder[i]>compactPowder[compactPeak])
+                compactPeak=i;
+            if (i>0)
+            {
+                explicitIntegral+=0.5*fieldSpacingT*
+                    (explicitPowder[i-1]+explicitPowder[i]);
+                compactIntegral+=0.5*fieldSpacingT*
+                    (compactPowder[i-1]+compactPowder[i]);
+            }
+        }
+
+        double derivativeReference2=0.0,derivativeError2=0.0;
+        for (std::size_t i=1;i+1<explicitPowder.size();++i)
+        {
+            const double explicitDerivative=
+                (explicitPowder[i+1]-explicitPowder[i-1])/
+                (2.0*fieldSpacingT);
+            const double compactDerivative=
+                (compactPowder[i+1]-compactPowder[i-1])/
+                (2.0*fieldSpacingT);
+            derivativeReference2+=
+                explicitDerivative*explicitDerivative;
+            const double difference=
+                compactDerivative-explicitDerivative;
+            derivativeError2+=difference*difference;
+        }
+
+        const double relativeL2=std::sqrt(
+            error2/std::max(reference2,1.0e-300));
+        const double relativeMaximum=
+            maxError/std::max(maxReference,1.0e-300);
+        const double relativeIntegral=std::abs(
+            compactIntegral-explicitIntegral)/
+            std::max(std::abs(explicitIntegral),1.0e-300);
+        const double relativeDerivativeL2=std::sqrt(
+            derivativeError2/
+            std::max(derivativeReference2,1.0e-300));
+        const double peakDifference_mT=
+            1.0e3*fieldSpacingT*std::abs(
+                static_cast<double>(explicitPeak)-
+                static_cast<double>(compactPeak));
+
+        return relativeL2<2.0e-4 &&
+            relativeMaximum<5.0e-4 &&
+            relativeIntegral<2.0e-4 &&
+            relativeDerivativeL2<5.0e-4 &&
+            peakDifference_mT<1.0e-12;
+    }
+
+    bool GRC_TestHybridCompressedExactVCoreTwoV51Parity()
+    {
+        using namespace RunSection::General::Resonance;
+
+        GRC_ExactCorePromotionModel model;
+        const auto orientation=GRC_Orientation(0.26,0.73,-0.29);
+        const double frequency=9.5;
+        const double fieldT=2.0*arma::datum::pi*frequency/
+            (GRC_MU_B_OVER_HBAR*model.gz);
+
+        const auto makeProvider=[&](HybridNuclearCompositionMode mode)
+        {
+            return HybridNuclearResonancePointProvider(
+                [&,mode](double field,
+                    HybridNuclearResonancePoint &point,
+                    std::string &error)
+                {
+                    HybridNuclearResonancePoint first,second;
+                    if (!GRC_BuildExactCorePromotionPoint(
+                            model,orientation,0.42,field,false,
+                            first,error) ||
+                        !GRC_BuildExactCorePromotionPoint(
+                            model,orientation,0.63,field,false,
+                            second,error))
+                        return false;
+                    point=first;
+                    point.hybrid.nuclei.push_back(
+                        second.hybrid.nuclei.front());
+                    point.hybrid.compositionMode=mode;
+                    point.hybrid.compressionTolerance_mT=1.0e-5;
+                    point.hybrid.maximumComponentsPerCoreTransition=65536;
+                    return true;
+                });
+        };
+
+        SpectrumRequest request;
+        request.microwaveFrequencyGHz=frequency;
+        request.linewidth_mT=0.10;
+        request.populationThreshold=1.0e-15;
+        request.minimumSlope=1.0e-15;
+        HybridNuclearResonanceFieldResponseRequest response;
+        response.fieldT=fieldT;
+        response.fieldStepT=1.0e-4;
+        response.minimumCoreStateOverlap=0.85;
+        response.minimumNuclearStateOverlap=0.85;
+        response.jacobianRelativeTolerance=5.0e-4;
+        response.jacobianAbsoluteTolerance=2.0e-4;
+
+        ResonanceLineSet explicitLines,compactLines;
+        HybridNuclearResonanceReport explicitReport,compactReport;
+        std::string error;
+        if (!GRC_GenerateFirstOrderFiniteDifference(
+                makeProvider(HybridNuclearCompositionMode::Explicit),
+                response,request,explicitLines,explicitReport,error) ||
+            !GRC_GenerateFirstOrderFiniteDifference(
+                makeProvider(HybridNuclearCompositionMode::Compressed),
+                response,request,compactLines,compactReport,error))
+            return false;
+
+        SpectrumPoint explicitPoint,compactPoint;
+        if (!ResonanceSpectrumEvaluator::Evaluate(
+                explicitLines,request,explicitPoint,error) ||
+            !ResonanceSpectrumEvaluator::Evaluate(
+                compactLines,request,compactPoint,error))
+            return false;
+        const double scale=std::max(
+            1.0,std::abs(explicitPoint.totalPerpendicular));
+        return explicitReport.productNuclearDimension==64 &&
+            compactReport.productNuclearDimension==64 &&
+            compactReport.formalCartesianComponents==4096 &&
+            compactReport.compositionBackend==
+                HybridNuclearCompositionMode::Compressed &&
+            std::abs(explicitPoint.totalPerpendicular-
+                compactPoint.totalPerpendicular)<1.0e-7*scale;
+    }
+
     bool GRC_TestLegacyParityIsotropicG()
     {
         GRC_Model model;
@@ -6765,6 +7355,12 @@ void AddGeneralResonanceCoreTests(std::vector<test_case> &cases)
     cases.push_back(test_case("General resonance R2G-B multi-nucleus finite-difference step convergence",GRC_TestR2GBMultiNucleusStepConvergence));
     cases.push_back(test_case("General resonance R2G-B merged field-response branches fail closed",GRC_TestR2GBMultiNucleusMergingFailsClosed));
     cases.push_back(test_case("General resonance R2G-B conditional two-I=1/2 exact field-response parity",GRC_TestR2GBConditionalTwoI12ExactFieldResponseParity));
+    cases.push_back(test_case("General resonance compressed nuclear kernel converges to explicit convolution",GRC_TestHybridCompressedKernelConvergence));
+    cases.push_back(test_case("General resonance compressed anisotropic HFC/quadrupolar/NZ 51V parity",GRC_TestHybridCompressedQuadrupolarV51Parity));
+    cases.push_back(test_case("General resonance compressed nuclear kernel handles five dense 51V factors",GRC_TestHybridCompressedKernelFiveVScaling));
+    cases.push_back(test_case("General resonance compressed two-51V finite-difference spectrum parity",GRC_TestHybridCompressedTwoV51FieldResponse));
+    cases.push_back(test_case("General resonance compressed two-51V powder regression",GRC_TestHybridCompressedTwoV51PowderRegression));
+    cases.push_back(test_case("General resonance compressed exact-51V core plus two-51V parity",GRC_TestHybridCompressedExactVCoreTwoV51Parity));
     cases.push_back(test_case("General resonance R2G-A independent multi-nucleus N=1 parity",GRC_TestR2GAMultiNucleusN1Parity));
     cases.push_back(test_case("General resonance R2G-A independent multi-nucleus permutation invariance",GRC_TestR2GAMultiNucleusPermutationInvariant));
     cases.push_back(test_case("General resonance R2G-A spectator nucleus and transition-weight conservation",GRC_TestR2GAMultiNucleusSpectatorAndWeightConservation));

@@ -120,6 +120,8 @@ namespace RunSection
 		double hybridOverlapThreshold;
 		double hybridMinimumCumulativeOverlapWeight;
 		std::size_t hybridMaximumComponentsPerCoreTransition;
+		std::string hybridCompositionMode;
+		double hybridCompressionTolerance_mT;
 
 		std::map<std::string, SpectrumCache> spectrumCache;
 

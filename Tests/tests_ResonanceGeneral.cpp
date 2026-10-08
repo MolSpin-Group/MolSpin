@@ -306,7 +306,9 @@ namespace ResonanceGeneralTests
         for (const auto &option :
              {"mwfrequency=0;", "mwfrequency=9.5;sweepcachemode=typo;", "mwfrequency=9.5;lineshape=typo;",
               "mwfrequency=9.5;solver=hybrid;sweepcache=false;", "mwfrequency=9.5;solver=auto;",
-              "mwfrequency=9.5;solver=hybrid;perturbativenuclei=V;"})
+              "mwfrequency=9.5;solver=hybrid;perturbativenuclei=V;",
+              "mwfrequency=9.5;solver=hybrid;sweepcache=false;perturbativenuclei=V;hybridcomposition=typo;",
+              "mwfrequency=9.5;solver=hybrid;sweepcache=false;perturbativenuclei=V;hybridcompressiontolerancemt=-0.5;"})
         {
             ResonanceExecutionPlan p;
             std::string error;
