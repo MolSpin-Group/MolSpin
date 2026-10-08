@@ -21,6 +21,8 @@
 #include "PowderGrid.h"
 #include <cmath>
 #include <sstream>
+#include <fstream>
+#include <cstdio>
 //////////////////////////////////////////////////////////////////////////////
 // Tests whether the spin quantum number is stored correctly.
 // DEPENDENCY NOTE: ObjectParser
@@ -360,6 +362,121 @@ bool test_spinapi_tensorclass_basics()
 
 	// Return the result
 	return isCorrect;
+}
+//////////////////////////////////////////////////////////////////////////////
+// A Cartesian hyperfine tensor need not be symmetric. Preserve its signed
+// off-diagonal elements through parsing, copying, basis changes and updates.
+bool test_spinapi_tensor_nonsymmetric_roundtrip()
+{
+	const arma::mat raw = {{1, 4, -2}, {-3, 5, 7}, {6, -1, 9}};
+	const std::string spec = "matrix(1 4 -2; -3 5 7; 6 -1 9)";
+	SpinAPI::Tensor direct(raw), parsed(spec), copied(parsed), assigned(0.0);
+	assigned = parsed;
+	for (const auto *tensor : {&direct, &parsed, &copied, &assigned})
+	{
+		if (!tensor->LabFrame().is_finite() || arma::norm(tensor->LabFrame() - raw, "fro") > 1e-12 ||
+			std::abs(tensor->Isotropic() - 5.0) > 1e-12 || SpinAPI::IsIsotropic(*tensor)) return false;
+	}
+	SpinAPI::Tensor shifted("isotropic(2)+" + spec);
+	if (arma::norm(shifted.LabFrame() - raw - 2 * arma::eye<arma::mat>(3, 3), "fro") > 1e-12) return false;
+	// This rotation also checks that an existing isotropic offset is counted once.
+	const arma::mat R = {{0, -1, 0}, {1, 0, 0}, {0, 0, 1}};
+	SpinAPI::Tensor changed("isotropic(2)+" + spec + "+changebasis(0 -1 0; 1 0 0; 0 0 1)");
+	if (arma::norm(changed.LabFrame() - R.t() * shifted.LabFrame() * R, "fro") > 1e-12) return false;
+	// A pure skew tensor has imaginary eigenvalues but is a valid real coupling.
+	arma::mat skew = {{0, 2, -3}, {-2, 0, 4}, {3, -4, 0}};
+	direct.SetTensor(skew);
+	if (SpinAPI::IsIsotropic(direct) || arma::norm(direct.LabFrame() - skew, "fro") > 1e-12) return false;
+	arma::mat symmetric = arma::eye<arma::mat>(3, 3) * 3;
+	direct.SetTensor(symmetric);
+	return SpinAPI::IsIsotropic(direct) && arma::norm(direct.LabFrame() - symmetric, "fro") < 1e-12;
+}
+//////////////////////////////////////////////////////////////////////////////
+
+bool test_spinapi_tensor_nonsymmetric_trajectory()
+{
+	const char *path = "molspin_test_nonsymmetric_tensor.trj";
+	{
+		std::ofstream out(path);
+		out << "time mat.xx mat.xy mat.xz mat.yx mat.yy mat.yz mat.zx mat.zy mat.zz\n"
+			<< "0 1 4 -2 -3 5 7 6 -1 9\n"
+			<< "2 3 0 0 0 3 0 0 0 3\n";
+	}
+	SpinAPI::Tensor tensor(0.0);
+	const bool loaded = tensor.LoadTrajectory(path);
+	std::remove(path);
+	if (!loaded) return false;
+	const arma::mat first = {{1, 4, -2}, {-3, 5, 7}, {6, -1, 9}};
+	const arma::mat last = 3 * arma::eye<arma::mat>(3, 3);
+	if (!tensor.SetTrajectoryStep(0) || arma::norm(tensor.LabFrame() - first, "fro") > 1e-12) return false;
+	SpinAPI::Tensor copy(tensor), assigned(0.0);
+	assigned = tensor;
+	for (auto *item : {&tensor, &copy, &assigned})
+	{
+		if (!item->SetTime(1.0) || arma::norm(item->LabFrame() - (first + last) / 2, "fro") > 1e-12) return false;
+		if (!item->SetTrajectoryStep(1) || arma::norm(item->LabFrame() - last, "fro") > 1e-12) return false;
+	}
+	return true;
+}
+//////////////////////////////////////////////////////////////////////////////
+
+// Compare the complete Cartesian operator with an independent Kronecker-product
+// construction, including skew-only coupling and a general powder rotation.
+bool test_spinapi_nonsymmetric_hamiltonian()
+{
+	auto electron = std::make_shared<SpinAPI::Spin>("E", "type=electron;spin=1/2;tensor=matrix(2 0.2 -0.1; -0.3 2.1 0.4; 0.5 -0.2 1.9);");
+	auto nucleus = std::make_shared<SpinAPI::Spin>("N", "type=nucleus;spin=1;");
+	auto hfc = std::make_shared<SpinAPI::Interaction>("A", "type=hyperfine;group1=E;group2=N;tensor=matrix(1 4 -2; -3 5 7; 6 -1 9);ignoretensors=true;commonprefactor=false;prefactor=1;");
+	auto skew = std::make_shared<SpinAPI::Interaction>("K", "type=hyperfine;group1=E;group2=N;tensor=matrix(0 2 -3; -2 0 4; 3 -4 0);ignoretensors=true;commonprefactor=false;prefactor=1;");
+	auto zeeman = std::make_shared<SpinAPI::Interaction>("B", "type=zeeman;spins=E;field=0.3 -0.2 0.7;ignoretensors=false;commonprefactor=false;prefactor=1;");
+	SpinAPI::SpinSystem system("Test");
+	system.Add(electron); system.Add(nucleus); system.Add(hfc); system.Add(skew); system.Add(zeeman);
+	if (!system.ValidateInteractions().empty()) return false;
+	SpinAPI::SpinSpace space(system);
+	space.UseSuperoperatorSpace(false);
+	space.UseFullTensorRotation(true);
+	const arma::mat A = {{1, 4, -2}, {-3, 5, 7}, {6, -1, 9}};
+	const arma::mat K = {{0, 2, -3}, {-2, 0, 4}, {3, -4, 0}};
+	const arma::mat G = {{2, 0.2, -0.1}, {-0.3, 2.1, 0.4}, {0.5, -0.2, 1.9}};
+	const arma::vec B = {0.3, -0.2, 0.7};
+	const arma::cx_mat e[] = {arma::cx_mat(electron->Sx()), arma::cx_mat(electron->Sy()), arma::cx_mat(electron->Sz())};
+	const arma::cx_mat n[] = {arma::cx_mat(nucleus->Sx()), arma::cx_mat(nucleus->Sy()), arma::cx_mat(nucleus->Sz())};
+	arma::mat R;
+	if (!SpinAPI::CreateZYZRotationMatrix(0.37, 0.82, -0.21, R)) return false;
+	const arma::mat identity = arma::eye<arma::mat>(3, 3);
+	for (auto rotation : {identity, R})
+	{
+		const arma::mat rotatedA = rotation * A * rotation.t();
+		const arma::mat rotatedK = rotation * K * rotation.t();
+		// MolSpin's spin tensor convention is S G B (transpose ORCA's B g S on import).
+		const arma::vec field = rotation * G * rotation.t() * B;
+		arma::cx_mat expectedA(6, 6, arma::fill::zeros), expectedK(6, 6, arma::fill::zeros), expectedB(6, 6, arma::fill::zeros);
+		for (unsigned i = 0; i < 3; ++i)
+		{
+			expectedB += field(i) * arma::kron(e[i], arma::eye<arma::cx_mat>(3, 3));
+			for (unsigned j = 0; j < 3; ++j)
+			{
+				expectedA += rotatedA(i, j) * arma::kron(e[i], n[j]);
+				expectedK += rotatedK(i, j) * arma::kron(e[i], n[j]);
+			}
+		}
+		const SpinAPI::interaction_ptr interactions[] = {hfc, skew, zeeman};
+		const arma::cx_mat expected[] = {expectedA, expectedK, expectedB};
+		for (unsigned k = 0; k < 3; ++k)
+		{
+			arma::sp_cx_mat actual;
+			if (!space.InteractionOperatorRotatedZYZ(interactions[k], rotation, actual) ||
+				arma::norm(arma::cx_mat(actual) - expected[k], "fro") > 1e-11 ||
+				arma::norm(expected[k] - expected[k].t(), "fro") > 1e-12) return false;
+			if (arma::norm(rotation - identity, "fro") < 1e-12)
+			{
+				arma::cx_mat dense;
+				if (!space.InteractionOperator(interactions[k], dense) || !space.InteractionOperator(interactions[k], actual) ||
+					arma::norm(dense - expected[k], "fro") > 1e-11 || arma::norm(arma::cx_mat(actual) - expected[k], "fro") > 1e-11) return false;
+			}
+		}
+	}
+	return true;
 }
 //////////////////////////////////////////////////////////////////////////////
 // Tests the subspace management functionality.
@@ -3661,6 +3778,9 @@ void AddSpinAPITests(std::vector<test_case> &_cases)
 	_cases.push_back(test_case("SpinAPI::Interaction dynamic field (circular tilted polarization)", test_spinapi_interaction_fieldcircularpolarization_tilted));
 	_cases.push_back(test_case("SpinAPI::State basic tests", test_spinapi_state));
 	_cases.push_back(test_case("SpinAPI::Tensor basic tests", test_spinapi_tensorclass_basics));
+	_cases.push_back(test_case("SpinAPI::Tensor nonsymmetric roundtrip", test_spinapi_tensor_nonsymmetric_roundtrip));
+	_cases.push_back(test_case("SpinAPI::Tensor nonsymmetric trajectory", test_spinapi_tensor_nonsymmetric_trajectory));
+	_cases.push_back(test_case("SpinAPI nonsymmetric Cartesian Hamiltonian", test_spinapi_nonsymmetric_hamiltonian));
 	_cases.push_back(test_case("Spin subspace functions - union of all subspaces", test_spinapi_subspacefuncs_union));
 	_cases.push_back(test_case("Spin subspace functions - intersections of subspaces", test_spinapi_subspacefuncs_intersections));
 	_cases.push_back(test_case("Spin subspace functions - intersections of subspaces 2", test_spinapi_subspacefuncs_intersections2));
