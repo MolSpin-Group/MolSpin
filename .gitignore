@@ -57,3 +57,6 @@ makefile
 !/Example/TADF-spintronics/
 !/Example/TADF-spintronics/**
 /Example/TADF-spintronics/scripts/__pycache__/
+
+# Project documentation is maintained locally and is not part of big_merge-1.
+/docs/
