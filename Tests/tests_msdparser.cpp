@@ -8,6 +8,13 @@
 // See LICENSE.txt for license information.
 //////////////////////////////////////////////////////////////////////////////
 #include "ObjectParser.h"
+#include "MSDParser.h"
+#include "RunSection.h"
+#include "BasicTask.h"
+#include <cstdio>
+#include <fstream>
+#include <sstream>
+#include <unistd.h>
 //////////////////////////////////////////////////////////////////////////////
 // Tests the ObjectParser::Get method for strings
 bool test_msdparser_objectparser_getstring()
@@ -259,6 +266,41 @@ bool test_msdparser_objectparser_getpulsesequence_quoted()
 	return isCorrect;
 }
 //////////////////////////////////////////////////////////////////////////////
+// Global Settings must be applied before task construction because each task
+// captures its output precision in its OutputHandler constructor.
+bool test_msdparser_settings_precede_task_construction()
+{
+	const std::string filename = "/tmp/molspin_settings_order_" +
+		std::to_string(static_cast<long long>(getpid())) + ".msd";
+	{
+		std::ofstream input(filename);
+		if (!input)
+			return false;
+		input << "Settings { Settings general { steps=1; outputprecision=15; } }\n"
+			  << "Run { Task precisiontask { type=StaticSS; } }\n";
+	}
+
+	bool correct = false;
+	{
+		MSDParser::MSDParser parser(filename);
+		RunSection::RunSection run;
+		if (parser.Load())
+		{
+			parser.FillRunSection(run);
+			auto task = run.GetTask("precisiontask");
+			if (task != nullptr)
+			{
+				std::ostringstream data;
+				task->SetDataStream(data);
+				data << (1.0 / 7.0);
+				correct = (data.str() == "0.142857142857143");
+			}
+		}
+	}
+	std::remove(filename.c_str());
+	return correct;
+}
+//////////////////////////////////////////////////////////////////////////////
 // Add all the MSDParser test cases
 void AddMSDParserTests(std::vector<test_case> &_cases)
 {
@@ -270,5 +312,6 @@ void AddMSDParserTests(std::vector<test_case> &_cases)
 	_cases.push_back(test_case("MSDParser::ObjectParser::Get to get tensor", test_msdparser_objectparser_gettensor));
 	_cases.push_back(test_case("MSDParser::ObjectParser::GetList trims string entries", test_msdparser_objectparser_getlist_string_trims));
 	_cases.push_back(test_case("MSDParser::ObjectParser::Get quoted pulse sequence", test_msdparser_objectparser_getpulsesequence_quoted));
+	_cases.push_back(test_case("MSDParser applies Settings before task construction", test_msdparser_settings_precede_task_construction));
 }
 //////////////////////////////////////////////////////////////////////////////

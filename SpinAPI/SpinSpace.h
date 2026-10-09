@@ -26,6 +26,8 @@
 #include <vector>
 #include <memory>
 #include <functional>
+#include <random>
+#include <string>
 #include <armadillo>
 #include "SpinAPIDefines.h"
 #include "SpinAPIfwd.h"
@@ -84,12 +86,81 @@ namespace SpinAPI
 		bool rotationInvariant = false;
 	};
 
+	struct HilbertReactionOperatorCache
+	{
+		// Keep the source projector sparse for ordinary Hilbert propagation.
+		// Powder calculations first test rotational invariance entirely in the
+		// sparse representation. Only genuinely orientation-dependent source
+		// states prepare the dense fallback rotation cache.
+		transition_ptr transition;
+		arma::sp_cx_mat sourceProjector;
+		HilbertStateRotationCache sourceRotation;
+		bool hasSourceRotation = false;
+		bool rotationInvariant = false;
+	};
+
+	enum class HamiltonianApproximation
+	{
+		Full,
+		Secular
+	};
+
+	struct HilbertPowderHamiltonian
+	{
+		// H0 and H1 are kept separate because relaxation bases and rotating-frame
+		// propagators use H0 explicitly. Both parts always use the same powder
+		// orientation; only H0 is secularized when requested.
+		arma::sp_cx_mat H0;
+		arma::sp_cx_mat H1;
+		arma::sp_cx_mat total;
+	};
+
+	enum class TraceSamplingMethod
+	{
+		SUZ,
+		SpinCoherent
+	};
+
+	struct HilbertTraceSampleSet
+	{
+		// Each column is a normalized Hilbert-space state factor. The sample
+		// average B B^dagger approaches the normalized density represented by
+		// the supplied State, and only omitted spins are trace sampled.
+		arma::cx_mat factors;
+		arma::uword sampledSubspaceDimension = 0;
+	};
+
 	struct HilbertRelaxationCache
 	{
 		std::vector<HilbertRelaxationTerm> lindblad_terms;
 		std::vector<HilbertRelaxationDephasingTerm> dephasing_terms;
 		std::vector<HilbertRelaxationPhenomenologicalTerm> phenomenological_terms;
 	};
+
+
+	// Physical relaxation has independent density and trajectory representations.
+	// Only proven random-unitary channels are implemented here; unsupported
+	// nonzero Operators are errors, never requests to allocate a density matrix.
+	enum class HilbertStochasticRelaxationKind { None, RandomUnitary, Unsupported };
+	struct HilbertRandomUnitaryRelaxationTerm
+	{
+		arma::sp_cx_mat U;
+		double eventRate = 0.0; // inverse ns
+		bool involutory = false;
+	};
+	struct HilbertStochasticRelaxationCache
+	{
+		std::vector<HilbertRandomUnitaryRelaxationTerm> terms;
+		bool Empty() const { return terms.empty(); }
+	};
+
+	bool HasNonzeroRelaxationRate(const operator_ptr &);
+	HilbertStochasticRelaxationKind StochasticRelaxationKindHilbert(const operator_ptr &, std::string &);
+	// Derive an independent stream from a COPY of the trace RNG. Neither its
+	// state nor the established trace-sampling sequence is changed.
+	std::mt19937 StochasticRelaxationGenerator(std::mt19937, unsigned long long _stream = 0);
+	bool ApplyStochasticRelaxationHilbert(const HilbertStochasticRelaxationCache &,
+		double _dt, arma::cx_mat &_factors, std::mt19937 &, std::string &);
 
 	class SpinSpace
 	{
@@ -193,13 +264,24 @@ namespace SpinAPI
 		bool GetState(const CompleteState &, arma::cx_vec &, bool _useFullBasis = true) const;			 // Vector representing the state
 		bool GetState(const state_ptr &, arma::cx_vec &) const;											 // Vector representing the state
 		bool GetState(const state_ptr &, arma::cx_mat &) const;											 // Projection operator onto the state (dense matrix)
-			bool GetState(const state_ptr &, arma::sp_cx_mat &) const;										 // Projection operator onto the state (sparse matrix)
-			bool GetStateSubSpace(const state_ptr &_state, arma::cx_vec &_out) const;						 // Vector representing the state in subspace
-			bool RotateState(const arma::cx_mat &_state, const arma::mat &_rotation, arma::cx_mat &_out) const; // Rotate a density matrix with the same spatial rotation used for powder averaging
-			bool CreateStateRotationCache(const arma::cx_mat &_state, HilbertStateRotationCache &_cache, double _tolerance = 1.0e-12) const; // Precompute total-spin generators and detect rotationally invariant density matrices
-			bool RotateState(const arma::cx_mat &_state, const arma::mat &_rotation, const HilbertStateRotationCache &_cache, arma::cx_mat &_out) const; // Cached molecular-frame density-matrix rotation
-			bool PrepareInitialDensityForPowder(const arma::cx_mat &_referenceDensity, const arma::mat &_orientationRotation, StateFrame _stateFrame, bool _discardHamiltonianCoherences, const std::vector<std::string> &_dephasingHamiltonian, const HilbertStateRotationCache *_rotationCache, arma::cx_mat &_orientedDensity); // Apply molecular rotation and optional orientation-specific eigenbasis dephasing
-			bool DephaseStateInEigenbasis(const arma::cx_mat &_state, const arma::cx_mat &_hamiltonian, arma::cx_mat &_out) const; // Keep only populations in a Hamiltonian eigenbasis
+		bool GetState(const state_ptr &, arma::sp_cx_mat &) const;										 // Projection operator onto the state (sparse matrix)
+		bool GetStateSubSpace(const state_ptr &_state, arma::cx_vec &_out) const;						 // Vector representing the state in subspace
+		bool FactorizeDensityMatrix(const arma::cx_mat &_density, arma::cx_mat &_factors,
+								std::string *_error = nullptr, double _tolerance = 1.0e-10) const; // Build B such that B B^dagger is the normalized density
+		bool BuildTraceSamples(const state_ptr &_state, arma::uword _sampleCount, TraceSamplingMethod _method,
+						   std::mt19937 &_generator, HilbertTraceSampleSet &_samples,
+						   std::string *_error = nullptr) const; // Trace sample only spins omitted from a State object
+		bool IsStateRotationInvariant(const arma::sp_cx_mat &_state, bool &_invariant,
+			double _tolerance = 1.0e-12) const; // Sparse global-rotation invariance test; never builds dense total-spin generators
+		bool RotateState(const arma::cx_mat &_state, const arma::mat &_rotation, arma::cx_mat &_out) const; // Rotate a density matrix with the same spatial rotation used for powder averaging
+		bool CreateStateRotationCache(const arma::cx_mat &_state, HilbertStateRotationCache &_cache, double _tolerance = 1.0e-12) const; // Precompute total-spin generators and detect rotationally invariant density matrices
+		bool CreateStateRotationOperator(const arma::mat &_rotation, const HilbertStateRotationCache &_cache, arma::cx_mat &_operator) const; // Spin-space representation of a molecular-to-lab powder rotation
+		bool RotateState(const arma::cx_mat &_state, const arma::mat &_rotation, const HilbertStateRotationCache &_cache, arma::cx_mat &_out) const; // Cached molecular-frame density-matrix rotation
+		bool RotateStateFactors(const arma::cx_mat &, const arma::mat &, arma::cx_mat &) const; // sparse product of single-spin rotations
+		bool RotateStateFactors(const arma::cx_mat &_factors, const arma::mat &_rotation, const HilbertStateRotationCache &_cache, arma::cx_mat &_out) const; // Rotate pure-state/trace-sampling factors without forming density matrices
+		bool PrepareInitialDensityForPowder(const arma::cx_mat &_referenceDensity, const arma::mat &_orientationRotation, StateFrame _stateFrame, bool _discardHamiltonianCoherences, const std::vector<std::string> &_dephasingHamiltonian, const HilbertStateRotationCache *_rotationCache, arma::cx_mat &_orientedDensity); // Apply molecular rotation and optional orientation-specific eigenbasis dephasing
+		bool PrepareInitialDensityForPowder(const arma::cx_mat &_referenceDensity, const arma::mat &_orientationRotation, StateFrame _stateFrame, bool _discardHamiltonianCoherences, const std::vector<std::string> &_dephasingHamiltonian, HamiltonianApproximation _dephasingApproximation, const HilbertStateRotationCache *_rotationCache, arma::cx_mat &_orientedDensity); // Explicit full/secular dephasing Hamiltonian selection
+		bool DephaseStateInEigenbasis(const arma::cx_mat &_state, const arma::cx_mat &_hamiltonian, arma::cx_mat &_out) const; // Keep only populations in a Hamiltonian eigenbasis
 		bool ThermalStateFromHamiltonian(const arma::cx_mat &_hamiltonian, double _Temperature, arma::cx_mat &_mat) const; // Thermal state generated from a specific Hamiltonian
 		bool GetThermalState(SpinAPI::SpinSpace &_space, double _Temperature, std::vector<std::string> thermalhamiltonian_list, arma::cx_mat &_mat) const; // Projection operator onto the thermal equilibrium state (dense matrix)
 
@@ -209,6 +291,9 @@ namespace SpinAPI
 		bool CreateOperator(const arma::cx_mat &, const spin_ptr &, arma::cx_mat &) const;				   // Creates an operator in the Hilbert space. The matrix must be square with the multiplicity of the spin as its dimension
 		bool OperatorToSuperspace(const arma::cx_mat &, arma::cx_vec &) const;							   // Converts the operator to a vector in the superspace
 		bool OperatorFromSuperspace(const arma::cx_vec &, arma::cx_mat &) const;						   // Converts a superspace vector back to a Hilbert space operator
+		bool SolveHilbertTimeIntegral(const arma::sp_cx_mat &_hamiltonian, const arma::sp_cx_mat &_reaction,
+			const arma::cx_mat &_relaxationSuperoperator, const arma::cx_mat &_initialDensity,
+			arma::cx_mat &_integratedDensity, std::string *_error = nullptr) const; // Solve int_0^inf rho(t) dt using MolSpin's superspace convention
 		bool SuperoperatorFromOperators(const arma::cx_mat &, const arma::cx_mat &, arma::cx_mat &) const; // Creates a superspace operator from the two given (left-side and right-side) operators
 		bool SuperoperatorFromLeftOperator(const arma::cx_mat &, arma::cx_mat &) const;					   // Assumes right-side operator is identity (more efficient than passing the identity to SuperoperatorFromOperators)
 		bool SuperoperatorFromRightOperator(const arma::cx_mat &, arma::cx_mat &) const;				   // Assumes left-side operator is identity (more efficient than passing the identity to SuperoperatorFromOperators)
@@ -220,6 +305,9 @@ namespace SpinAPI
 		bool SuperoperatorFromOperators(const arma::sp_cx_mat &, const arma::sp_cx_mat &, arma::sp_cx_mat &) const;
 		bool SuperoperatorFromLeftOperator(const arma::sp_cx_mat &, arma::sp_cx_mat &) const;
 		bool SuperoperatorFromRightOperator(const arma::sp_cx_mat &, arma::sp_cx_mat &) const;
+		// Convert a superoperator constructed in a Hamiltonian eigenbasis back to
+		// the current propagation basis using MolSpin's row-major vectorization.
+		bool TransformSuperoperatorFromEigenbasis(const arma::cx_mat &, const arma::sp_cx_mat &, arma::sp_cx_mat &) const;
 
 		// Re-ordering of the spins, used by the GetState methods when working with entangled states
 		// TODO: Consider making non-member non-friend functions, or making such equivalents
@@ -441,8 +529,10 @@ namespace SpinAPI
 		bool ThermalHamiltonian(std::vector<std::string> thermalhamiltonian_list, arma::sp_cx_mat &_out) const;							// Time-independent part of the Hamiltonian for thermal state (sparse matrix)
 		bool StaticHamiltonianRotatedZYZ(const arma::mat &rotmatrix, arma::sp_cx_mat &_out) const; // All static interactions after a common molecular-to-lab rotation
 		bool StaticHamiltonianRotatedSA(const arma::mat &rotmatrix, arma::sp_cx_mat &_out) const;  // All static interactions in the high-field secular approximation
+		bool DynamicHamiltonianRotatedZYZ(const arma::mat &rotmatrix, arma::sp_cx_mat &_out) const; // Active time-dependent interactions after the same powder rotation
 		bool BaseHamiltonianRotatedZYZ(std::vector<std::string> basehamiltonian_list, arma::mat rotmatrix, arma::sp_cx_mat &_out) const;
 		bool BaseHamiltonianRotated_SA(std::vector<std::string> basehamiltonian_list, arma::mat rotmatrix, arma::sp_cx_mat &_out) const;
+		bool PowderHamiltonianRotated(const std::vector<std::string> &h0list, const std::vector<std::string> &h1list, const arma::mat &rotmatrix, HamiltonianApproximation approximation, HilbertPowderHamiltonian &hamiltonian) const;
 		bool PowderHamiltonianRotatedSA(const std::vector<std::string> &h0list, const std::vector<std::string> &h1list, const arma::mat &rotmatrix, arma::sp_cx_mat &H0, arma::sp_cx_mat &H1, arma::sp_cx_mat &H) const;
 
 		// ------------------------------------------------
@@ -453,6 +543,8 @@ namespace SpinAPI
 		// Provides the anti-commutator operator "k/2 * {P,.}" in superoperator space
 		bool ReactionOperator(const transition_ptr &, arma::cx_mat &, const ReactionOperatorType &_forcedReactionOperatorType = ReactionOperatorType::Unspecified) const;	 // The last parameter can be used to force the use of a specific reaction operator type,
 		bool ReactionOperator(const transition_ptr &, arma::sp_cx_mat &, const ReactionOperatorType &_forcedReactionOperatorType = ReactionOperatorType::Unspecified) const; // but by default the reaction operator type of the transition or the spinspace will be used.
+		bool CreateHilbertReactionOperatorCache(const transition_ptr &, HilbertReactionOperatorCache &, bool _prepareRotation = true, double _tolerance = 1.0e-12) const; // Cache a sparse source projector; prepare dense rotation generators only when powder rotation is required
+		bool ReactionOperatorHilbertRotated(const HilbertReactionOperatorCache &, const arma::mat &_rotation, arma::sp_cx_mat &) const; // k/2 R P R^dagger using the current Transition rate
 		bool TotalReactionOperator(arma::cx_mat &, const ReactionOperatorType &_forcedReactionOperatorType = ReactionOperatorType::Unspecified) const;						 // Total reaction operator (dense matrix)
 		bool TotalReactionOperator(arma::sp_cx_mat &, const ReactionOperatorType &_forcedReactionOperatorType = ReactionOperatorType::Unspecified) const;					 // Total reaction operator (sparse matrix)
 		bool StaticTotalReactionOperator(arma::cx_mat &, const ReactionOperatorType &_forcedReactionOperatorType = ReactionOperatorType::Unspecified, bool NoInterSystem = false) const;				 // Time-independent part of the total reaction operator (dense matrix)
@@ -471,6 +563,12 @@ namespace SpinAPI
 		// Relaxation operators (SpinSpace_relaxation.cpp)
 		// ------------------------------------------------
 		// NOTE: Dense/sparse operators require superspace; use HilbertRelaxationCache for Hilbert-space propagation.
+		// Shared ST convention for density, superspace and trajectory backends.
+		bool SingletTripletProjectors(const operator_ptr &, arma::sp_cx_mat &,
+			arma::sp_cx_mat &, std::string * = nullptr) const;
+		bool PrepareStochasticRelaxationHilbert(const std::vector<operator_ptr> &,
+			HilbertStochasticRelaxationCache &, std::string &,
+			const arma::mat *_spatialRotation = nullptr) const;
 		bool RelaxationOperator(const operator_ptr &, arma::cx_mat &) const;
 		bool RelaxationOperator(const operator_ptr &, arma::sp_cx_mat &) const;
 		bool RelaxationOperator(const operator_ptr &, HilbertRelaxationCache &) const;

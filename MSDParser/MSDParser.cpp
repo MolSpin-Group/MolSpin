@@ -152,6 +152,7 @@ namespace MSDParser
 
 		// Put spins into other objects - this can only be done now that all spins have been loaded
 		int failed = 0;
+		bool invalidOperators = false;
 		for (auto i = this->systems.cbegin(); i != this->systems.cend(); i++)
 		{
 			// Prepare the state objects
@@ -172,6 +173,7 @@ namespace MSDParser
 
 			// Prepare Operator objects
 			auto failedOperators = (*i)->ValidateOperators(this->systems);
+			if (!failedOperators.empty()) invalidOperators = true;
 			for (auto j = failedOperators.cbegin(); j != failedOperators.cend(); j++)
 			{
 				std::cout << "Failed to load operator object " << (*j)->Name() << "!" << std::endl;
@@ -223,6 +225,10 @@ namespace MSDParser
 			}
 		}
 
+		// Failed Operators are removed by SpinSystem validation. Never run a
+		// different physical model after silently losing requested relaxation.
+		if (invalidOperators) return false;
+
 		if(failed > 0)
 		{
 			#if ASSERT == 1
@@ -242,13 +248,14 @@ namespace MSDParser
 		for (auto i = this->systems.cbegin(); i != this->systems.cend(); i++)
 			_run.Add((*i));
 
+		// Tasks copy stream precision and other global run options when they are
+		// constructed, so Settings must be applied before task construction.
+		for (auto i = this->settingsObjects.cbegin(); i != this->settingsObjects.cend(); i++)
+			_run.Add(ObjectType::Settings, (*i));
+
 		// Add tasks to the RunSection
 		for (auto i = this->runTasks.cbegin(); i != this->runTasks.cend(); i++)
 			_run.Add(ObjectType::Task, (*i));
-
-		// Add the settings object
-		for (auto i = this->settingsObjects.cbegin(); i != this->settingsObjects.cend(); i++)
-			_run.Add(ObjectType::Settings, (*i));
 
 		// -----------------------------------------------------------------------------
 		// NOTE: Make sure that all ActionTargets are created before this point, since

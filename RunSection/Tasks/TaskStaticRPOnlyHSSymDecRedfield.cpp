@@ -6,6 +6,7 @@
 // See LICENSE.txt for license information.
 /////////////////////////////////////////////////////////////////////////
 #include <iostream>
+#include <cmath>
 #include <omp.h>
 #include <memory>
 #include "TaskStaticRPOnlyHSSymDecRedfield.h"
@@ -544,7 +545,7 @@ namespace RunSection
 											// Do the autocorrelation terms for each of the 3 terms
 											for (k = 0; k < num_op; k++)
 											{
-												max_row_value = max(ampl_mat.row(m));
+												max_row_value = arma::abs(ampl_mat.row(m)).max();
 
 												// Check if the maximum value is zero
 												if (max_row_value == 0.0)
@@ -840,7 +841,7 @@ namespace RunSection
 												{
 													for (s = 0; s < num_op; s++)
 													{
-														max_row_value = max(ampl_mat.row(m));
+														max_row_value = arma::abs(ampl_mat.row(m)).max();
 
 														// Check if the maximum value is zero
 														if (max_row_value == 0.0)
@@ -897,18 +898,6 @@ namespace RunSection
 
 															R += tmp_R;
 
-															if (k != s)
-															{
-																tmp_R *= 0.0;
-
-																if (!Redfieldtensor((*ptr_Tensors[s]), (*ptr_Tensors[k]), *ptr_SpecDens[m], tmp_R))
-																{
-																	this->Log() << "There are problems with the construction of the Redfield tensor - Please check your input." << std::endl;
-																	continue;
-																}
-
-																R += tmp_R;
-															}
 														}
 
 														m = m + 1;
@@ -1305,18 +1294,6 @@ namespace RunSection
 
 													*ptr_R[omp_get_thread_num()] += tmp_R;
 
-													if (k != s)
-													{
-														tmp_R *= 0.0;
-
-														if (!Redfieldtensor((*ptr_Tensors[s]), (*ptr_Tensors[k]), SpecDens, tmp_R))
-														{
-															this->Log() << "There are problems with the construction of the Redfield tensor - Please check your input." << std::endl;
-															continue;
-														}
-
-														*ptr_R[omp_get_thread_num()] += tmp_R;
-													}
 												}
 											}
 										}
@@ -1378,17 +1355,6 @@ namespace RunSection
 
 													*ptr_R[omp_get_thread_num()] += tmp_R;
 
-													if (k != s)
-													{
-														tmp_R *= 0.0;
-
-														if (!Redfieldtensor((*ptr_Tensors[s]), (*ptr_Tensors[k]), SpecDens, tmp_R))
-														{
-															this->Log() << "There are problems with the construction of the Redfield tensor - Please check your input." << std::endl;
-															continue;
-														}
-														*ptr_R[omp_get_thread_num()] += tmp_R;
-													}
 												}
 											}
 										}
@@ -1653,17 +1619,6 @@ namespace RunSection
 
 													*ptr_R[omp_get_thread_num()] += tmp_R;
 
-													if (k != s)
-													{
-														tmp_R *= 0.0;
-														if (!Redfieldtensor((*ptr_Tensors[s]), (*ptr_Tensors[k]), SpecDens, tmp_R))
-														{
-															this->Log() << "There are problems with the construction of the Redfield tensor - Please check your input." << std::endl;
-															continue;
-														}
-
-														*ptr_R[omp_get_thread_num()] += tmp_R;
-													}
 												}
 											}
 										}
@@ -1722,17 +1677,6 @@ namespace RunSection
 
 													*ptr_R[omp_get_thread_num()] += tmp_R;
 
-													if (k != s)
-													{
-														tmp_R *= 0.0;
-														if (!Redfieldtensor((*ptr_Tensors[s]), (*ptr_Tensors[k]), SpecDens, tmp_R))
-														{
-															this->Log() << "There are problems with the construction of the Redfield tensor - Please check your input." << std::endl;
-															continue;
-														}
-
-														*ptr_R[omp_get_thread_num()] += tmp_R;
-													}
 												}
 											}
 										}
@@ -2134,6 +2078,16 @@ namespace RunSection
 
 	bool TaskStaticRPOnlyHSSymDecRedfield::ConstructSpecDensSpecific(const int &_spectral_function, const std::complex<double> &_ampl, const std::complex<double> &_tau_c, const arma::cx_mat &_domega, arma::cx_mat &_specdens)
 	{
+		_specdens.zeros(arma::size(_domega));
+		if (!std::isfinite(_ampl.real()) || !std::isfinite(_ampl.imag()) || !_domega.is_finite())
+			return false;
+		if (std::abs(_ampl) == 0.0)
+			return true;
+		if (!std::isfinite(_tau_c.real()) || !std::isfinite(_tau_c.imag()) ||
+			_tau_c.imag() != 0.0 || !(_tau_c.real() > 0.0) ||
+			(_spectral_function != 0 && _spectral_function != 1))
+			return false;
+
 		if (_spectral_function == 1)
 		{
 			arma::cx_mat omeega = _domega;

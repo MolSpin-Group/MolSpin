@@ -55,7 +55,11 @@
 #include "TaskStaticHSDirectTimeEvoSymmUncoupled.h"
 #include "TaskStaticHSStochTimeEvoSymmUncoupled.h"
 #include "TaskStaticHSDirectSpectra.h"
-#include "TaskStaticHSTrEPRSpectra.h"
+#include "TaskStaticHSResonanceSpectra.h"
+#include "General/HS/TaskHSGeneral.h"
+#include "General/Resonance/TaskResonanceGeneral.h"
+#include "General/SS/TaskSSGeneral.h"
+#include "General/MultiSS/TaskMultiSSGeneral.h"
 // #include "TaskDynamicHSDirectSpectra.h"
 
 #include "TaskActionSpectrumHistogram.h"
@@ -72,6 +76,43 @@ namespace RunSection
 	{
 		// The task pointer to be assigned and returned
 		std::shared_ptr<BasicTask> task = nullptr;
+
+		// HSGeneral is the production Hilbert-space propagation/yield task.
+		// Spectroscopy remains a standalone task and is never used as an HSGeneral backend.
+		if (_tasktype.compare("hsgeneral") == 0 ||
+			_tasktype.compare("HSGeneral") == 0 ||
+			_tasktype.compare("hs-general") == 0 ||
+			_tasktype.compare("HS-General") == 0)
+		{
+			return std::make_shared<General::HS::TaskHSGeneral>(_obj, *this);
+		}
+
+		// SSGeneral is the production one-SpinSystem Liouville/superspace task.
+		// Historical StaticSS/StaticSSTimeEvo tasks remain independent references.
+		if (_tasktype.compare("ssgeneral") == 0 ||
+			_tasktype.compare("SSGeneral") == 0 ||
+			_tasktype.compare("ss-general") == 0 ||
+			_tasktype.compare("SS-General") == 0)
+		{
+			return std::make_shared<General::SS::TaskSSGeneral>(_obj, *this);
+		}
+
+		// MultiSSGeneral is the production direct-sum superspace network task.
+		// It is deliberately registered alongside, not instead of, historical
+		// MultiStaticSS / MultiStaticSSTimeEvo / NZ / Redfield tasks so their
+		// behavior remains available as a numerical reference during migration.
+		if (_tasktype.compare("multissgeneral") == 0 ||
+			_tasktype.compare("MultiSSGeneral") == 0 ||
+			_tasktype.compare("multiss-general") == 0 ||
+			_tasktype.compare("MultiSS-General") == 0)
+		{
+			return std::make_shared<General::MultiSS::TaskMultiSSGeneral>(_obj, *this);
+		}
+
+        // Modular field-swept resonance spectroscopy, independent of propagation.
+        if (_tasktype == "ResonanceGeneral" || _tasktype == "resonancegeneral" ||
+            _tasktype == "resonance-general" || _tasktype == "Resonance-General")
+            return std::make_shared<General::Resonance::TaskResonanceGeneral>(_obj,*this);
 
 		// Create a task of the proper type
 		if (_tasktype.compare("staticss") == 0 || _tasktype.compare("staticivp") == 0)
@@ -247,14 +288,19 @@ namespace RunSection
 			task = std::make_shared<TaskStaticHSStochTimeEvoSymmUncoupled>(_obj, *this);
 		}
 
-		// NEW (ADDED by Luca Gerhards): Spectroscopy task in Hilbert space
-		else if (_tasktype.compare("statichs-direct-spectra") == 0 || _tasktype.compare("StaticHS-Direct-Yields") == 0)
+		// Hilbert-space rotating-frame spectroscopy.
+		else if (_tasktype.compare("statichs-direct-spectra") == 0 || _tasktype.compare("StaticHS-Direct-Spectra") == 0)
 		{
 			task = std::make_shared<TaskStaticHSDirectSpectra>(_obj, *this);
 		}
-		else if (_tasktype.compare("statichs-trepr-spectra") == 0 || _tasktype.compare("StaticHS-TrEPR-Spectra") == 0)
+		// Full-Hamiltonian field-swept resonance spectroscopy. The TrEPR names
+		// are retained only as compatibility aliases for existing input files.
+		else if (_tasktype.compare("statichs-resonance-spectra") == 0 ||
+				 _tasktype.compare("StaticHS-Resonance-Spectra") == 0 ||
+				 _tasktype.compare("statichs-trepr-spectra") == 0 ||
+				 _tasktype.compare("StaticHS-TrEPR-Spectra") == 0)
 		{
-			task = std::make_shared<TaskStaticHSTrEPRSpectra>(_obj, *this);
+			task = std::make_shared<TaskStaticHSResonanceSpectra>(_obj, *this);
 		}
 
 		// NEW (ADDED by Luca Gerhards): Including Action Histrograms in the context of Hamish Hiscock

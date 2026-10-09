@@ -66,12 +66,11 @@ Settings
 
 Run
 {
-  Task TrEPR_min
+  Task resonance_spectra_min
   {
-    type = statichs-trepr-spectra;
+    type = statichs-resonance-spectra;
     mwfrequency = 95.0;
-    linewidth_fad = 0.004692082111;
-    linewidth_donor = 0.004692082111;
+    linewidth = 0.1;
     lineshape = gaussian;
     electron1 = FE1;
     electron2 = WE2;
@@ -83,7 +82,8 @@ Run
     powdergammapoints = 1;
     powderfullsphere = true;
     fulltensorrotation = true;
-    sweepcache = false;
-    datafile = "trepr_next_test_min.dat";
+    sweepcache = true;
+    sweepcachemode = exact;
+    datafile = "resonance_spectra_min.dat";
   }
 }

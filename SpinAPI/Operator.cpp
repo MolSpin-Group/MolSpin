@@ -10,6 +10,7 @@
 #include "Operator.h"
 #include "ObjectParser.h"
 #include "SpinSystem.h"
+#include "Spin.h"
 #include <algorithm>
 #include <cctype>
 
@@ -29,10 +30,53 @@ namespace SpinAPI
 		}
 	}
 
-	// -----------------------------------------------------
-	// Spin Constructors and Destructor
-	// -----------------------------------------------------
-	Operator::Operator(std::string _name, std::string _contents) : properties(std::make_shared<MSDParser::ObjectParser>(_name, _contents)), type(OperatorType::Unspecified), spins(), rate1(0.0), rate2(0.0), rate3(0.0), relaxationFrame(RelaxationFrame::Molecular), isValid(false)
+    std::vector<RunSection::NamedActionScalar> Operator::CreateActionScalars(const std::string &_system)
+    {
+		std::vector<RunSection::NamedActionScalar> scalars;
+        if (!this->IsValid())
+		{
+			return scalars;
+		}
+
+		auto CheckRate = [](const double &_d)
+		{
+			return std::isfinite(_d) && _d >= 0.0;
+		};
+
+		RunSection::ActionScalar rate1(this->rate1, +CheckRate);
+		RunSection::ActionScalar rate2(this->rate2, +CheckRate);
+		RunSection::ActionScalar rate3(this->rate3, +CheckRate);
+		// Match input rate= semantics: write all three rates together.
+		// Read rate1 as before; component-specific actions remain independent.
+		RunSection::ActionScalar rate(
+			[this]() { return this->rate1; },
+			[this](const double &value) {
+				this->rate1 = this->rate2 = this->rate3 = value;
+				return true;
+			}, +CheckRate,
+			[this, initial1 = this->rate1, initial2 = this->rate2, initial3 = this->rate3]() {
+				this->rate1 = initial1;
+				this->rate2 = initial2;
+				this->rate3 = initial3;
+			});
+
+		RunSection::NamedActionScalar rate_named = RunSection::NamedActionScalar(_system + "." + this->Name() + ".rate", rate);
+		RunSection::NamedActionScalar rate1_named = RunSection::NamedActionScalar(_system + "." + this->Name() + ".rate1", rate1);
+		RunSection::NamedActionScalar rate2_named = RunSection::NamedActionScalar(_system + "." + this->Name() + ".rate2", rate2);
+		RunSection::NamedActionScalar rate3_named = RunSection::NamedActionScalar(_system + "." + this->Name() + ".rate3", rate3);
+
+		scalars.push_back(rate_named);
+		scalars.push_back(rate1_named);
+		scalars.push_back(rate2_named);
+		scalars.push_back(rate3_named);
+
+		return scalars;
+    }
+
+    // -----------------------------------------------------
+    // Spin Constructors and Destructor
+    // -----------------------------------------------------
+    Operator::Operator(std::string _name, std::string _contents) : properties(std::make_shared<MSDParser::ObjectParser>(_name, _contents)), type(OperatorType::Unspecified), spins(), rate1(0.0), rate2(0.0), rate3(0.0), relaxationFrame(RelaxationFrame::Molecular), isValid(false)
 	{
 	}
 
@@ -67,6 +111,7 @@ namespace SpinAPI
 	{
 		// Validation may be repeated after a system is edited. Rebuild derived
 		// fields from the parser rather than accumulating stale spin pointers.
+		this->isValid = false;
 		this->type = OperatorType::Unspecified;
 		this->spins.clear();
 		this->rate1 = 0.0;
@@ -193,6 +238,19 @@ namespace SpinAPI
 			}
 		}
 
+		// PS = I/4 - S1.S2 is a singlet projector only for two distinct
+		// physical spin-1/2 particles. Compare with the requested list too:
+		// unresolved names must not turn an invalid request into a valid pair.
+		if (this->type == OperatorType::RelaxationDephasing &&
+			(spinlist.size() != 2 || this->spins.size() != 2 ||
+			 this->spins[0] == this->spins[1] ||
+			 this->spins[0]->S() != 1 || this->spins[1]->S() != 1))
+		{
+			std::cout << "Failed to validate Operator \"" << this->Name()
+				<< "\": relaxationdephasing requires exactly two distinct resolved spin-1/2 spins." << std::endl;
+			return false;
+		}
+
 		this->isValid = true;
 		return this->isValid;
 	}
@@ -259,10 +317,22 @@ namespace SpinAPI
 	{
 		return this->properties;
 	}
-	// -----------------------------------------------------
-	// Non-member non-friend methods
-	// -----------------------------------------------------
-	bool IsValid(const Operator &_operator)
+
+    void Operator::GetActionTargets(std::vector<RunSection::NamedActionScalar> &_scalars, std::vector<RunSection::NamedActionVector> &_vectors, const std::string &_system)
+    {
+		// Get ActionTargets from private methods
+		auto scalars = this->CreateActionScalars(_system);
+		//auto vectors = this->CreateActionVectors(_system);
+
+		// Insert them
+		_scalars.insert(_scalars.end(), scalars.begin(), scalars.end());
+		//_vectors.insert(_vectors.end(), vectors.begin(), vectors.end());
+    }
+
+    // -----------------------------------------------------
+    // Non-member non-friend methods
+    // -----------------------------------------------------
+    bool IsValid(const Operator &_operator)
 	{
 		return _operator.IsValid();
 	}

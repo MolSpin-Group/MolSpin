@@ -15,6 +15,7 @@
 #include "SpinAPIDefines.h"
 #include "MSDParserfwd.h"
 #include "SpinAPIfwd.h"
+#include "ActionTarget.h"
 
 namespace SpinAPI
 {
@@ -30,6 +31,8 @@ namespace SpinAPI
 		double rate3;
 		RelaxationFrame relaxationFrame;
 		bool isValid;
+
+		std::vector<RunSection::NamedActionScalar> CreateActionScalars(const std::string &);
 
 	public:
 		// Constructors / Destructors
@@ -58,6 +61,8 @@ namespace SpinAPI
 
 		// Allow access to custom properties to be used for custom tasks
 		std::shared_ptr<const MSDParser::ObjectParser> Properties() const;
+
+		void GetActionTargets(std::vector<RunSection::NamedActionScalar> &, std::vector<RunSection::NamedActionVector> &, const std::string &);
 	};
 
 	// Define alias for Operator-pointers

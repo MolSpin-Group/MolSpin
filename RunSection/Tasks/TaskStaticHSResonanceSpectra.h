@@ -1,9 +1,10 @@
-#ifndef MOD_RunSection_TaskStaticHSTrEPRSpectra
-#define MOD_RunSection_TaskStaticHSTrEPRSpectra
+#ifndef MOD_RunSection_TaskStaticHSResonanceSpectra
+#define MOD_RunSection_TaskStaticHSResonanceSpectra
 
 #include "BasicTask.h"
 #include "PowderGrid.h"
 #include "SpinSpace.h"
+#include <cstddef>
 #include <limits>
 #include <map>
 #include <memory>
@@ -12,7 +13,7 @@
 
 namespace RunSection
 {
-	class TaskStaticHSTrEPRSpectra : public BasicTask
+	class TaskStaticHSResonanceSpectra : public BasicTask
 	{
 	private:
 		// Sweep-cache output channels. The task can assemble these either by
@@ -91,15 +92,37 @@ namespace RunSection
 		int powderGammaPoints;
 		bool powderFullSphere;
 		bool fullTensorRotation;
+		bool useMzBlocks;
 		bool useSweepCache;
 		bool sweepCacheExact;
 		bool sweepCacheResfields;
+		bool sweepCacheRefinedRoots;
+		bool sweepCachePowderMesh;
+		int meshCosPoints, meshPhiPoints, meshFieldPoints;
+		double meshFieldScale;
 		int sweepCacheResfieldPoints;
 		std::vector<std::string> detectSpinNames;
 		std::string fieldInteractionName;
 		bool enforceZeemanSync;
 		std::string initialStateName;
 		std::vector<std::string> hamiltonianH0list;
+
+		// General Resonance backend policy. Exact remains the historical default.
+		// The first hybrid task route is deliberately explicit: the caller names
+		// perturbative nuclei and unsupported state/cache semantics fail closed.
+		std::string resonanceSolverMode;
+		std::vector<std::string> hybridPerturbativeNucleusNames;
+		double hybridFieldStepT;
+		double hybridMinimumCoreStateOverlap;
+		double hybridMinimumNuclearStateOverlap;
+		double hybridJacobianRelativeTolerance;
+		double hybridJacobianAbsoluteTolerance;
+		double hybridOverlapThreshold;
+		double hybridMinimumCumulativeOverlapWeight;
+		std::size_t hybridMaximumComponentsPerCoreTransition;
+		std::string hybridCompositionMode;
+		double hybridCompressionTolerance_mT;
+
 		std::map<std::string, SpectrumCache> spectrumCache;
 
 		// Small numerical and grid helpers used by the task workflow below.
@@ -123,9 +146,11 @@ namespace RunSection
 		bool CreateUniformGrid(int &_Npoints, SpinAPI::PowderGrid &_uniformGrid) const;
 		bool ResolveFieldInteraction(const SpinAPI::system_ptr &_system, SpinAPI::interaction_ptr &_fieldInteraction) const;
 		bool ResolveDetectionSpins(const SpinAPI::system_ptr &_system, const SpinAPI::interaction_ptr &_fieldInteraction, std::vector<SpinAPI::spin_ptr> &_spins, std::vector<std::string> &_spinNames) const;
+		bool RunHybridSystem(const SpinAPI::system_ptr &_system);
 		void WriteHeader(std::ostream &_stream);
 		bool GetLinearFieldSweep(const SpinAPI::system_ptr &_system, const SpinAPI::interaction_ptr &_fieldInteraction, arma::vec &_field0, arma::vec &_fieldStep) const;
 		bool BuildCachedSpectrum(const SpinAPI::system_ptr &_system, const SpinAPI::interaction_ptr &_fieldInteraction, const arma::vec &_field0, const arma::vec &_fieldStep, SpectrumCache &_cache);
+		bool BuildPowderMeshSpectrum(const SpinAPI::system_ptr &_system, const SpinAPI::interaction_ptr &_fieldInteraction, const arma::vec &_field0, const arma::vec &_fieldStep, SpectrumCache &_cache);
 
 		std::vector<double> ApplyFieldHarmonic(const std::vector<double> &_field_mT, const std::vector<double> &_channel) const;
 		void ApplyDetectionHarmonic(SpectrumCache &_cache) const;
@@ -136,8 +161,8 @@ namespace RunSection
 		bool Validate() override;
 
 	public:
-		TaskStaticHSTrEPRSpectra(const MSDParser::ObjectParser &, const RunSection &);
-		~TaskStaticHSTrEPRSpectra();
+		TaskStaticHSResonanceSpectra(const MSDParser::ObjectParser &, const RunSection &);
+		~TaskStaticHSResonanceSpectra();
 	};
 }
 

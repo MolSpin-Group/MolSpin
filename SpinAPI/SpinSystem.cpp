@@ -708,6 +708,9 @@ namespace SpinAPI
 		for (auto i = this->pulses_seq.cbegin(); i != this->pulses_seq.cend(); i++)
 			(*i)->GetActionTargets(tmpVecScalars, tmpVecVectors, this->Name());
 
+		for(auto i = this->operators.cbegin(); i != this->operators.cend(); i++)
+			(*i)->GetActionTargets(tmpVecScalars, tmpVecVectors, this->Name());
+
 		// Insert all the ActionScalars in the associated container
 		for (auto i = tmpVecScalars.cbegin(); i != tmpVecScalars.cend(); i++)
 		{

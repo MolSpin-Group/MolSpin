@@ -1,9 +1,9 @@
 /////////////////////////////////////////////////////////////////////////
-// PowderGrid (SpinAPI module)
+// PowderGrid class (SpinAPI Module)
 // ------------------
-// Shared powder-orientation grids and frame rotations.
+// Special grid for creating powder averages.
 //
-// Molecular Spin Dynamics Software.
+// Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
 // (c) 2025 Quantum Biology and Computational Physics Group.
 // See LICENSE.txt for license information.
 /////////////////////////////////////////////////////////////////////////
@@ -38,6 +38,13 @@ namespace SpinAPI
 		bool axial = false;
 		std::vector<std::array<unsigned int, 3>> triangles;
 		std::vector<double> weights;
+	};
+
+	enum class PowderGridType
+	{
+		Uniform,
+		Sophe,
+		Octant
 	};
 
 	enum class PowderGridDomain

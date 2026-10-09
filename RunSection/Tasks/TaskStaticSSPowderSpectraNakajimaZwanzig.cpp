@@ -1124,6 +1124,15 @@ namespace RunSection
 
 	bool TaskStaticSSPowderSpectraNakajimaZwanzig::ConstructSpecDensSpecificSpectra(const std::complex<double> &_ampl, const std::complex<double> &_tau_c, const arma::cx_mat &_omega, arma::cx_mat &_specdens)
 	{
+		_specdens.zeros(arma::size(_omega));
+		if (!std::isfinite(_ampl.real()) || !std::isfinite(_ampl.imag()) || !_omega.is_finite())
+			return false;
+		if (std::abs(_ampl) == 0.0)
+			return true;
+		if (!std::isfinite(_tau_c.real()) || !std::isfinite(_tau_c.imag()) ||
+			_tau_c.imag() != 0.0 || !(_tau_c.real() > 0.0))
+			return false;
+
 		arma::cx_vec spectral_entries = _omega.diag();
 		for (auto ii = 0; ii < (int)_omega.n_cols; ii++)
 		{
@@ -1293,17 +1302,13 @@ namespace RunSection
 		_space.UseSuperoperatorSpace(false);
 
 		arma::vec eigenvalues;
-		arma::eig_sym(eigenvalues, _eigenvec, _H);
+		if (!arma::eig_sym(eigenvalues, _eigenvec, _H))
+		{
+			if (_logdiagnostics)
+				this->Log() << "Failed to diagonalize the propagation Hamiltonian." << std::endl;
+			return false;
+		}
 		arma::cx_mat eigenvalueMatrix = arma::diagmat(arma::conv_to<arma::cx_mat>::from(eigenvalues));
-
-		arma::cx_mat identity;
-		identity.set_size(arma::size(_H));
-		identity.eye();
-		arma::cx_mat lambda = (arma::kron(eigenvalueMatrix, identity) - arma::kron(identity, eigenvalueMatrix.st()));
-
-		arma::cx_mat R;
-		R.set_size(arma::size(lambda));
-		R.zeros();
 
 		arma::vec relaxationBasisEigenvalues;
 		arma::cx_mat relaxationBasisEigenvectors;
@@ -1313,6 +1318,17 @@ namespace RunSection
 				this->Log() << "Failed to diagonalize the Hamiltonian used for phenomenological relaxation." << std::endl;
 			return false;
 		}
+
+		// Relaxation is defined by the static H0 energy gaps. H1 is the
+		// coherent rotating-frame drive and must not dress the bath spectrum in
+		// this Markovian model. Completed terms are transformed into the H0+H1
+		// propagation basis once, after their construction.
+		const arma::cx_mat relaxationEigenvalueMatrix =
+			arma::diagmat(arma::conv_to<arma::cx_mat>::from(relaxationBasisEigenvalues));
+		const arma::cx_mat identity = arma::eye<arma::cx_mat>(arma::size(_H));
+		const arma::cx_mat lambda = arma::kron(relaxationEigenvalueMatrix, identity) -
+			arma::kron(identity, relaxationEigenvalueMatrix.st());
+		arma::cx_mat R(arma::size(lambda), arma::fill::zeros);
 
 		auto accumulate_terms = [&](const std::vector<arma::cx_mat> &tensors, const std::vector<double> &input_ampl, const std::vector<double> &input_tau, int terms, int def_g) -> bool {
 			if (tensors.empty())
@@ -1431,33 +1447,26 @@ namespace RunSection
 				const int expected_rows = no_cross ? num_op : (num_op * num_op);
 				const int rows_ampl = static_cast<int>(ampl_mat.n_rows);
 				const int rows_tau = static_cast<int>(tau_c_mat.n_rows);
-				if (rows_ampl < expected_rows || rows_tau < expected_rows)
+				if (rows_ampl != expected_rows || rows_tau != expected_rows)
 				{
 						if (_logdiagnostics)
 							this->Log() << "NZ def_multexpo=1 for interaction \"" << interaction_name
-							            << "\" requires at least " << expected_rows << " rows in g/tau_c matrices, but got g="
+							            << "\" requires exactly " << expected_rows << " ordered rows in g/tau_c matrices, but got g="
 							            << rows_ampl << ", tau_c=" << rows_tau << ". Skipping this interaction contribution."
 							            << std::endl;
-					return true;
+					return false;
 				}
 
 				const int cols_ampl = static_cast<int>(ampl_mat.n_cols);
 				const int cols_tau = static_cast<int>(tau_c_mat.n_cols);
-				const int n_cols = (cols_ampl < cols_tau) ? cols_ampl : cols_tau;
-				if (n_cols < 1)
+				if (cols_ampl < 1 || cols_ampl != cols_tau)
 				{
 						if (_logdiagnostics)
 							this->Log() << "NZ def_multexpo=1 for interaction \"" << interaction_name
-							            << "\" has empty g/tau_c matrices. Skipping this interaction contribution." << std::endl;
-					return true;
+							            << "\" requires equally sized, non-empty g/tau_c matrices." << std::endl;
+					return false;
 				}
-				if (cols_ampl != cols_tau)
-				{
-						if (_logdiagnostics)
-							this->Log() << "NZ def_multexpo=1 for interaction \"" << interaction_name
-							            << "\" has different numbers of columns in g and tau_c matrices (g=" << cols_ampl
-							            << ", tau_c=" << cols_tau << "). Using the first " << n_cols << " columns." << std::endl;
-				}
+				const int n_cols = cols_ampl;
 
 				arma::cx_mat SpecDens;
 				SpecDens.set_size(arma::size(lambda));
@@ -1480,8 +1489,12 @@ namespace RunSection
 						{
 							const double ampl = ampl_mat(row, n);
 							const double tau = tau_c_mat(row, n);
-							if (std::abs(ampl) <= 1.0e-20 || std::abs(tau) <= 1.0e-20)
+							if (!std::isfinite(ampl) || !std::isfinite(tau))
+								return false;
+							if (ampl == 0.0)
 								continue;
+							if (!(tau > 0.0))
+								return false;
 
 							SpecDens_n.zeros();
 							if (!this->ConstructSpecDensSpecificSpectra(static_cast<std::complex<double>>(ampl),
@@ -1542,6 +1555,16 @@ namespace RunSection
 				std::vector<double> ampl_list;
 				if (def_multexpo == 1)
 				{
+					// Matrix-valued correlations use the published Cartesian
+					// ordering. The spherical decomposition has a different
+					// channel count and cannot consume those rows.
+					if (ops != 1)
+					{
+						if (_logdiagnostics)
+							this->Log() << "NZ interaction \"" << (*interaction)->Name()
+								<< "\" requires ops=1 when def_multexpo=1." << std::endl;
+						return false;
+					}
 					if (!(*interaction)->Properties()->GetMatrix("tau_c", tau_c_mat))
 					{
 							if (_logdiagnostics)
@@ -1591,10 +1614,22 @@ namespace RunSection
 							return false;
 						if (!_space.CreateOperator(arma::conv_to<arma::cx_mat>::from((*s1)->Sz()), *s1, Sz))
 								return false;
-							tensors.push_back(Sx);
-							tensors.push_back(Sy);
-							tensors.push_back(Sz);
-							tensors = RotateRank1OperatorBasis(tensors, frame_to_lab);
+							std::vector<arma::cx_mat> spin_ops = {Sx, Sy, Sz};
+							spin_ops = RotateRank1OperatorBasis(spin_ops, frame_to_lab);
+
+							if (use_multexpo)
+							{
+								// Rows are xx, xy, xz, yx, ..., zz. Repeating each
+								// left Cartesian operator provides that ordering to the
+								// ordered (k,s) contraction below.
+								tensors = {spin_ops[0], spin_ops[0], spin_ops[0],
+									spin_ops[1], spin_ops[1], spin_ops[1],
+									spin_ops[2], spin_ops[2], spin_ops[2]};
+							}
+							else
+							{
+								tensors = std::move(spin_ops);
+							}
 					}
 					else
 					{
@@ -1615,7 +1650,7 @@ namespace RunSection
 
 					for (auto &tensor : tensors)
 					{
-						tensor = (_eigenvec.t() * tensor * _eigenvec);
+						tensor = relaxationBasisEigenvectors.t() * tensor * relaxationBasisEigenvectors;
 					}
 
 						if (use_multexpo)
@@ -1717,7 +1752,7 @@ namespace RunSection
 
 						for (auto &tensor : tensors)
 						{
-							tensor = (_eigenvec.t() * tensor * _eigenvec);
+							tensor = relaxationBasisEigenvectors.t() * tensor * relaxationBasisEigenvectors;
 						}
 
 							if (use_multexpo)
@@ -1760,17 +1795,19 @@ namespace RunSection
 		for (auto t = (*_i)->operators_cbegin(); t != (*_i)->operators_cend(); t++)
 		{
 			_space.UseSuperoperatorSpace(true);
+			arma::cx_mat O_relaxationBasis;
 			bool gotOperator = false;
 			if ((*t)->Type() == SpinAPI::OperatorType::RelaxationPhenomenological)
 			{
-				arma::cx_mat O_relaxationBasis;
-				gotOperator = _space.RelaxationOperator((*t), O_relaxationBasis) &&
-							  TransformSuperoperatorBetweenEigenbases(_space, relaxationBasisEigenvectors, _eigenvec, O_relaxationBasis, O_SS);
+				gotOperator = _space.RelaxationOperator((*t), O_relaxationBasis);
 			}
 			else
 			{
-				gotOperator = _space.PowderRelaxationOperatorEigenbasis((*t), _eigenvec, _rotationmatrix, O_SS);
+				gotOperator = _space.PowderRelaxationOperatorEigenbasis(
+					(*t), relaxationBasisEigenvectors, _rotationmatrix, O_relaxationBasis);
 			}
+			gotOperator = gotOperator && TransformSuperoperatorBetweenEigenbases(
+				_space, relaxationBasisEigenvectors, _eigenvec, O_relaxationBasis, O_SS);
 
 			if (gotOperator)
 			{
@@ -1784,7 +1821,15 @@ namespace RunSection
 			_space.UseSuperoperatorSpace(false);
 		}
 
-		_A += R;
+		arma::cx_mat RPropagationBasis;
+		if (!TransformSuperoperatorBetweenEigenbases(
+				_space, relaxationBasisEigenvectors, _eigenvec, R, RPropagationBasis))
+		{
+			if (_logdiagnostics)
+				this->Log() << "Failed to transform the NZ tensor into the propagation basis." << std::endl;
+			return false;
+		}
+		_A += RPropagationBasis;
 		_space.UseSuperoperatorSpace(true);
 		return true;
 	}

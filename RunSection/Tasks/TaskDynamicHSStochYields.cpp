@@ -53,6 +53,21 @@ namespace RunSection
 		auto systems = this->SpinSystems();
 		for (auto i = systems.cbegin(); i != systems.cend(); i++) // iteration through all spin systems, in this case (or usually), this is one
 		{
+			SpinAPI::SpinSpace space(*(*i));
+			space.UseSuperoperatorSpace(false);
+			space.SetReactionOperatorType(this->reactionOperators);
+			SpinAPI::HilbertStochasticRelaxationCache stochasticRelaxation;
+			std::string relaxationError;
+			if (!space.PrepareStochasticRelaxationHilbert((*i)->Operators(), stochasticRelaxation, relaxationError))
+			{ this->Log() << "ERROR: " << relaxationError << std::endl; return false; }
+			std::string relaxationPropagation;
+			this->Properties()->Get("propagationmethod", relaxationPropagation);
+			if (!stochasticRelaxation.Empty() && relaxationPropagation == "krylov")
+			{
+				this->Log() << "ERROR: adaptive legacy Krylov does not expose a fixed accepted interval for symmetric stochastic relaxation; use autoexpm or fixed-step HSGeneral Krylov." << std::endl;
+				return false;
+			}
+
 			// Gyromagnetic constant
 			double gamma_e = 176.0859644; // gyromagnetic ratio of free electron spin in rad mT^-1 mus^-1
 
@@ -91,9 +106,7 @@ namespace RunSection
 			this->Log() << "\nStarting with SpinSystem \"" << (*i)->Name() << "\"." << std::endl;
 
 			// Obtain a SpinSpace to describe the system
-			SpinAPI::SpinSpace space(*(*i));
-			space.UseSuperoperatorSpace(false);
-			space.SetReactionOperatorType(this->reactionOperators);
+
 
 			std::string InitialState;
 			arma::cx_mat InitialStateVector;
@@ -192,13 +205,13 @@ namespace RunSection
 			// Random Number Generator Preparation
 			std::random_device rand_dev;		// random number generator
 			std::mt19937 generator(rand_dev()); // random number generator
-			bool autoseed;
+			bool autoseed = true;
 			this->Properties()->Get("autoseed", autoseed);
 
 			if (!autoseed)
 			{
 				this->Log() << "Autoseed is off." << std::endl;
-				double seednumber;
+				double seednumber = 1.0;
 				this->Properties()->Get("seed", seednumber);
 				if (seednumber != 0)
 				{
@@ -210,6 +223,7 @@ namespace RunSection
 					this->Log() << "Undefined seed number! Setting to default of 1." << std::endl;
 					std::cout << "# ERROR: undefined seed number! Setting to default of 1." << std::endl;
 					seednumber = 1;
+					generator.seed(1);
 				}
 			}
 			else
@@ -217,8 +231,16 @@ namespace RunSection
 				this->Log() << "Autoseed is on." << std::endl;
 			}
 
+			auto relaxationGenerator = SpinAPI::StochasticRelaxationGenerator(generator);
+			auto relaxationHalfStep = [&](arma::cx_mat &state, double interval) -> bool {
+				if (!SpinAPI::ApplyStochasticRelaxationHilbert(stochasticRelaxation,
+					0.5 * interval, state, relaxationGenerator, relaxationError))
+				{ this->Log() << "ERROR: " << relaxationError << std::endl; return false; }
+				return true;
+			};
+
 			// Defining the number of Monte Carlo samples
-			int mc_samples;
+			int mc_samples = 1000;
 			this->Properties()->Get("montecarlosamples", mc_samples);
 
 			if (mc_samples > 0)
@@ -455,7 +477,7 @@ namespace RunSection
 			this->Log() << "Number of time propagation steps: " << num_steps << "." << std::endl;
 
 			// Quantum yield corrections
-			bool correction;
+			bool correction = false;
 
 			this->Properties()->Get("yieldcorrections", correction);
 			if (correction)
@@ -565,11 +587,12 @@ namespace RunSection
 						for (auto o = transitions.begin(); o != transitions.end(); o++)
 						{
 							double rate = (*o)->Rate();
-							double abs_trace = std::abs(arma::trace(B.t() * Operators[idx] * B));
+							double abs_trace = std::abs((stochasticRelaxation.Empty() ? arma::trace(B.t() * Operators[idx] * B) : arma::accu(arma::conj(B) % (Operators[idx] * B))));
 							double expected_value = abs_trace / mc_samples;
 							ExptValues(k, idx) = rate * expected_value;
 							idx++;
 						}
+						if (!stochasticRelaxation.Empty()) space.SetTime(current_time + 0.5 * dt);
 						if (!space.DynamicTotalReactionOperator(dK))
 						{
 							this->Log() << "Warning: Failed to update the Hamiltonian matrix representation!" << std::endl;
@@ -579,7 +602,9 @@ namespace RunSection
 
 						// Update B using the Higham propagator
 						H = H + dK;
+						if (!relaxationHalfStep(B, dt)) return false;
 						B = space.HighamProp(H, B, -arma::cx_double(0.0, 1.0) * dt, precision, M);
+						if (!relaxationHalfStep(B, dt)) return false;
 						H = H - dK;
 					}
 				}
@@ -607,11 +632,12 @@ namespace RunSection
 							// Calculate the expected values for each transition operator
 							for (int idx = 0; idx < num_transitions; idx++)
 							{
-								double abs_trace = std::abs(arma::trace(B.t() * Operators[idx] * B));
+								double abs_trace = std::abs((stochasticRelaxation.Empty() ? arma::trace(B.t() * Operators[idx] * B) : arma::accu(arma::conj(B) % (Operators[idx] * B))));
 								double expected_value = std::exp(-kmin * current_time) * abs_trace / mc_samples;
 								ExptValues(k, idx) = expected_value;
 							}
 
+							if (!stochasticRelaxation.Empty()) space.SetTime(current_time + 0.5 * dt);
 							if (!space.DynamicHamiltonian(dH))
 							{
 								this->Log() << "Warning: Failed to update the Hamiltonian matrix representation!" << std::endl;
@@ -619,7 +645,9 @@ namespace RunSection
 
 							// Update B using the Higham propagator
 							H = H + dH;
+							if (!relaxationHalfStep(B, dt)) return false;
 							B = space.HighamProp(H, B, -dt * arma::cx_double(0.0, 1.0), precision, M);
+							if (!relaxationHalfStep(B, dt)) return false;
 							H = H - dH;
 						}
 					}
@@ -640,11 +668,12 @@ namespace RunSection
 							// Calculate the expected values for each transition operator
 							for (int idx = 0; idx < num_transitions; idx++)
 							{
-								double abs_trace = std::abs(arma::trace(B.t() * Operators[idx] * B));
+								double abs_trace = std::abs((stochasticRelaxation.Empty() ? arma::trace(B.t() * Operators[idx] * B) : arma::accu(arma::conj(B) % (Operators[idx] * B))));
 								double expected_value = abs_trace / mc_samples;
 								ExptValues(k, idx) = expected_value;
 							}
 
+							if (!stochasticRelaxation.Empty()) space.SetTime(current_time + 0.5 * dt);
 							if (!space.DynamicHamiltonian(dH))
 							{
 								this->Log() << "Warning: Failed to update the Hamiltonian matrix representation!" << std::endl;
@@ -652,7 +681,9 @@ namespace RunSection
 
 							// Update B using the Higham propagator
 							H = H + dH;
+							if (!relaxationHalfStep(B, dt)) return false;
 							B = space.HighamProp(H, B, -arma::cx_double(0.0, 1.0) * dt, precision, M);
+							if (!relaxationHalfStep(B, dt)) return false;
 							H = H - dH;
 						}
 					}
@@ -687,11 +718,12 @@ namespace RunSection
 						for (auto o = transitions.begin(); o != transitions.end(); o++)
 						{
 							double rate = (*o)->Rate();
-							double abs_trace = std::abs(arma::trace(B.t() * Operators[idx] * B));
+							double abs_trace = std::abs((stochasticRelaxation.Empty() ? arma::trace(B.t() * Operators[idx] * B) : arma::accu(arma::conj(B) % (Operators[idx] * B))));
 							double expected_value = abs_trace / mc_samples;
 							ExptValues(k, idx) = rate * expected_value;
 							idx++;
 						}
+						if (!stochasticRelaxation.Empty()) space.SetTime(current_time + 0.5 * dt);
 						if (!space.DynamicTotalReactionOperator(dK))
 						{
 							this->Log() << "Warning: Failed to update the Hamiltonian matrix representation!" << std::endl;
@@ -699,6 +731,7 @@ namespace RunSection
 
 						dK = (-arma::cx_double(0.0, 1.0)) * dK;
 
+						if (!stochasticRelaxation.Empty()) space.SetTime(current_time + 0.5 * dt);
 						if (!space.DynamicHamiltonian(dH))
 						{
 							this->Log() << "Warning: Failed to update the Hamiltonian matrix representation!" << std::endl;
@@ -706,7 +739,9 @@ namespace RunSection
 
 						// Update B using the Higham propagator
 						H = H + dK + dH;
+						if (!relaxationHalfStep(B, dt)) return false;
 						B = space.HighamProp(H, B, -arma::cx_double(0.0, 1.0) * dt, precision, M);
+						if (!relaxationHalfStep(B, dt)) return false;
 						H = H - dK - dH;
 					}
 				}

@@ -27,6 +27,7 @@ using test_case = std::pair<std::string, test_ptr>; // Function pointer and name
 //////////////////////////////////////////////////////////////////////////////
 // Files with the other test functions
 #include "tests_spinapi.cpp"
+#include "tests_StochasticRelaxation.cpp"
 #include "tests_msdparser.cpp"
 #include "tests_actions.cpp"
 #include "tests_TaskStaticHSSymmetricDecay.cpp"
@@ -34,8 +35,17 @@ using test_case = std::pair<std::string, test_ptr>; // Function pointer and name
 #include "tests_TaskMultiStaticSS.cpp"
 #include "tests_TaskStaticRPOnlyHSSymDec.cpp"
 #include "tests_TaskStaticSSSpectra.cpp"
-#include "tests_TaskStaticHSTrEPRSpectra.cpp"
+#include "tests_TaskStaticHSResonanceSpectra.cpp"
 #include "tests_TaskStaticPowderSpectra.cpp"
+#include "tests_HSGeneral.cpp"
+#include "tests_SSGeneral.cpp"
+#include "tests_MultiSSGeneral.cpp"
+#include "tests_GeneralLog.cpp"
+#include "tests_GeneralOrientation.cpp"
+#include "tests_GeneralPhysicsEquivalence.cpp"
+#include "tests_GeneralSpectroscopyQualification.cpp"
+#include "tests_GeneralResonanceCore.cpp"
+#include "tests_ResonanceGeneral.cpp"
 #include "tests_utility.cpp"
 //////////////////////////////////////////////////////////////////////////////
 // CMake and the normal Makefile target run the complete suite. Developers can
@@ -64,14 +74,35 @@ using test_case = std::pair<std::string, test_ptr>; // Function pointer and name
 #ifndef STATICSSSPECTRA_TEST
 #define STATICSSSPECTRA_TEST 1
 #endif
-#ifndef STATICHSTEPR_TEST
-#define STATICHSTEPR_TEST 1
+#ifndef STATICHSRESONANCE_TEST
+#define STATICHSRESONANCE_TEST 1
 #endif
 #ifndef STATICPOWDERSPECTRA_TEST
 #define STATICPOWDERSPECTRA_TEST 1
 #endif
 #ifndef UTIL_TEST
 #define UTIL_TEST 1
+#endif
+#ifndef HSGENERAL_TEST
+#define HSGENERAL_TEST 1
+#endif
+#ifndef SSGENERAL_TEST
+#define SSGENERAL_TEST 1
+#endif
+#ifndef MULTISSGENERAL_TEST
+#define MULTISSGENERAL_TEST 1
+#endif
+#ifndef GENERALLOG_TEST
+#define GENERALLOG_TEST 1
+#endif
+#ifndef GENERALORIENTATION_TEST
+#define GENERALORIENTATION_TEST 1
+#endif
+#ifndef GENERALPHYSICS_TEST
+#define GENERALPHYSICS_TEST 1
+#endif
+#ifndef GENERALSPECTROSCOPY_TEST
+#define GENERALSPECTROSCOPY_TEST 1
 #endif
 //////////////////////////////////////////////////////////////////////////////
 std::string read_captured_stream(std::FILE *file)
@@ -90,6 +121,10 @@ std::string read_captured_stream(std::FILE *file)
 
 	return output;
 }
+//////////////////////////////////////////////////////////////////////////////
+#ifndef MOLSPIN_REPLAY_SUCCESS_OUTPUT
+#define MOLSPIN_REPLAY_SUCCESS_OUTPUT 0
+#endif
 //////////////////////////////////////////////////////////////////////////////
 int main(int argc, char **argv)
 {
@@ -113,6 +148,7 @@ int main(int argc, char **argv)
 
 #if SPINAPI_TEST == 1
 	AddSpinAPITests(cases);
+	AddStochasticRelaxationTests(cases);
 #endif
 #if MSDPARSER_TEST == 1 
 	AddMSDParserTests(cases);
@@ -135,11 +171,34 @@ int main(int argc, char **argv)
 #if STATICSSSPECTRA_TEST == 1 
 	AddTaskStaticSSSpectraTests(cases);
 #endif
-#if STATICHSTEPR_TEST == 1 
-	AddTaskStaticHSTrEPRSpectraTests(cases);
+#if STATICHSRESONANCE_TEST == 1
+	AddTaskStaticHSResonanceSpectraTests(cases);
 #endif
 #if STATICPOWDERSPECTRA_TEST == 1 
 	AddTaskStaticPowderSpectraTests(cases);
+#endif
+#if HSGENERAL_TEST == 1
+	AddHSGeneralTests(cases);
+#endif
+#if SSGENERAL_TEST == 1
+	AddSSGeneralTests(cases);
+#endif
+#if MULTISSGENERAL_TEST == 1
+	AddMultiSSGeneralTests(cases);
+#endif
+#if GENERALLOG_TEST == 1
+	AddGeneralLogTests(cases);
+#endif
+#if GENERALORIENTATION_TEST == 1
+	AddGeneralOrientationTests(cases);
+#endif
+#if GENERALPHYSICS_TEST == 1
+	AddGeneralPhysicsEquivalenceTests(cases);
+#endif
+#if GENERALSPECTROSCOPY_TEST == 1
+	AddGeneralSpectroscopyQualificationTests(cases);
+	AddGeneralResonanceCoreTests(cases);
+	AddResonanceGeneralTests(cases);
 #endif
 #if UTIL_TEST == 1 
 	AddUtiltiyTests(cases);
@@ -196,7 +255,7 @@ int main(int argc, char **argv)
 		}
 		std::cout << std::endl;
 
-		if (!passed_test)
+		if (!passed_test || MOLSPIN_REPLAY_SUCCESS_OUTPUT == 1)
 		{
 			std::string captured_stdout_content = read_captured_stream(captured_stdout);
 			std::string captured_stderr_content = read_captured_stream(captured_stderr);

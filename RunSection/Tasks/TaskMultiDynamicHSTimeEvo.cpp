@@ -5,6 +5,7 @@
 // (c) 2025 Quantum Biology and Computational Physics Group.
 // See LICENSE.txt for license information.
 /////////////////////////////////////////////////////////////////////////
+#include "../General/HS/HSRelaxationValidation.h"
 #include <iostream>
 #include "TaskMultiDynamicHSTimeEvo.h"
 #include "Transition.h"
@@ -32,6 +33,11 @@ namespace RunSection
 	// -----------------------------------------------------
 	bool TaskMultiDynamicHSTimeEvo::RunLocal()
 	{
+		std::string relaxationError;
+		if (!General::HS::ValidateNoRelaxation(this->SpinSystems(),
+			"TaskMultiDynamicHSTimeEvo propagation representation", relaxationError))
+		{ this->Log() << "ERROR: " << relaxationError << std::endl; return false; }
+
 		this->Log() << "Running method DynamicHS-MultiSystem." << std::endl;
 
 		// If this is the first step, write first part of header to the data file

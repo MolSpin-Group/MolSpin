@@ -33,6 +33,28 @@ Use a fresh build directory after changing compiler or Armadillo installation.
 For reproducible binaries intended for other machines, configure with
 `-DENABLE_NATIVE_ARCH=OFF`.
 
+## Task consolidation
+
+New single-SpinSystem Hilbert-space propagation and yield development belongs
+in `RunSection/General/HS/` and is exposed through `HSGeneral`. Historical task
+names remain callable in `RunSection/Tasks/` as compatibility and scientific
+regression references, so existing MolSpin/VIKING inputs are not forced to
+migrate before parity has been established. Runtime deprecation warnings are
+therefore intentionally deferred.
+
+The repository-wide migration policy is documented in
+`docs/GENERAL_TASK_ARCHITECTURE.md`; the maintained HSGeneral physics, input and
+validation contract is documented in `docs/HS_GENERAL.md`.
+
+Singlet–triplet dephasing through the standard `Operator` object is available
+for stochastic Hilbert trajectories. See the
+[stochastic relaxation guide and tests](RunSection/General/HS/STOCHASTIC_RELAXATION.md).
+
+Static resonance development belongs in `RunSection/General/Resonance/` and is
+exposed through `ResonanceGeneral`. Existing resonance inputs can select it by
+changing only the task type; `statichs-resonance-spectra` remains callable. See
+[the input and architecture guide](docs/RESONANCE_GENERAL.md).
+
 Join the Discord server:
 
 https://discord.gg/KXNKPBgchM

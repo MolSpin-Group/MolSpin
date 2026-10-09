@@ -9,6 +9,8 @@
 #
 # MolSpin was developed using gcc 5.4.0.
 # --------------------------------------------------------------------------
+.DEFAULT_GOAL := molspin
+
 # Armadillo's wrapper selects and links its configured BLAS/LAPACK backend.
 # pkg-config also supplies non-standard include/library paths, as used by
 # Conda. Both variables can be overridden for a custom installation.
@@ -25,7 +27,7 @@ ARMADILLO_LIBS ?= $(shell $(PKG_CONFIG) --libs armadillo 2>/dev/null || echo -la
 # SpinAPI module
 PATH_SPINAPI = ./SpinAPI
 
-OBJS_SPINAPI = $(PATH_SPINAPI)/SpinSystem.o $(PATH_SPINAPI)/Spin.o $(PATH_SPINAPI)/Interaction.o $(PATH_SPINAPI)/Transition.o $(PATH_SPINAPI)/Operator.o $(PATH_SPINAPI)/Pulse.o $(PATH_SPINAPI)/State.o $(PATH_SPINAPI)/SpinSpace.o $(PATH_SPINAPI)/StandardOutput.o $(PATH_SPINAPI)/Tensor.o $(PATH_SPINAPI)/Trajectory.o $(PATH_SPINAPI)/SubSystem.o $(PATH_SPINAPI)/Function.o $(PATH_SPINAPI)/PulseSequence.o $(PATH_SPINAPI)/PowderGrid.o
+OBJS_SPINAPI = $(PATH_SPINAPI)/SpinSystem.o $(PATH_SPINAPI)/Spin.o $(PATH_SPINAPI)/Interaction.o $(PATH_SPINAPI)/Transition.o $(PATH_SPINAPI)/Operator.o $(PATH_SPINAPI)/Pulse.o $(PATH_SPINAPI)/State.o $(PATH_SPINAPI)/SpinSpace.o $(PATH_SPINAPI)/StandardOutput.o $(PATH_SPINAPI)/Tensor.o $(PATH_SPINAPI)/Trajectory.o $(PATH_SPINAPI)/SubSystem.o $(PATH_SPINAPI)/Function.o $(PATH_SPINAPI)/PulseSequence.o $(PATH_SPINAPI)/PowderGrid.o $(PATH_SPINAPI)/TimeProfile.o $(PATH_SPINAPI)/TransferChannel.o $(PATH_SPINAPI)/QuantumMap.o $(PATH_SPINAPI)/Relaxation.o $(PATH_SPINAPI)/Redfield.o $(PATH_SPINAPI)/NakajimaZwanzig.o
 DEP_SPINAPI = 
 
 # --------------------------------------------------------------------------
@@ -37,7 +39,22 @@ DEP_MSDPARSER = $(PATH_MSDPARSER)/MSDParser.h
 # RunSection module
 PATH_RUNSECTION = ./RunSection
 OBJS_RUNSECTION = $(PATH_RUNSECTION)/RunSection.o $(PATH_RUNSECTION)/BasicTask.o $(PATH_RUNSECTION)/Action.o $(PATH_RUNSECTION)/Settings.o $(PATH_RUNSECTION)/OutputHandler.o $(PATH_RUNSECTION)/Utility.o $(PATH_RUNSECTION)/CubicSpline.o
+PATH_RUNSECTION_GENERAL = ./RunSection/General
+OBJS_RUNSECTION_GENERAL = $(PATH_RUNSECTION_GENERAL)/GeneralOrientationSampler.o
+PATH_RUNSECTION_GENERAL_RESONANCE = ./RunSection/General/Resonance
+OBJS_RUNSECTION_GENERAL_RESONANCE = $(PATH_RUNSECTION_GENERAL_RESONANCE)/ResonanceLineshape.o $(PATH_RUNSECTION_GENERAL_RESONANCE)/ResonanceFieldJacobian.o $(PATH_RUNSECTION_GENERAL_RESONANCE)/ResonanceTransitionDetector.o $(PATH_RUNSECTION_GENERAL_RESONANCE)/ResonanceTransitionMoments.o $(PATH_RUNSECTION_GENERAL_RESONANCE)/GeneralResonanceHamiltonian.o $(PATH_RUNSECTION_GENERAL_RESONANCE)/ResonanceSpectrumEvaluator.o $(PATH_RUNSECTION_GENERAL_RESONANCE)/ResonanceDiagnostics.o $(PATH_RUNSECTION_GENERAL_RESONANCE)/ResonanceExecutionPlan.o $(PATH_RUNSECTION_GENERAL_RESONANCE)/ResonanceSpectrumProcessing.o $(PATH_RUNSECTION_GENERAL_RESONANCE)/ResonanceDiagonalization.o $(PATH_RUNSECTION_GENERAL_RESONANCE)/ResonanceSystemPreparation.o $(PATH_RUNSECTION_GENERAL_RESONANCE)/ResonanceOrientationSampler.o $(PATH_RUNSECTION_GENERAL_RESONANCE)/ResonanceFieldSweep.o $(PATH_RUNSECTION_GENERAL_RESONANCE)/ResonanceExactCalculation.o $(PATH_RUNSECTION_GENERAL_RESONANCE)/ResonanceExactSweep.o $(PATH_RUNSECTION_GENERAL_RESONANCE)/ResonanceHybridCalculation.o $(PATH_RUNSECTION_GENERAL_RESONANCE)/ResonanceMeshCalculation.o $(PATH_RUNSECTION_GENERAL_RESONANCE)/TaskResonanceGeneral.o
 DEP_RUNSECTION = $(PATH_RUNSECTION)/RunSection.h
+
+# ---
+# Unified Hilbert-space production architecture
+PATH_RUNSECTION_GENERAL_HS = ./RunSection/General/HS
+OBJS_RUNSECTION_GENERAL_HS = $(PATH_RUNSECTION_GENERAL_HS)/HSExecutionPlan.o $(PATH_RUNSECTION_GENERAL_HS)/HSStatePreparation.o $(PATH_RUNSECTION_GENERAL_HS)/HSOrientationSampler.o $(PATH_RUNSECTION_GENERAL_HS)/HSHamiltonianBuilder.o $(PATH_RUNSECTION_GENERAL_HS)/HSReactionRelaxation.o $(PATH_RUNSECTION_GENERAL_HS)/HSPropagator.o $(PATH_RUNSECTION_GENERAL_HS)/HSObservableCollector.o $(PATH_RUNSECTION_GENERAL_HS)/TaskHSGeneral.o
+# ---
+# Unified superspace architecture shared by MultiSSGeneral
+PATH_RUNSECTION_GENERAL_SS = ./RunSection/General/SS
+OBJS_RUNSECTION_GENERAL_SS = $(PATH_RUNSECTION_GENERAL_SS)/SSLiouvillianBuilder.o $(PATH_RUNSECTION_GENERAL_SS)/SSInteractionRelaxation.o $(PATH_RUNSECTION_GENERAL_SS)/SSNakajimaZwanzigBuilder.o $(PATH_RUNSECTION_GENERAL_SS)/SSRedfieldBuilder.o $(PATH_RUNSECTION_GENERAL_SS)/SSExecutionPlan.o $(PATH_RUNSECTION_GENERAL_SS)/SSOrientationSampler.o $(PATH_RUNSECTION_GENERAL_SS)/SSSystemPreparation.o $(PATH_RUNSECTION_GENERAL_SS)/SSPropagator.o $(PATH_RUNSECTION_GENERAL_SS)/SSObservableCollector.o $(PATH_RUNSECTION_GENERAL_SS)/TaskSSGeneral.o
+PATH_RUNSECTION_GENERAL_MULTISS = ./RunSection/General/MultiSS
+OBJS_RUNSECTION_GENERAL_MULTISS = $(PATH_RUNSECTION_GENERAL_MULTISS)/MultiSSExecutionPlan.o $(PATH_RUNSECTION_GENERAL_MULTISS)/MultiSSOrientationSampler.o $(PATH_RUNSECTION_GENERAL_MULTISS)/MultiSSSystemPreparation.o $(PATH_RUNSECTION_GENERAL_MULTISS)/MultiSSNetworkBuilder.o $(PATH_RUNSECTION_GENERAL_MULTISS)/MultiSSEventController.o $(PATH_RUNSECTION_GENERAL_MULTISS)/MultiSSPropagator.o $(PATH_RUNSECTION_GENERAL_MULTISS)/MultiSSObservableCollector.o $(PATH_RUNSECTION_GENERAL_MULTISS)/TaskMultiSSGeneral.o
 # ---
 # RunSection custom tasks
 PATH_RUNSECTION_CUSTOMTASKS = ./RunSection/Tasks/Custom
@@ -46,7 +63,7 @@ DEP_RUNSECTION_CUSTOMTASKS =
 # ---
 # RunSection tasks
 PATH_RUNSECTION_TASKS = ./RunSection/Tasks
-OBJS_RUNSECTION_TASKS = $(PATH_RUNSECTION_TASKS)/TaskStaticSS.o $(PATH_RUNSECTION_TASKS)/TaskStaticHSSymmetricDecay.o $(PATH_RUNSECTION_TASKS)/TaskHamiltonianEigenvalues.o $(PATH_RUNSECTION_TASKS)/TaskStaticRPOnlyHSSymDec.o $(PATH_RUNSECTION_TASKS)/TaskStaticSSTimeEvo.o $(PATH_RUNSECTION_TASKS)/TaskDynamicHSTimeEvo.o $(PATH_RUNSECTION_TASKS)/TaskPeriodicSSTimeEvo.o $(PATH_RUNSECTION_TASKS)/TaskPeriodicHSTimeEvo.o $(PATH_RUNSECTION_TASKS)/TaskGammaCompute.o $(PATH_RUNSECTION_TASKS)/TaskMultiStaticSSTimeEvo.o $(PATH_RUNSECTION_TASKS)/TaskMultiDynamicHSTimeEvo.o $(PATH_RUNSECTION_TASKS)/TaskStaticSSRedfield.o $(PATH_RUNSECTION_TASKS)/TaskStaticSSRedfieldSparse.o $(PATH_RUNSECTION_TASKS)/TaskStaticSSRedfieldTimeEvo.o $(PATH_RUNSECTION_TASKS)/TaskStaticSSRedfieldTimeEvoSparse.o $(PATH_RUNSECTION_TASKS)/TaskMultiStaticSSRedfieldTimeEvo.o $(PATH_RUNSECTION_TASKS)/TaskStaticSSSpectra.o $(PATH_RUNSECTION_TASKS)/TaskStaticSSCIDNP.o $(PATH_RUNSECTION_TASKS)/TaskStaticRPOnlyHSSymDecRedfield.o $(PATH_RUNSECTION_TASKS)/TaskStaticHSStochYields.o $(PATH_RUNSECTION_TASKS)/TaskStaticHSStochTimeEvo.o $(PATH_RUNSECTION_TASKS)/TaskStaticHSDirectYields.o $(PATH_RUNSECTION_TASKS)/TaskStaticHSDirectTimeEvo.o $(PATH_RUNSECTION_TASKS)/TaskDynamicHSDirectYields.o $(PATH_RUNSECTION_TASKS)/TaskDynamicHSDirectTimeEvo.o $(PATH_RUNSECTION_TASKS)/TaskDynamicHSStochYields.o $(PATH_RUNSECTION_TASKS)/TaskDynamicHSStochTimeEvo.o $(PATH_RUNSECTION_TASKS)/TaskStaticHSDirectYieldsSymmUncoupled.o $(PATH_RUNSECTION_TASKS)/TaskStaticHSDirectTimeEvoSymmUncoupled.o $(PATH_RUNSECTION_TASKS)/TaskStaticHSStochYieldsSymmUncoupled.o $(PATH_RUNSECTION_TASKS)/TaskStaticHSStochTimeEvoSymmUncoupled.o $(PATH_RUNSECTION_TASKS)/TaskActionSpectrumHistogram.o $(PATH_RUNSECTION_TASKS)/TaskActionSpectrumHistogramRPOnlyDec.o $(PATH_RUNSECTION_TASKS)/TaskStaticSSPump.o $(PATH_RUNSECTION_TASKS)/TaskStaticSSNakajimaZwanzigTimeEvo.o $(PATH_RUNSECTION_TASKS)/TaskStaticSSNakajimaZwanzig.o $(PATH_RUNSECTION_TASKS)/TaskMultiStaticSSTimeEvoSpectra.o $(PATH_RUNSECTION_TASKS)/TaskMultiStaticSSNakajimaZwanzigTimeEvo.o $(PATH_RUNSECTION_TASKS)/TaskMultiRadicalPairSSTimeEvo.o $(PATH_RUNSECTION_TASKS)/TaskStaticSSSpectraNakajimaZwanzig.o $(PATH_RUNSECTION_TASKS)/TaskStaticHSDirectSpectra.o $(PATH_RUNSECTION_TASKS)/TaskStaticHSTrEPRSpectra.o $(PATH_RUNSECTION_TASKS)/TaskMultiStaticSS.o $(PATH_RUNSECTION_TASKS)/TaskStaticSSPowderSpectra.o $(PATH_RUNSECTION_TASKS)/TaskStaticSSPowderSpectraNakajimaZwanzig.o $(OBJS_RUNSECTION_CUSTOMTASKS)
+OBJS_RUNSECTION_TASKS = $(PATH_RUNSECTION_TASKS)/TaskStaticSS.o $(PATH_RUNSECTION_TASKS)/TaskStaticHSSymmetricDecay.o $(PATH_RUNSECTION_TASKS)/TaskHamiltonianEigenvalues.o $(PATH_RUNSECTION_TASKS)/TaskStaticRPOnlyHSSymDec.o $(PATH_RUNSECTION_TASKS)/TaskStaticSSTimeEvo.o $(PATH_RUNSECTION_TASKS)/TaskDynamicHSTimeEvo.o $(PATH_RUNSECTION_TASKS)/TaskPeriodicSSTimeEvo.o $(PATH_RUNSECTION_TASKS)/TaskPeriodicHSTimeEvo.o $(PATH_RUNSECTION_TASKS)/TaskGammaCompute.o $(PATH_RUNSECTION_TASKS)/TaskMultiStaticSSTimeEvo.o $(PATH_RUNSECTION_TASKS)/TaskMultiDynamicHSTimeEvo.o $(PATH_RUNSECTION_TASKS)/TaskStaticSSRedfield.o $(PATH_RUNSECTION_TASKS)/TaskStaticSSRedfieldSparse.o $(PATH_RUNSECTION_TASKS)/TaskStaticSSRedfieldTimeEvo.o $(PATH_RUNSECTION_TASKS)/TaskStaticSSRedfieldTimeEvoSparse.o $(PATH_RUNSECTION_TASKS)/TaskMultiStaticSSRedfieldTimeEvo.o $(PATH_RUNSECTION_TASKS)/TaskStaticSSSpectra.o $(PATH_RUNSECTION_TASKS)/TaskStaticSSCIDNP.o $(PATH_RUNSECTION_TASKS)/TaskStaticRPOnlyHSSymDecRedfield.o $(PATH_RUNSECTION_TASKS)/TaskStaticHSStochYields.o $(PATH_RUNSECTION_TASKS)/TaskStaticHSStochTimeEvo.o $(PATH_RUNSECTION_TASKS)/TaskStaticHSDirectYields.o $(PATH_RUNSECTION_TASKS)/TaskStaticHSDirectTimeEvo.o $(PATH_RUNSECTION_TASKS)/TaskDynamicHSDirectYields.o $(PATH_RUNSECTION_TASKS)/TaskDynamicHSDirectTimeEvo.o $(PATH_RUNSECTION_TASKS)/TaskDynamicHSStochYields.o $(PATH_RUNSECTION_TASKS)/TaskDynamicHSStochTimeEvo.o $(PATH_RUNSECTION_TASKS)/TaskStaticHSDirectYieldsSymmUncoupled.o $(PATH_RUNSECTION_TASKS)/TaskStaticHSDirectTimeEvoSymmUncoupled.o $(PATH_RUNSECTION_TASKS)/TaskStaticHSStochYieldsSymmUncoupled.o $(PATH_RUNSECTION_TASKS)/TaskStaticHSStochTimeEvoSymmUncoupled.o $(PATH_RUNSECTION_TASKS)/TaskActionSpectrumHistogram.o $(PATH_RUNSECTION_TASKS)/TaskActionSpectrumHistogramRPOnlyDec.o $(PATH_RUNSECTION_TASKS)/TaskStaticSSPump.o $(PATH_RUNSECTION_TASKS)/TaskStaticSSNakajimaZwanzigTimeEvo.o $(PATH_RUNSECTION_TASKS)/TaskStaticSSNakajimaZwanzig.o $(PATH_RUNSECTION_TASKS)/TaskMultiStaticSSTimeEvoSpectra.o $(PATH_RUNSECTION_TASKS)/TaskMultiStaticSSNakajimaZwanzigTimeEvo.o $(PATH_RUNSECTION_TASKS)/TaskMultiRadicalPairSSTimeEvo.o $(PATH_RUNSECTION_TASKS)/TaskStaticSSSpectraNakajimaZwanzig.o $(PATH_RUNSECTION_TASKS)/TaskStaticHSDirectSpectra.o $(PATH_RUNSECTION_TASKS)/TaskStaticHSResonanceSpectra.o $(PATH_RUNSECTION_TASKS)/TaskMultiStaticSS.o $(PATH_RUNSECTION_TASKS)/TaskStaticSSPowderSpectra.o $(PATH_RUNSECTION_TASKS)/TaskStaticSSPowderSpectraNakajimaZwanzig.o $(OBJS_RUNSECTION_CUSTOMTASKS)
 DEP_RUNSECTION_TASKS = $(DEP_RUNSECTION_CUSTOMTASKS)
 # ---
 # RunSection actions
@@ -56,7 +73,7 @@ DEP_RUNSECTION_ACTIONS =
 # --------------------------------------------------------------------------
 # Unit testing module
 PATH_TESTS = ./Tests
-OBJS_TEST_COMMON = $(OBJS_SPINAPI) $(OBJS_MSDPARSER) $(OBJS_RUNSECTION) $(OBJS_RUNSECTION_TASKS) $(OBJS_RUNSECTION_ACTIONS)
+OBJS_TEST_COMMON = $(OBJS_SPINAPI) $(OBJS_MSDPARSER) $(OBJS_RUNSECTION) $(OBJS_RUNSECTION_GENERAL) $(OBJS_RUNSECTION_GENERAL_RESONANCE) $(OBJS_RUNSECTION_GENERAL_HS) $(OBJS_RUNSECTION_GENERAL_SS) $(OBJS_RUNSECTION_GENERAL_MULTISS) $(OBJS_RUNSECTION_TASKS) $(OBJS_RUNSECTION_ACTIONS)
 OBJS_TESTS = $(PATH_TESTS)/testmain.o $(OBJS_TEST_COMMON)
 OBJS_TESTS_DEBUG = $(PATH_TESTS)/testmain_debug.o $(OBJS_TEST_COMMON)
 DEP_TESTS =
@@ -65,7 +82,7 @@ DEP_TESTS =
 PATH_LINALG_VENDOR = ./Vendor/
 #---------------------------------------------------------------------------
 # General Compilation Options
-OBJECTS = main.o $(OBJS_SPINAPI) $(OBJS_MSDPARSER) $(OBJS_RUNSECTION) $(OBJS_RUNSECTION_TASKS) $(OBJS_RUNSECTION_ACTIONS)
+OBJECTS = main.o $(OBJS_SPINAPI) $(OBJS_MSDPARSER) $(OBJS_RUNSECTION) $(OBJS_RUNSECTION_GENERAL) $(OBJS_RUNSECTION_GENERAL_RESONANCE) $(OBJS_RUNSECTION_GENERAL_HS) $(OBJS_RUNSECTION_GENERAL_SS) $(OBJS_RUNSECTION_GENERAL_MULTISS) $(OBJS_RUNSECTION_TASKS) $(OBJS_RUNSECTION_ACTIONS)
 CXX ?= g++
 CXXSTD ?= -std=c++17
 OPTFLAGS ?= -O3
@@ -77,10 +94,10 @@ COMPATFLAGS ?=
 WARNFLAGS ?= -Wall
 DEBUGFLAGS ?= -g
 DEFINES ?= -DARMA_DONT_PRINT_FAST_MATH_WARNING -DARMA_NO_DEBUG -DASSERT=1 -DNEGATIVERATES=0
-TESTDEFINES ?= -DSPINAPI_TEST=0 -DMSDPARSER_TEST=0 -DACTION_TEST=0 -DSTATICHSSDECAY_TEST=0 -DSTATICSS_TEST=0 -DSTATICRPONLY_TEST=0 -DSTATICSSSPECTRA_TEST=0 -DSTATICHSTEPR_TEST=0 -DSTATICPOWDERSPECTRA_TEST=1 -DUTIL_TEST=0
+TESTDEFINES ?= -DSPINAPI_TEST=0 -DMSDPARSER_TEST=0 -DACTION_TEST=0 -DSTATICHSSDECAY_TEST=0 -DSTATICSS_TEST=0 -DMULTISTATICSS_TEST=0 -DSTATICRPONLY_TEST=0 -DSTATICSSSPECTRA_TEST=0 -DSTATICHSRESONANCE_TEST=0 -DSTATICPOWDERSPECTRA_TEST=1 -DHSGENERAL_TEST=1 -DSSGENERAL_TEST=1 -DMULTISSGENERAL_TEST=1 -DGENERALLOG_TEST=1 -DUTIL_TEST=0
 CC = $(CXX) $(CXXSTD)		# Compiler to use
 LFLAGS = $(WARNFLAGS) $(DEBUGFLAGS) -DARMA_DONT_PRINT_FAST_MATH_WARNING $(OPTFLAGS)	# Linker Flags
-CFLAGS = $(WARNFLAGS) -c $(ARCHFLAGS) $(LOOPFLAGS) $(COMPATFLAGS) $(DEBUGFLAGS) $(OPENMPFLAGS) $(DEFINES) $(OPTFLAGS) # Compile flags to .o
+CFLAGS = $(WARNFLAGS) -c -MMD -MP $(ARCHFLAGS) $(LOOPFLAGS) $(COMPATFLAGS) $(DEBUGFLAGS) $(OPENMPFLAGS) $(DEFINES) $(OPTFLAGS) # Compile flags to .o
 TESTCFLAGS = $(CFLAGS) $(TESTDEFINES)
 LDLIBS = $(ARMADILLO_LIBS) $(OPENMPFLAGS) $(DLFLAGS)
 # Example portability override: make ARCHFLAGS= LOOPFLAGS=
@@ -91,11 +108,18 @@ LDLIBS = $(ARMADILLO_LIBS) $(OPENMPFLAGS) $(DLFLAGS)
 # --------------------------------------------------------------------------
 # Compilation of the main program
 # --------------------------------------------------------------------------
-SEARCHDIR_MOLSPIN = -I$(PATH_SPINAPI) -I$(PATH_MSDPARSER) -I$(PATH_RUNSECTION) -I$(PATH_RUNSECTION_TASKS) -I$(PATH_RUNSECTION_CUSTOMTASKS) -I$(PATH_RUNSECTION_ACTIONS) -I$(PATH_LINALG_VENDOR) $(ARMADILLO_CFLAGS)
+SEARCHDIR_MOLSPIN = -I$(PATH_SPINAPI) -I$(PATH_MSDPARSER) -I$(PATH_RUNSECTION) -I$(PATH_RUNSECTION_GENERAL_RESONANCE) -I$(PATH_RUNSECTION_GENERAL_HS) -I$(PATH_RUNSECTION_GENERAL_SS) -I$(PATH_RUNSECTION_GENERAL_MULTISS) -I$(PATH_RUNSECTION_TASKS) -I$(PATH_RUNSECTION_CUSTOMTASKS) -I$(PATH_RUNSECTION_ACTIONS) -I$(PATH_LINALG_VENDOR) $(ARMADILLO_CFLAGS)
+
+# Compiler-generated dependency files keep incremental builds correct when a
+# shared header changes class layout or an inline API. Without these files,
+# stale objects can link successfully and fail at runtime with an ABI mismatch.
+DEPFILES = $(sort $(OBJECTS:.o=.d) $(OBJS_TESTS:.o=.d) $(OBJS_TESTS_DEBUG:.o=.d))
+-include $(DEPFILES)
+
 molspin: $(OBJECTS)
 	$(CC) $(LFLAGS) $^ $(LDLIBS) -o $@
 
-SEARCHDIR_MAIN = -I$(PATH_SPINAPI) -I$(PATH_MSDPARSER) -I$(PATH_RUNSECTION) -I$(PATH_RUNSECTION_TASKS) -I$(PATH_RUNSECTION_CUSTOMTASKS) -I$(PATH_RUNSECTION_ACTIONS) -I$(PATH_LINALG_VENDOR) $(ARMADILLO_CFLAGS)
+SEARCHDIR_MAIN = -I$(PATH_SPINAPI) -I$(PATH_MSDPARSER) -I$(PATH_RUNSECTION) -I$(PATH_RUNSECTION_GENERAL_RESONANCE) -I$(PATH_RUNSECTION_GENERAL_HS) -I$(PATH_RUNSECTION_GENERAL_SS) -I$(PATH_RUNSECTION_GENERAL_MULTISS) -I$(PATH_RUNSECTION_TASKS) -I$(PATH_RUNSECTION_CUSTOMTASKS) -I$(PATH_RUNSECTION_ACTIONS) -I$(PATH_LINALG_VENDOR) $(ARMADILLO_CFLAGS)
 main.o: main.cpp $(DEP_MSDPARSER) $(DEP_SPINAPI)
 	$(CC) $(CFLAGS) $(SEARCHDIR_MAIN) main.cpp -o main.o
 #---------------------------------------------------------------------------
@@ -123,13 +147,13 @@ $(PATH_SPINAPI)/SpinSpace.o: $(PATH_SPINAPI)/SpinSpace.cpp $(PATH_SPINAPI)/SpinS
 # --------------------------------------------------------------------------
 # General compilation rule
 # --------------------------------------------------------------------------
-%.o: %.cpp %.h
+%.o: %.cpp
 	$(CC) $(CFLAGS) $(SEARCHDIR_MOLSPIN) $< -o $@
 # --------------------------------------------------------------------------
 # Unit testing module
 # --------------------------------------------------------------------------
 SEARCHDIR_TESTS = $(SEARCHDIR_MAIN) -I$(PATH_TESTS)
-TESTMAIN_DEPS = $(PATH_TESTS)/testmain.cpp $(PATH_TESTS)/assertfunctions.cpp $(PATH_TESTS)/tests_spinapi.cpp $(PATH_TESTS)/tests_msdparser.cpp $(PATH_TESTS)/tests_actions.cpp $(PATH_TESTS)/tests_TaskStaticHSSymmetricDecay.cpp $(PATH_TESTS)/tests_TaskStaticSS.cpp $(PATH_TESTS)/tests_TaskMultiStaticSS.cpp $(PATH_TESTS)/tests_TaskStaticRPOnlyHSSymDec.cpp $(PATH_TESTS)/tests_TaskStaticSSSpectra.cpp $(PATH_TESTS)/tests_TaskStaticHSTrEPRSpectra.cpp $(PATH_TESTS)/tests_TaskStaticPowderSpectra.cpp $(PATH_TESTS)/tests_utility.cpp
+TESTMAIN_DEPS = $(PATH_TESTS)/testmain.cpp $(PATH_TESTS)/assertfunctions.cpp $(PATH_TESTS)/tests_spinapi.cpp $(PATH_TESTS)/tests_StochasticRelaxation.cpp $(PATH_TESTS)/tests_msdparser.cpp $(PATH_TESTS)/tests_actions.cpp $(PATH_TESTS)/tests_TaskStaticHSSymmetricDecay.cpp $(PATH_TESTS)/tests_TaskStaticSS.cpp $(PATH_TESTS)/tests_TaskMultiStaticSS.cpp $(PATH_TESTS)/tests_TaskStaticRPOnlyHSSymDec.cpp $(PATH_TESTS)/tests_TaskStaticSSSpectra.cpp $(PATH_TESTS)/tests_TaskStaticHSResonanceSpectra.cpp $(PATH_TESTS)/tests_TaskStaticPowderSpectra.cpp $(PATH_TESTS)/tests_HSGeneral.cpp $(PATH_TESTS)/tests_SSGeneral.cpp $(PATH_TESTS)/tests_MultiSSGeneral.cpp $(PATH_TESTS)/tests_GeneralLog.cpp $(PATH_TESTS)/tests_GeneralOrientation.cpp $(PATH_TESTS)/tests_GeneralPhysicsEquivalence.cpp $(PATH_TESTS)/tests_GeneralSpectroscopyQualification.cpp $(PATH_TESTS)/tests_GeneralResonanceCore.cpp $(PATH_TESTS)/tests_ResonanceGeneral.cpp $(PATH_TESTS)/tests_utility.cpp
 
 .PHONY: test test_debug
 # The normal target always runs the complete suite.
@@ -155,10 +179,15 @@ $(PATH_TESTS)/testmain_debug.o: $(TESTMAIN_DEPS)
 # Clean-up binaries for clean recompilation
 .PHONY: clean
 clean:
-	rm -f *.o $(PATH_MSDPARSER)/*.o $(PATH_SPINAPI)/*.o $(PATH_RUNSECTION)/*.o $(PATH_RUNSECTION_ACTIONS)/*.o $(PATH_RUNSECTION_TASKS)/*.o $(PATH_RUNSECTION_CUSTOMTASKS)/*.o molspin $(PATH_TESTS)/*.o $(PATH_TESTS)/molspintest $(PATH_TESTS)/molspintest-debug
+	rm -f *.o *.d $(PATH_MSDPARSER)/*.o $(PATH_MSDPARSER)/*.d $(PATH_SPINAPI)/*.o $(PATH_SPINAPI)/*.d $(PATH_RUNSECTION)/*.o $(PATH_RUNSECTION)/*.d $(PATH_RUNSECTION_GENERAL)/*.o $(PATH_RUNSECTION_GENERAL)/*.d $(PATH_RUNSECTION_GENERAL_RESONANCE)/*.o $(PATH_RUNSECTION_GENERAL_RESONANCE)/*.d $(PATH_RUNSECTION_GENERAL_HS)/*.o $(PATH_RUNSECTION_GENERAL_HS)/*.d $(PATH_RUNSECTION_GENERAL_SS)/*.o $(PATH_RUNSECTION_GENERAL_SS)/*.d $(PATH_RUNSECTION_GENERAL_MULTISS)/*.o $(PATH_RUNSECTION_GENERAL_MULTISS)/*.d $(PATH_RUNSECTION_ACTIONS)/*.o $(PATH_RUNSECTION_ACTIONS)/*.d $(PATH_RUNSECTION_TASKS)/*.o $(PATH_RUNSECTION_TASKS)/*.d $(PATH_RUNSECTION_CUSTOMTASKS)/*.o $(PATH_RUNSECTION_CUSTOMTASKS)/*.d molspin $(PATH_TESTS)/*.o $(PATH_TESTS)/*.d $(PATH_TESTS)/molspintest $(PATH_TESTS)/molspintest-debug
 #	rm debug/*.o
 
 # Clean-up testing binaries and run the test again
 .PHONY: cleantest
 cleantest:
 	rm -f $(PATH_TESTS)/testmain.o $(PATH_TESTS)/testmain_debug.o $(PATH_TESTS)/molspintest $(PATH_TESTS)/molspintest-debug
+
+# Shared General diagnostics are header-only; make their consumers rebuild when
+# the logging contract changes.
+$(PATH_RUNSECTION_GENERAL_HS)/TaskHSGeneral.o: $(PATH_RUNSECTION)/General/GeneralLog.h
+$(PATH_RUNSECTION_GENERAL_MULTISS)/TaskMultiSSGeneral.o: $(PATH_RUNSECTION)/General/GeneralLog.h

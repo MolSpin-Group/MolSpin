@@ -5,6 +5,7 @@
 // (c) 2025 Quantum Biology and Computational Physics Group.
 // See LICENSE.txt for license information.
 /////////////////////////////////////////////////////////////////////////
+#include "../General/HS/HSRelaxationValidation.h"
 #include <iostream>
 #include "TaskDynamicHSDirectSpectra.h"
 #include "Transition.h"
@@ -37,6 +38,11 @@ namespace RunSection
 	// -----------------------------------------------------
 	bool TaskDynamicHSDirectSpectra::RunLocal()
 	{
+		std::string relaxationError;
+		if (!General::HS::ValidateNoRelaxation(this->SpinSystems(),
+			"TaskDynamicHSDirectSpectra propagation representation", relaxationError))
+		{ this->Log() << "ERROR: " << relaxationError << std::endl; return false; }
+
 		this->Log() << "Running method DynamicHS-Direct-Spectra." << std::endl;
 
 		// If this is the first step, write first part of header to the data file

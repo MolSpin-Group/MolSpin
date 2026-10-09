@@ -2,7 +2,8 @@
 // Tensor class (SpinAPI Module)
 // ------------------
 // A basic tensor class. Stores the data as isotropic and anisotropic
-// values, and principal axes.
+// values and principal axes of the symmetric part, retaining the
+// antisymmetric part for general Cartesian interaction tensors.
 //
 // Molecular Spin Dynamics Software - developed by Claus Nielsen and Luca Gerhards.
 // (c) 2025 Quantum Biology and Computational Physics Group.
@@ -23,6 +24,7 @@ namespace SpinAPI
 		// Implementation details
 		double isotropic;	   // Isotropic part of principal values (trace / 3.0)
 		arma::vec anisotropic; // Traceless principal values / eigenvalues
+		arma::mat antisymmetric = arma::zeros<arma::mat>(3, 3); // In the symmetric part's principal-axis frame
 		arma::vec axis1;	   // Principal axis definitions in the lab frame
 		arma::vec axis2;
 		arma::vec axis3;
@@ -108,7 +110,9 @@ namespace SpinAPI
 		arma::mat Axes() const;
 		arma::mat LabFrame() const; // Returns the matrix representing the tensor in the lab frame
 
-		// Spherical tensor representation components
+		// Rank-2 spherical components of the symmetric traceless part only.
+		// These do not include the rank-1 antisymmetric part; use LabFrame()
+		// for a general Cartesian tensor.
 		arma::cx_double SphericalT0() const;  // T0
 		arma::cx_double SphericalTp1() const; // T+1
 		arma::cx_double SphericalTm1() const; // T-1

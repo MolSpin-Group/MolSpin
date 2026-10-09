@@ -1,4 +1,4 @@
-﻿# Set cmake version requirement
+# Set cmake version requirement
 cmake_minimum_required(VERSION 3.14)
 
 project(MolSpin LANGUAGES CXX)
@@ -72,6 +72,12 @@ set(SOURCES_SPINAPI
         ${PATH_SOURCE_SPINAPI}/Function.cpp
         ${PATH_SOURCE_SPINAPI}/PulseSequence.cpp
         ${PATH_SOURCE_SPINAPI}/PowderGrid.cpp
+        ${PATH_SOURCE_SPINAPI}/TimeProfile.cpp
+        ${PATH_SOURCE_SPINAPI}/TransferChannel.cpp
+        ${PATH_SOURCE_SPINAPI}/QuantumMap.cpp
+        ${PATH_SOURCE_SPINAPI}/Relaxation.cpp
+        ${PATH_SOURCE_SPINAPI}/Redfield.cpp
+        ${PATH_SOURCE_SPINAPI}/NakajimaZwanzig.cpp
 )
 
 # --------------------------------------------------------------------------
@@ -94,6 +100,51 @@ set(SOURCES_RUNSECTION
         ${PATH_SOURCE_RUNSECTION}/OutputHandler.cpp
         ${PATH_SOURCE_RUNSECTION}/Utility.cpp
         ${PATH_SOURCE_RUNSECTION}/CubicSpline.cpp
+        ${PATH_SOURCE_RUNSECTION}/General/GeneralOrientationSampler.cpp
+        ${PATH_SOURCE_RUNSECTION}/General/Resonance/ResonanceLineshape.cpp
+        ${PATH_SOURCE_RUNSECTION}/General/Resonance/ResonanceFieldJacobian.cpp
+        ${PATH_SOURCE_RUNSECTION}/General/Resonance/ResonanceTransitionDetector.cpp
+        ${PATH_SOURCE_RUNSECTION}/General/Resonance/ResonanceTransitionMoments.cpp
+        ${PATH_SOURCE_RUNSECTION}/General/Resonance/GeneralResonanceHamiltonian.cpp
+        ${PATH_SOURCE_RUNSECTION}/General/Resonance/ResonanceSpectrumEvaluator.cpp
+        ${PATH_SOURCE_RUNSECTION}/General/Resonance/ResonanceDiagnostics.cpp
+        ${PATH_SOURCE_RUNSECTION}/General/Resonance/ResonanceExecutionPlan.cpp
+        ${PATH_SOURCE_RUNSECTION}/General/Resonance/ResonanceSpectrumProcessing.cpp
+        ${PATH_SOURCE_RUNSECTION}/General/Resonance/ResonanceDiagonalization.cpp
+        ${PATH_SOURCE_RUNSECTION}/General/Resonance/ResonanceSystemPreparation.cpp
+        ${PATH_SOURCE_RUNSECTION}/General/Resonance/ResonanceOrientationSampler.cpp
+        ${PATH_SOURCE_RUNSECTION}/General/Resonance/ResonanceFieldSweep.cpp
+        ${PATH_SOURCE_RUNSECTION}/General/Resonance/ResonanceExactCalculation.cpp
+        ${PATH_SOURCE_RUNSECTION}/General/Resonance/ResonanceExactSweep.cpp
+        ${PATH_SOURCE_RUNSECTION}/General/Resonance/ResonanceHybridCalculation.cpp
+        ${PATH_SOURCE_RUNSECTION}/General/Resonance/ResonanceMeshCalculation.cpp
+        ${PATH_SOURCE_RUNSECTION}/General/Resonance/TaskResonanceGeneral.cpp
+        ${PATH_SOURCE_RUNSECTION}/General/HS/HSExecutionPlan.cpp
+        ${PATH_SOURCE_RUNSECTION}/General/HS/HSStatePreparation.cpp
+        ${PATH_SOURCE_RUNSECTION}/General/HS/HSOrientationSampler.cpp
+        ${PATH_SOURCE_RUNSECTION}/General/HS/HSHamiltonianBuilder.cpp
+        ${PATH_SOURCE_RUNSECTION}/General/HS/HSReactionRelaxation.cpp
+        ${PATH_SOURCE_RUNSECTION}/General/HS/HSPropagator.cpp
+        ${PATH_SOURCE_RUNSECTION}/General/HS/HSObservableCollector.cpp
+        ${PATH_SOURCE_RUNSECTION}/General/HS/TaskHSGeneral.cpp
+        ${PATH_SOURCE_RUNSECTION}/General/SS/SSLiouvillianBuilder.cpp
+        ${PATH_SOURCE_RUNSECTION}/General/SS/SSInteractionRelaxation.cpp
+        ${PATH_SOURCE_RUNSECTION}/General/SS/SSNakajimaZwanzigBuilder.cpp
+        ${PATH_SOURCE_RUNSECTION}/General/SS/SSRedfieldBuilder.cpp
+        ${PATH_SOURCE_RUNSECTION}/General/SS/SSExecutionPlan.cpp
+        ${PATH_SOURCE_RUNSECTION}/General/SS/SSOrientationSampler.cpp
+        ${PATH_SOURCE_RUNSECTION}/General/SS/SSSystemPreparation.cpp
+        ${PATH_SOURCE_RUNSECTION}/General/SS/SSPropagator.cpp
+        ${PATH_SOURCE_RUNSECTION}/General/SS/SSObservableCollector.cpp
+        ${PATH_SOURCE_RUNSECTION}/General/SS/TaskSSGeneral.cpp
+        ${PATH_SOURCE_RUNSECTION}/General/MultiSS/MultiSSExecutionPlan.cpp
+        ${PATH_SOURCE_RUNSECTION}/General/MultiSS/MultiSSOrientationSampler.cpp
+        ${PATH_SOURCE_RUNSECTION}/General/MultiSS/MultiSSSystemPreparation.cpp
+        ${PATH_SOURCE_RUNSECTION}/General/MultiSS/MultiSSNetworkBuilder.cpp
+        ${PATH_SOURCE_RUNSECTION}/General/MultiSS/MultiSSEventController.cpp
+        ${PATH_SOURCE_RUNSECTION}/General/MultiSS/MultiSSPropagator.cpp
+        ${PATH_SOURCE_RUNSECTION}/General/MultiSS/MultiSSObservableCollector.cpp
+        ${PATH_SOURCE_RUNSECTION}/General/MultiSS/TaskMultiSSGeneral.cpp
 )
 
 # --------------------------------------------------------------------------
@@ -138,7 +189,7 @@ set(SOURCES_RUNSECTION_TASKS
         ${PATH_SOURCE_RUNSECTION}/Tasks/TaskDynamicHSStochYields.cpp
         ${PATH_SOURCE_RUNSECTION}/Tasks/TaskDynamicHSStochTimeEvo.cpp
         ${PATH_SOURCE_RUNSECTION}/Tasks/TaskStaticHSDirectSpectra.cpp
-        ${PATH_SOURCE_RUNSECTION}/Tasks/TaskStaticHSTrEPRSpectra.cpp
+        ${PATH_SOURCE_RUNSECTION}/Tasks/TaskStaticHSResonanceSpectra.cpp
         ${PATH_SOURCE_RUNSECTION}/Tasks/TaskStaticSSPowderSpectra.cpp
         ${PATH_SOURCE_RUNSECTION}/Tasks/TaskStaticSSPowderSpectraNakajimaZwanzig.cpp
         ${PATH_SOURCE_RUNSECTION}/Tasks/TaskActionSpectrumHistogram.cpp
@@ -177,6 +228,10 @@ target_include_directories(molspin_core PUBLIC
     ${PATH_SOURCE_MSDPARSER}
     ${PATH_SOURCE_RUNSECTION}
     ${PATH_SOURCE_RUNSECTION}/Tasks
+    ${PATH_SOURCE_RUNSECTION}/General/Resonance
+    ${PATH_SOURCE_RUNSECTION}/General/HS
+    ${PATH_SOURCE_RUNSECTION}/General/SS
+    ${PATH_SOURCE_RUNSECTION}/General/MultiSS
     ${PATH_SOURCE_RUNSECTION}/Tasks/Custom
     ${PATH_SOURCE_RUNSECTION}/Actions
 )
@@ -196,6 +251,44 @@ add_executable(molspintest ${SOURCES_TESTS})
 target_include_directories(molspintest PRIVATE ${PATH_SOURCE_TESTS})
 target_link_libraries(molspintest PRIVATE molspin_core)
 molspin_configure_target(molspintest)
+
+# Slow physical resonance validation.
+#
+# This target retains the expensive R2K-D exact-vs-hybrid X/W powder oracles,
+# but is deliberately EXCLUDE_FROM_ALL and is not registered with CTest.
+# Build and run it explicitly when a physical resonance certificate is needed:
+#
+#   cmake --build build --target molspinresonanceslowtest
+#   ./build/molspinresonanceslowtest
+#
+# Successful-test output is replayed for this target so the R2K-D normalized
+# RMS certificate values remain visible.
+add_executable(molspinresonanceslowtest EXCLUDE_FROM_ALL ${SOURCES_TESTS})
+target_include_directories(molspinresonanceslowtest PRIVATE ${PATH_SOURCE_TESTS})
+target_link_libraries(molspinresonanceslowtest PRIVATE molspin_core)
+target_compile_definitions(molspinresonanceslowtest PRIVATE
+    SPINAPI_TEST=0
+    MSDPARSER_TEST=0
+    ACTION_TEST=0
+    STATICHSSDECAY_TEST=0
+    STATICSS_TEST=0
+    MULTISTATICSS_TEST=0
+    STATICRPONLY_TEST=0
+    STATICSSSPECTRA_TEST=0
+    STATICHSRESONANCE_TEST=1
+    STATICPOWDERSPECTRA_TEST=0
+    UTIL_TEST=0
+    HSGENERAL_TEST=0
+    SSGENERAL_TEST=0
+    MULTISSGENERAL_TEST=0
+    GENERALLOG_TEST=0
+    GENERALORIENTATION_TEST=0
+    GENERALPHYSICS_TEST=0
+    GENERALSPECTROSCOPY_TEST=0
+    MOLSPIN_SLOW_RESONANCE_ORACLES=1
+    MOLSPIN_REPLAY_SUCCESS_OUTPUT=1
+)
+molspin_configure_target(molspinresonanceslowtest)
 
 enable_testing()
 add_test(NAME molspintest COMMAND molspintest)

@@ -602,6 +602,7 @@ int main(int argc, char **argv)
 		auto steps = rs.GetSettings()->Steps();
 		double runtime = 0.0;
 		double totalruntime = 0.0;
+		bool calculationFailed = false;
 
 		// If we should do the calculations, do them
 		if (!noCalculations)
@@ -650,22 +651,31 @@ int main(int argc, char **argv)
 				timer.tic();
 
 				// Run all the tasks in the RunSection - skip some if we have a checkpoint
+				bool stepSucceeded = true;
 				if (hasCheckpoint)
 				{
-					rs.Run(checkpoint, i);
+					stepSucceeded = rs.Run(checkpoint, i);
 					hasCheckpoint = false; // We only use the checkpoint for one step
 				}
 				else
 				{
-					rs.Run(i);
+					stepSucceeded = rs.Run(i);
 				}
 
-				// Advance to the next calculation step
-				rs.Step(i + 1);
-
-				// Get the time for the step
+				// Get the time for the step even if a task failed.
 				runtime = timer.toc();
 				totalruntime += runtime;
+
+				if (!stepSucceeded)
+				{
+					calculationFailed = true;
+					std::cerr << "ERROR: One or more tasks failed during step "
+					          << i << "." << std::endl;
+					break;
+				}
+
+				// Advance to the next calculation step only after successful tasks.
+				rs.Step(i + 1);
 
 				// Show time for the step after it finished
 				if (!silentMode && i % reportSteps == 0)
@@ -673,6 +683,13 @@ int main(int argc, char **argv)
 					std::cout << hline << std::endl;
 					std::cout << "# Finished with step " << i << "/" << steps << " in " << runtime << " seconds." << std::endl;
 				}
+			}
+
+			if (calculationFailed)
+			{
+				std::cerr << "ERROR: Calculations terminated because one or more tasks failed." << std::endl;
+				delete[] _badallocemergmem;
+				return EXIT_FAILURE;
 			}
 
 			std::cout << hline << std::endl;

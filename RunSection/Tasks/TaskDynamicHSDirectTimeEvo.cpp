@@ -204,6 +204,12 @@ namespace RunSection
 					use_density_matrix = true;
 					this->Log() << "Added relaxation operator \"" << (*j)->Name() << "\" to Hilbert-space propagation.\n";
 				}
+				else if (!(*j)->IsValid() || SpinAPI::HasNonzeroRelaxationRate(*j))
+				{
+					this->Log() << "ERROR: unsupported Hilbert density relaxation Operator \"" << (*j)->Name() << "\"." << std::endl;
+					return false;
+				}
+
 			}
 
 			// Check whether Hamiltonian terms and/or transitions are time-dependent

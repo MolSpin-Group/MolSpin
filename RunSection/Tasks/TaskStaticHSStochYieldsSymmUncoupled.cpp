@@ -5,6 +5,7 @@
 // (c) 2025 Quantum Biology and Computational Physics Group.
 // See LICENSE.txt for license information.
 /////////////////////////////////////////////////////////////////////////
+#include "../General/HS/HSRelaxationValidation.h"
 #include <iostream>
 #include "TaskStaticHSStochYieldsSymmUncoupled.h"
 #include "Transition.h"
@@ -35,6 +36,11 @@ namespace RunSection
         // -----------------------------------------------------
         bool TaskStaticHSStochYieldsSymmUncoupled::RunLocal()
         {
+		std::string relaxationError;
+		if (!General::HS::ValidateNoRelaxation(this->SpinSystems(),
+			"SymmUncoupled separated-radical representation (including joint S/T channels)", relaxationError))
+		{ this->Log() << "ERROR: " << relaxationError << std::endl; return false; }
+
                 this->Log() << "Running method StaticHS_Stoch_Yields_Symm_Uncoupled." << std::endl;
 
                 // If this is the first step, write first part of header to the data file

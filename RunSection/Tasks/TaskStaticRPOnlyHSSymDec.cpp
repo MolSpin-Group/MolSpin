@@ -5,6 +5,7 @@
 // (c) 2025 Quantum Biology and Computational Physics Group.
 // See LICENSE.txt for license information.
 /////////////////////////////////////////////////////////////////////////
+#include "../General/HS/HSRelaxationValidation.h"
 #include <iostream>
 #include "TaskStaticRPOnlyHSSymDec.h"
 #include "Transition.h"
@@ -31,6 +32,11 @@ namespace RunSection
 	// -----------------------------------------------------
 	bool TaskStaticRPOnlyHSSymDec::RunLocal()
 	{
+		std::string relaxationError;
+		if (!General::HS::ValidateNoRelaxation(this->SpinSystems(),
+			"TaskStaticRPOnlyHSSymDec propagation representation", relaxationError))
+		{ this->Log() << "ERROR: " << relaxationError << std::endl; return false; }
+
 		this->Log() << "Running method StaticRP-Symmetric/uncoupled.\n"
 					<< std::endl;
 

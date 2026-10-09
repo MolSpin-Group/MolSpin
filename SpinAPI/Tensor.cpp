@@ -81,7 +81,7 @@ namespace SpinAPI
 			std::cout << "Error: Failed to parse tensor!" << std::endl;
 	}
 
-	Tensor::Tensor(const Tensor &_tensor) : isotropic(_tensor.isotropic), anisotropic(_tensor.anisotropic), axis1(_tensor.axis1), axis2(_tensor.axis2), axis3(_tensor.axis3), mat1(_tensor.mat1), mat2(_tensor.mat2), mat3(_tensor.mat3), trajectory(_tensor.trajectory),
+	Tensor::Tensor(const Tensor &_tensor) : isotropic(_tensor.isotropic), anisotropic(_tensor.anisotropic), antisymmetric(_tensor.antisymmetric), axis1(_tensor.axis1), axis2(_tensor.axis2), axis3(_tensor.axis3), mat1(_tensor.mat1), mat2(_tensor.mat2), mat3(_tensor.mat3), trajectory(_tensor.trajectory),
 											trjHasTime(_tensor.trjHasTime), trjHasIsotropic(_tensor.trjHasIsotropic), trjHasAnisotropic(_tensor.trjHasAnisotropic), trjHasAxis1(_tensor.trjHasAxis1), trjHasAxis2(_tensor.trjHasAxis2), trjHasAxis3(_tensor.trjHasAxis3),
 											trjHasMatXX(_tensor.trjHasMatXX), trjHasMatXY(_tensor.trjHasMatXY), trjHasMatXZ(_tensor.trjHasMatXZ), trjHasMatYX(_tensor.trjHasMatYX), trjHasMatYY(_tensor.trjHasMatYY), trjHasMatYZ(_tensor.trjHasMatYZ), trjHasMatZX(_tensor.trjHasMatZX), trjHasMatZY(_tensor.trjHasMatZY), trjHasMatZZ(_tensor.trjHasMatZZ),
 											trjTime(_tensor.trjTime), trjIsotropic(_tensor.trjIsotropic), trjAnisotropicX(_tensor.trjAnisotropicX), trjAnisotropicY(_tensor.trjAnisotropicY), trjAnisotropicZ(_tensor.trjAnisotropicZ),
@@ -100,9 +100,13 @@ namespace SpinAPI
 	{
 		this->isotropic = _tensor.isotropic;
 		this->anisotropic = _tensor.anisotropic;
+		this->antisymmetric = _tensor.antisymmetric;
 		this->axis1 = _tensor.axis1;
 		this->axis2 = _tensor.axis2;
 		this->axis3 = _tensor.axis3;
+		this->mat1 = _tensor.mat1;
+		this->mat2 = _tensor.mat2;
+		this->mat3 = _tensor.mat3;
 		this->trajectory = _tensor.trajectory;
 		this->trjHasTime = _tensor.trjHasTime;
 		this->trjHasIsotropic = _tensor.trjHasIsotropic;
@@ -163,34 +167,17 @@ namespace SpinAPI
 			return;
 		}
 
-		// Get a symmetric version of the matrix, i.e. the same matrix if is it symmetric
-		arma::mat symmetrized_matrix = (_matrix + _matrix.t()) / 2.0;
-
-		// Check whether the matrix was symmetric (i.e. _matrix - symmetrized_matrix == 0)
-		if (abs(_matrix - symmetrized_matrix).max() > 1e-10)
-		{
-			std::cout << "Warning: Attempted to set Tensor from non-symmetric matrix." << std::endl;
-			arma::cx_vec anisotropic_tmp;
-			arma::cx_mat principalAxes_tmp = arma::eye<arma::cx_mat>(3, 3);
-			;
-			arma::eig_gen(anisotropic_tmp, principalAxes_tmp, _matrix);
-
-			arma::mat principalAxes = arma::conv_to<arma::mat>::from(principalAxes_tmp);
-
-			this->anisotropic = arma::conv_to<arma::vec>::from(anisotropic_tmp);
-			this->axis1 = principalAxes.col(0);
-			this->axis2 = principalAxes.col(1);
-			this->axis3 = principalAxes.col(2);
-		}
-		else
-		{
-			// Do the diagonalization
-			arma::mat principalAxes = arma::eye<arma::mat>(3, 3);
-			arma::eig_sym(this->anisotropic, principalAxes, _matrix);
-			this->axis1 = principalAxes.col(0);
-			this->axis2 = principalAxes.col(1);
-			this->axis3 = principalAxes.col(2);
-		}
+		// Only the symmetric part has orthonormal principal axes. Diagonalizing
+		// a general matrix and reconstructing U diag(a) U^T loses its skew part
+		// (and can also corrupt the symmetric part). Retain both exactly.
+		const arma::mat symmetric = (_matrix + _matrix.t()) / 2.0;
+		const arma::mat skew = (_matrix - _matrix.t()) / 2.0;
+		arma::mat principalAxes;
+		arma::eig_sym(this->anisotropic, principalAxes, symmetric);
+		this->axis1 = principalAxes.col(0);
+		this->axis2 = principalAxes.col(1);
+		this->axis3 = principalAxes.col(2);
+		this->antisymmetric = principalAxes.t() * skew * principalAxes;
 	}
 
 	void Tensor::SeparateIsotropy()
@@ -237,6 +224,7 @@ namespace SpinAPI
 		// Reset tensor
 		this->isotropic = 0;
 		this->anisotropic.zeros();
+		this->antisymmetric.zeros();
 		bool hasTrajectory = false;
 
 		// Split the input string at "+" to obtain a list of input elements
@@ -310,6 +298,7 @@ namespace SpinAPI
 					arma::mat tmp(value);					   // Get the new basis
 					arma::mat tmpLF = this->LabFrame();		   // Get the matrix representation in the standard basis
 					arma::mat changed = tmp.t() * tmpLF * tmp; // Similarity transformation, note that matrix inversion can fail (if singular)
+					this->isotropic = 0.0; // The transformed matrix already contains the isotropic part
 					this->DiagonalizeMatrix(changed);		   // Calculate a new tensor based on a similarity transformation
 				}
 				else if (keyword.compare("trajectory") == 0)
@@ -441,8 +430,7 @@ namespace SpinAPI
 		axes.col(1) = this->axis2;
 		axes.col(2) = this->axis3;
 
-		// TODO: Consider whether arma::inv(axes) should be used instead of axes.t() if "axes" are not orthogonal
-		return (axes * arma::diagmat(this->anisotropic) * axes.t()) + arma::eye(size(axes)) * this->isotropic;
+		return (axes * (arma::diagmat(this->anisotropic) + this->antisymmetric) * axes.t()) + arma::eye(size(axes)) * this->isotropic;
 	}
 
 	// Return the length of the trajectory (0 if no trajectory is assigned)
@@ -846,7 +834,9 @@ namespace SpinAPI
 	bool IsIsotropic(const Tensor &_tensor)
 	{
 		// The tolerance used here is arbitrary. Use e.g. arma::eps or datum::eps for a better comparison
-		if (std::abs(_tensor.Anisotropic()(0)) + std::abs(_tensor.Anisotropic()(1)) + std::abs(_tensor.Anisotropic()(2)) < 1e-10)
+		// A pure antisymmetric coupling is anisotropic even when all three
+		// principal values of its symmetric part vanish.
+		if (arma::accu(arma::abs(_tensor.LabFrame() - _tensor.Isotropic() * arma::eye<arma::mat>(3, 3))) < 1e-10)
 			return true;
 
 		return false;
