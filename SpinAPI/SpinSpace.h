@@ -385,6 +385,16 @@ namespace SpinAPI
 				return result;
 			}
 		};
+		
+		//generates a 64 bit hash from two 32 bit integerrs, used in the SSE task for stochastic releaxation of the individual trajectories
+		//based on the SplitMix64 algorithm https://rosettacode.org/wiki/Pseudo-random_numbers/Splitmix64
+		static inline uint64_t FastInlineBitMixer(uint32_t x, uint32_t y)
+		{
+			uint64_t z = static_cast<uint64_t>(x) + static_cast<uint64_t>(y) * 0x9e3779b97f4a7c15ULL;
+			z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ULL;
+			z = (z ^ (z >> 27)) * 0x94d049bb133111ebULL;
+			return z ^ (z >> 31);
+		}
 
 		typedef std::function<arma::cx_mat(const arma::sp_cx_mat&, const arma::cx_mat)> GeneratorFunctionMat;
 		typedef std::function<arma::cx_vec(const arma::sp_cx_mat&, const arma::cx_vec)> GeneratorFunctionVec;

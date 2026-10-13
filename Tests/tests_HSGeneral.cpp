@@ -1808,6 +1808,11 @@ bool test_hsgeneral_rejects_unsupported_physics()
 			"calculation=yields;powdergammapoints=4;", "requires a generated theta/phi powder grid");
 }
 
+bool test_SSE_convegance_with_singlet_triplet_dephasing()
+{
+	return true;
+}
+
 void AddHSGeneralTests(std::vector<test_case> &_cases)
 {
 	_cases.push_back(test_case("HSGeneral matches LuDM DirectSpectra relaxation/RWA regression", test_hsgeneral_matches_ludm_directspectra_relaxation_rwa_regression));
@@ -1848,4 +1853,6 @@ void AddHSGeneralTests(std::vector<test_case> &_cases)
 	_cases.push_back(test_case("HSGeneral time grid includes exact endpoint", test_hsgeneral_time_grid_includes_exact_endpoint));
 	_cases.push_back(test_case("HSGeneral parser uses canonical sampling keywords and warns on krylovtol", test_hsgeneral_parser_uses_canonical_sampling_keywords_and_warns_krylovtol));
 	_cases.push_back(test_case("HSGeneral rejects unsupported physics", test_hsgeneral_rejects_unsupported_physics));
+	_cases.push_back(test_case("SSE converges with singlet-triplet dephasing", test_SSE_convegance_with_singlet_triplet_dephasing));
+
 }

@@ -1226,30 +1226,78 @@ namespace SpinAPI
 			{ error = "invalid cached stochastic relaxation rate or Hilbert dimension"; return false; }
 			rates.push_back(term.eventRate); totalRate += term.eventRate;
 		}
-		if (cache.terms.size() == 1 && cache.terms.front().involutory)
-		{
-			// E[U rho U†] at Poisson event rate lambda. For U²=I, odd
-			// event parity has p=(1-exp(-2 lambda dt))/2. For ST lambda=k/2.
-			const double probability = -0.5 * std::expm1(-2.0 * totalRate * dt);
-			std::bernoulli_distribution flip(probability);
-			for (arma::uword column = 0; column < factors.n_cols; ++column)
-				if (flip(generator)) factors.col(column) = cache.terms.front().U * factors.col(column);
-			return true;
-		}
+
+		// E[U rho U†] at Poisson event rate lambda. For U²=I, odd
+		// event parity has p=(1-exp(-2 lambda dt))/2. For ST lambda=k/2.
+
+		const bool isSingleInvolutory = (cache.terms.size() == 1 && cache.terms.front().involutory);
+		const double probability = isSingleInvolutory ? -0.5 * std::expm1(-2.0 * totalRate * dt) : 0.0;
 		const double mean = totalRate * dt;
-		if (!std::isfinite(mean))
+
+		if(!isSingleInvolutory && !std::isfinite(mean))
 		{ error = "total stochastic relaxation event count overflows; reduce timestep"; return false; }
-		// Superposed Poisson process, with independently marked events. This
-		// samples exp(dt sum_j R_j), including NONCOMMUTING U_j. Drawing an
-		// independent parity for each channel in a fixed order would not.
+
+		const uint32_t salt = generator();
+
+		std::bernoulli_distribution flip(probability);
 		std::poisson_distribution<unsigned long long> count(mean);
 		std::discrete_distribution<size_t> channel(rates.begin(), rates.end());
+
+		#pragma omp parallel for schedule(dyanmic,4)
 		for (arma::uword column = 0; column < factors.n_cols; ++column)
 		{
-			const auto events = count(generator);
-			for (unsigned long long event = 0; event < events; ++event)
-				factors.col(column) = cache.terms[channel(generator)].U * factors.col(column);
+			uint64_t trajectorySeed = SpinSpace::FastInlineBitMixer(salt, column);
+			std::mt19937 trajectoryGenerator(static_cast<unsigned int>(trajectorySeed));
+			if(isSingleInvolutory)
+			{
+				if(flip(trajectoryGenerator))
+				{
+					//#pragma omp critical
+					{
+						factors.col(column) = cache.terms.front().U * factors.col(column);
+					}
+				}
+			}
+			else
+			{
+				// Superposed Poisson process, with independently marked events. This
+				// samples exp(dt sum_j R_j), including NONCOMMUTING U_j. Drawing an
+				// independent parity for each channel in a fixed order would not.
+				const auto events = count(trajectoryGenerator);
+				for (unsigned long long event = 0; event < events; ++event)
+				{
+					auto selectedChannel = channel(trajectoryGenerator);
+					auto applied_U = cache.terms[selectedChannel].U;
+					//#pragma omp critical
+					{
+						factors.col(column) = applied_U * factors.col(column);
+					}
+				}
+			}
 		}
 		return true;
+
+		//if (cache.terms.size() == 1 && cache.terms.front().involutory)
+		//{
+		//	// E[U rho U†] at Poisson event rate lambda. For U²=I, odd
+		//	// event parity has p=(1-exp(-2 lambda dt))/2. For ST lambda=k/2.
+		//	const double probability = -0.5 * std::expm1(-2.0 * totalRate * dt);
+		//	std::bernoulli_distribution flip(probability);
+		//	for (arma::uword column = 0; column < factors.n_cols; ++column)
+		//		if (flip(generator)) factors.col(column) = cache.terms.front().U * factors.col(column);
+		//	return true;
+		//}
+		//const double mean = totalRate * dt;
+		//if (!std::isfinite(mean))
+		//{ error = "total stochastic relaxation event count overflows; reduce timestep"; return false; }
+		//std::poisson_distribution<unsigned long long> count(mean);
+		//std::discrete_distribution<size_t> channel(rates.begin(), rates.end());
+		//for (arma::uword column = 0; column < factors.n_cols; ++column)
+		//{
+		//	const auto events = count(generator);
+		//	for (unsigned long long event = 0; event < events; ++event)
+		//		factors.col(column) = cache.terms[channel(generator)].U * factors.col(column);
+		//}
+		//return true;
 	}
 }
