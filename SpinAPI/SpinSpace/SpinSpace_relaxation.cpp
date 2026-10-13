@@ -1243,7 +1243,7 @@ namespace SpinAPI
 		std::poisson_distribution<unsigned long long> count(mean);
 		std::discrete_distribution<size_t> channel(rates.begin(), rates.end());
 
-		#pragma omp parallel for schedule(dyanmic,4)
+		#pragma omp parallel for schedule(dynamic,4)
 		for (arma::uword column = 0; column < factors.n_cols; ++column)
 		{
 			uint64_t trajectorySeed = SpinSpace::FastInlineBitMixer(salt, column);

@@ -2,6 +2,7 @@
 /molspin
 /molspin-superlu
 /Tests/molspintest
+/Tests/molspintest-debug
 /Tests/Makefile
 /Tests/CMakeFiles/
 /Tests/cmake_install.cmake

@@ -92,6 +92,9 @@ using test_case = std::pair<std::string, test_ptr>; // Function pointer and name
 #ifndef MULTISSGENERAL_TEST
 #define MULTISSGENERAL_TEST 1
 #endif
+#ifndef STOCHASTICRELXATION_TEST
+#define STOCHASTICRELXATION_TEST 1
+#endif
 #ifndef GENERALLOG_TEST
 #define GENERALLOG_TEST 1
 #endif
@@ -148,7 +151,7 @@ int main(int argc, char **argv)
 
 #if SPINAPI_TEST == 1
 	AddSpinAPITests(cases);
-	AddStochasticRelaxationTests(cases);
+	//AddStochasticRelaxationTests(cases);
 #endif
 #if MSDPARSER_TEST == 1 
 	AddMSDParserTests(cases);
@@ -199,6 +202,9 @@ int main(int argc, char **argv)
 	AddGeneralSpectroscopyQualificationTests(cases);
 	AddGeneralResonanceCoreTests(cases);
 	AddResonanceGeneralTests(cases);
+#endif
+#if STOCHASTICRELXATION_TEST == 1
+	AddStochasticRelaxationTests(cases);
 #endif
 #if UTIL_TEST == 1 
 	AddUtiltiyTests(cases);

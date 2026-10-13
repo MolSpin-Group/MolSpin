@@ -1808,10 +1808,115 @@ bool test_hsgeneral_rejects_unsupported_physics()
 			"calculation=yields;powdergammapoints=4;", "requires a generated theta/phi powder grid");
 }
 
-bool test_SSE_convegance_with_singlet_triplet_dephasing()
-{
-	return true;
-}
+//bool test_SSE_convegance_with_singlet_triplet_dephasing()
+//{
+//	// 1. Construct radical pair system featuring two electrons coupled to four nuclear spins
+//	auto system = std::make_shared<SpinAPI::SpinSystem>("sse_convergence");
+//	system->Add(std::make_shared<SpinAPI::Spin>("E1", "spin=1/2;type=electron;"));
+//	system->Add(std::make_shared<SpinAPI::Spin>("E2", "spin=1/2;type=electron;"));
+//	for (int i = 1; i <= 4; ++i)
+//		system->Add(std::make_shared<SpinAPI::Spin>("N" + std::to_string(i), "spin=1/2;type=nucleus;"));
+//
+//	// Add hyperfine interactions to create non-trivial internal dynamics
+//	system->Add(std::make_shared<SpinAPI::Interaction>("hf1", "type=hyperfine;group1=E1;group2=N1;tensor=isotropic(0.5);"));
+//	system->Add(std::make_shared<SpinAPI::Interaction>("hf2", "type=hyperfine;group1=E1;group2=N2;tensor=isotropic(0.3);"));
+//	system->Add(std::make_shared<SpinAPI::Interaction>("hf3", "type=hyperfine;group1=E2;group2=N3;tensor=isotropic(0.4);"));
+//	system->Add(std::make_shared<SpinAPI::Interaction>("hf4", "type=hyperfine;group1=E2;group2=N4;tensor=isotropic(0.6);"));
+//
+//	// Add singlet-triplet dephasing relaxation channel
+//	auto op = std::make_shared<SpinAPI::Operator>("relax", "type=relaxationdephasing;spins=E1,E2;rate=0.7;");
+//	system->Add(op);
+//
+//	// Initial state setup (Singlet)
+//	auto state = std::make_shared<SpinAPI::State>("S", "spins(E1,E2)=|1/2,-1/2>-|-1/2,1/2>;");
+//	system->Add(state);
+//	if (!state->ParseFromSystem(*system)) return false;
+//	system->SetProperties(std::make_shared<MSDParser::ObjectParser>("properties", "initialstate=S;initialstatecoherences=keep;"));
+//
+//	const std::string baseOptions = "totaltime=1.0;timestep=0.05;precision=double;spinlist=E1,E2;";
+//
+//	// 2. Run deterministic direct reference calculation using explicit RunSection setup
+//	RunSection::RunSection directRun;
+//	directRun.Add(system);
+//	MSDParser::ObjectParser directParser("task", "type=HSGeneral;" + baseOptions + "sampling=direct;propagationmethod=rk4;");
+//	if (!directRun.Add(MSDParser::ObjectType::Task, directParser)) return false;
+//		
+//	std::ostringstream directData, directLog;
+//	auto directTask = directRun.GetTask("task");
+//	if (directTask) {
+//		directTask->SetDataStream(directData);
+//		directTask->SetLogStream(directLog);
+//	}
+//	if (!directRun.Run(1)) return false;
+//
+//	std::vector<double> directFinalRow;
+//	{
+//		std::istringstream input(directData.str());
+//		std::string line;
+//		while (std::getline(input, line)) {
+//			std::istringstream row(line);
+//			double value;
+//			std::vector<double> values;
+//			while (row >> value) values.push_back(value);
+//			if (!values.empty()) directFinalRow = values;
+//		}
+//	}
+//	if (directFinalRow.empty()) return false;
+//	double finalDirect = directFinalRow[2];
+//
+//	// 3. Run stochastic simulations with sample-size iteration and verify statistical scaling
+//	std::vector<double> rmsErrors;
+//	std::vector<unsigned int> sampleSizes = {};
+//	for (unsigned int i = 12; i < 100; i += 2)
+//		sampleSizes.push_back(i);
+//	
+//	for (unsigned int n : sampleSizes)
+//	{
+//		double mse = 0;
+//		const unsigned int numSeeds = 16;
+//		for (unsigned int seed = 1; seed <= numSeeds; ++seed)
+//		{
+//			RunSection::RunSection stochRun;
+//			stochRun.Add(system);
+//			std::string stochOptions = baseOptions + "sampling=stochastic;propagationmethod=autoexpm;"
+//									   "autoseed=false;seed=" + std::to_string(seed) + 
+//									   ";montecarlosamples=" + std::to_string(n) + ";";
+//			MSDParser::ObjectParser stochParser("task", "type=HSGeneral;" + stochOptions);
+//			if (!stochRun.Add(MSDParser::ObjectType::Task, stochParser)) return false;
+//			std::ostringstream stochData, stochLog;
+//			auto stochTask = stochRun.GetTask("task");
+//			if (stochTask) {
+//				stochTask->SetDataStream(stochData);
+//				stochTask->SetLogStream(stochLog);
+//			}
+//			if (!stochRun.Run(1)) return false;
+//			std::vector<double> stochFinalRow;
+//			std::istringstream input(stochData.str());
+//			std::string line;
+//			while (std::getline(input, line)) {
+//				std::istringstream row(line);
+//				double value;
+//				std::vector<double> values;
+//				while (row >> value) values.push_back(value);
+//				if (!values.empty()) stochFinalRow = values;
+//			}
+//			if (stochFinalRow.empty()) return false;
+//			double finalStoch = stochFinalRow[2];
+//			double diff = finalStoch - finalDirect;
+//			mse += diff * diff;
+//		}
+//		
+//		double rms = std::sqrt(mse / numSeeds);
+//		rmsErrors.push_back(rms);
+//		double expectedBound = 3.0 / std::sqrt(static_cast<double>(n));
+//		std::cout << "SSE Convergence N=" << n << " RMS error=" << rms << " expected bound=" << expectedBound << std::endl;
+//		
+//		// Verify error does not exceed expected statistical bounds
+//		if (rms > expectedBound) return false;
+//	}
+//	// Verify error decreases monotonically following statistical scaling across sample tiers
+//	return rmsErrors.front() / rmsErrors.back() > 1.8;
+//}
 
 void AddHSGeneralTests(std::vector<test_case> &_cases)
 {
@@ -1853,6 +1958,6 @@ void AddHSGeneralTests(std::vector<test_case> &_cases)
 	_cases.push_back(test_case("HSGeneral time grid includes exact endpoint", test_hsgeneral_time_grid_includes_exact_endpoint));
 	_cases.push_back(test_case("HSGeneral parser uses canonical sampling keywords and warns on krylovtol", test_hsgeneral_parser_uses_canonical_sampling_keywords_and_warns_krylovtol));
 	_cases.push_back(test_case("HSGeneral rejects unsupported physics", test_hsgeneral_rejects_unsupported_physics));
-	_cases.push_back(test_case("SSE converges with singlet-triplet dephasing", test_SSE_convegance_with_singlet_triplet_dephasing));
+	//_cases.push_back(test_case("SSE converges with singlet-triplet dephasing", test_SSE_convegance_with_singlet_triplet_dephasing));
 
 }

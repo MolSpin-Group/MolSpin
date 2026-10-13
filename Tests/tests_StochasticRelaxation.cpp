@@ -400,7 +400,9 @@ namespace st_relaxation_tests
 		auto system=Pair();SpinAPI::SpinSpace space(system);SpinAPI::HilbertStochasticRelaxationCache cache;std::string error;
 		if(!space.PrepareStochasticRelaxationHilbert({Channel(system)},cache,error))return false;
 		const double p=-0.5*std::expm1(-0.7);std::vector<double> rms;
-		for(unsigned int n:{256U,1024U,4096U})
+		std::vector<unsigned int> samples;
+		for (unsigned int n=16;n<=32768;n*=2)samples.push_back(n);
+		for(unsigned int n:samples)
 		{
 			double mse=0;
 			for(unsigned int seed=1;seed<=64;++seed)
@@ -609,7 +611,6 @@ namespace st_relaxation_tests
 		}
 		return true;
 	}
-
 }
 
 void AddStochasticRelaxationTests(std::vector<test_case> &cases)

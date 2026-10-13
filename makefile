@@ -75,7 +75,8 @@ DEP_RUNSECTION_ACTIONS =
 PATH_TESTS = ./Tests
 OBJS_TEST_COMMON = $(OBJS_SPINAPI) $(OBJS_MSDPARSER) $(OBJS_RUNSECTION) $(OBJS_RUNSECTION_GENERAL) $(OBJS_RUNSECTION_GENERAL_RESONANCE) $(OBJS_RUNSECTION_GENERAL_HS) $(OBJS_RUNSECTION_GENERAL_SS) $(OBJS_RUNSECTION_GENERAL_MULTISS) $(OBJS_RUNSECTION_TASKS) $(OBJS_RUNSECTION_ACTIONS)
 OBJS_TESTS = $(PATH_TESTS)/testmain.o $(OBJS_TEST_COMMON)
-OBJS_TESTS_DEBUG = $(PATH_TESTS)/testmain_debug.o $(OBJS_TEST_COMMON)
+OBJS_TEST_COMMON_DEBUG = $(OBJS_TEST_COMMON:.o=_debug.o)
+OBJS_TESTS_DEBUG = $(PATH_TESTS)/testmain_debug.o $(OBJS_TEST_COMMON_DEBUG)
 DEP_TESTS =
 # --------------------------------------------------------------------------
 #LinearAlgebra Vendor code
@@ -94,11 +95,14 @@ COMPATFLAGS ?=
 WARNFLAGS ?= -Wall
 DEBUGFLAGS ?= -g
 DEFINES ?= -DARMA_DONT_PRINT_FAST_MATH_WARNING -DARMA_NO_DEBUG -DASSERT=1 -DNEGATIVERATES=0
-TESTDEFINES ?= -DSPINAPI_TEST=0 -DMSDPARSER_TEST=0 -DACTION_TEST=0 -DSTATICHSSDECAY_TEST=0 -DSTATICSS_TEST=0 -DMULTISTATICSS_TEST=0 -DSTATICRPONLY_TEST=0 -DSTATICSSSPECTRA_TEST=0 -DSTATICHSRESONANCE_TEST=0 -DSTATICPOWDERSPECTRA_TEST=1 -DHSGENERAL_TEST=1 -DSSGENERAL_TEST=1 -DMULTISSGENERAL_TEST=1 -DGENERALLOG_TEST=1 -DUTIL_TEST=0
+TESTDEFINES ?= -DSPINAPI_TEST=0 -DMSDPARSER_TEST=0 -DACTION_TEST=0 -DSTATICHSSDECAY_TEST=0 -DSTATICSS_TEST=0 -DMULTISTATICSS_TEST=0 -DSTATICRPONLY_TEST=0 -DSTATICSSSPECTRA_TEST=0 -DSTATICHSRESONANCE_TEST=0 -DSTATICPOWDERSPECTRA_TEST=1 -DHSGENERAL_TEST=1 -DSSGENERAL_TEST=1 -DMULTISSGENERAL_TEST=1 -DGENERALLOG_TEST=1 -DUTIL_TEST=0 -DSTOCHASTICRELXATION_TEST=1
 CC = $(CXX) $(CXXSTD)		# Compiler to use
 LFLAGS = $(WARNFLAGS) $(DEBUGFLAGS) -DARMA_DONT_PRINT_FAST_MATH_WARNING $(OPTFLAGS)	# Linker Flags
 CFLAGS = $(WARNFLAGS) -c -MMD -MP $(ARCHFLAGS) $(LOOPFLAGS) $(COMPATFLAGS) $(DEBUGFLAGS) $(OPENMPFLAGS) $(DEFINES) $(OPTFLAGS) # Compile flags to .o
+CFLAGS_DEBUG = $(WARNFLAGS) -c -MMD -MP $(ARCHFLAGS) $(LOOPFLAGS) $(COMPATFLAGS) $(DEBUGFLAGS) $(OPENMPFLAGS) $(DEFINES)
+LFLAGS_DEBUG = $(WARNFLAGS) $(DEBUGFLAGS) -DARMA_DONT_PRINT_FAST_MATH_WARNING
 TESTCFLAGS = $(CFLAGS) $(TESTDEFINES)
+TESTCFLAGS_DEBUG = $(CFLAGS_DEBUG) $(TESTDEFINES)
 LDLIBS = $(ARMADILLO_LIBS) $(OPENMPFLAGS) $(DLFLAGS)
 # Example portability override: make ARCHFLAGS= LOOPFLAGS=
 
@@ -140,15 +144,25 @@ main.o: main.cpp $(DEP_MSDPARSER) $(DEP_SPINAPI)
 $(PATH_RUNSECTION)/RunSection.o: $(PATH_RUNSECTION)/RunSection.cpp $(PATH_RUNSECTION)/RunSection_CreateTask.cpp $(PATH_RUNSECTION)/RunSection.h
 	$(CC) $(CFLAGS) $(SEARCHDIR_MOLSPIN) $(PATH_RUNSECTION)/RunSection.cpp -o $(PATH_RUNSECTION)/RunSection.o
 
+$(PATH_RUNSECTION)/RunSection_debug.o: $(PATH_RUNSECTION)/RunSection.cpp $(PATH_RUNSECTION)/RunSection_CreateTask.cpp $(PATH_RUNSECTION)/RunSection.h
+	$(CC) $(TESTCFLAGS_DEBUG) $(SEARCHDIR_MOLSPIN) $(PATH_RUNSECTION)/RunSection.cpp -o $(PATH_RUNSECTION)/RunSection_debug.o
+
 # The SpinSpace class has been split into multiple source files due to its complexity
 $(PATH_SPINAPI)/SpinSpace.o: $(PATH_SPINAPI)/SpinSpace.cpp $(PATH_SPINAPI)/SpinSpace/SpinSpace_management.cpp $(PATH_SPINAPI)/SpinSpace/SpinSpace_states.cpp $(PATH_SPINAPI)/SpinSpace/SpinSpace_operators.cpp $(PATH_SPINAPI)/SpinSpace/SpinSpace_hamiltonians.cpp $(PATH_SPINAPI)/SpinSpace/SpinSpace_pulses.cpp $(PATH_SPINAPI)/SpinSpace/SpinSpace_transitions.cpp $(PATH_SPINAPI)/SpinSpace/SpinSpace_relaxation.cpp $(PATH_SPINAPI)/SpinSpace.h
 	$(CC) $(CFLAGS) $(SEARCHDIR_MOLSPIN) $(PATH_SPINAPI)/SpinSpace.cpp -o $(PATH_SPINAPI)/SpinSpace.o
 
+$(PATH_SPINAPI)/SpinSpace_debug.o: $(PATH_SPINAPI)/SpinSpace.cpp $(PATH_SPINAPI)/SpinSpace/SpinSpace_management.cpp $(PATH_SPINAPI)/SpinSpace/SpinSpace_states.cpp $(PATH_SPINAPI)/SpinSpace/SpinSpace_operators.cpp $(PATH_SPINAPI)/SpinSpace/SpinSpace_hamiltonians.cpp $(PATH_SPINAPI)/SpinSpace/SpinSpace_pulses.cpp $(PATH_SPINAPI)/SpinSpace/SpinSpace_transitions.cpp $(PATH_SPINAPI)/SpinSpace/SpinSpace_relaxation.cpp $(PATH_SPINAPI)/SpinSpace.h
+	$(CC) $(TESTCFLAGS_DEBUG) $(SEARCHDIR_MOLSPIN) $(PATH_SPINAPI)/SpinSpace.cpp -o $(PATH_SPINAPI)/SpinSpace_debug.o
+
 # --------------------------------------------------------------------------
 # General compilation rule
 # --------------------------------------------------------------------------
+
 %.o: %.cpp
 	$(CC) $(CFLAGS) $(SEARCHDIR_MOLSPIN) $< -o $@
+
+%_debug.o: %.cpp
+	$(CC) $(TESTCFLAGS_DEBUG) $(SEARCHDIR_MOLSPIN) $< -o $@
 # --------------------------------------------------------------------------
 # Unit testing module
 # --------------------------------------------------------------------------
@@ -167,11 +181,11 @@ $(PATH_TESTS)/testmain.o: $(TESTMAIN_DEPS)
 # The focused target uses TESTDEFINES and a separate object/executable so its
 # selection cannot leak into a subsequent full-suite build.
 test_debug: $(OBJS_TESTS_DEBUG)
-	$(CC) $(LFLAGS) $(OBJS_TESTS_DEBUG) $(LDLIBS) -o $(PATH_TESTS)/molspintest-debug
-	$(PATH_TESTS)/molspintest-debug
+	$(CC) $(LFLAGS_DEBUG) $(OBJS_TESTS_DEBUG) $(LDLIBS) -o $(PATH_TESTS)/molspintest-debug
+	#$(PATH_TESTS)/molspintest-debug
 
 $(PATH_TESTS)/testmain_debug.o: $(TESTMAIN_DEPS)
-	$(CC) $(TESTCFLAGS) $(SEARCHDIR_TESTS) $(PATH_TESTS)/testmain.cpp -o $(PATH_TESTS)/testmain_debug.o
+	$(CC) $(TESTCFLAGS_DEBUG) $(SEARCHDIR_TESTS) $(PATH_TESTS)/testmain.cpp -o $(PATH_TESTS)/testmain_debug.o
 
 # --------------------------------------------------------------------------
 # Misc tasks
@@ -190,4 +204,7 @@ cleantest:
 # Shared General diagnostics are header-only; make their consumers rebuild when
 # the logging contract changes.
 $(PATH_RUNSECTION_GENERAL_HS)/TaskHSGeneral.o: $(PATH_RUNSECTION)/General/GeneralLog.h
+$(PATH_RUNSECTION_GENERAL_HS)/TaskHSGeneral_debug.o: $(PATH_RUNSECTION)/General/GeneralLog.h
+
 $(PATH_RUNSECTION_GENERAL_MULTISS)/TaskMultiSSGeneral.o: $(PATH_RUNSECTION)/General/GeneralLog.h
+$(PATH_RUNSECTION_GENERAL_MULTISS)/TaskMultiSSGeneral_debug.o: $(PATH_RUNSECTION)/General/GeneralLog.h
