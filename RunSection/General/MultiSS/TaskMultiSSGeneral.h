@@ -27,6 +27,7 @@
 
 #include "BasicTask.h"
 #include "MultiSSExecutionPlan.h"
+#include "OpticalProfile.h"
 
 namespace RunSection::General::MultiSS
 {
@@ -41,6 +42,9 @@ namespace RunSection::General::MultiSS
         bool Validate() override;
     private:
         MultiSSExecutionPlan plan;
+        // Pin each explicitly requested recording through validation and all
+        // task steps; a changed file is rejected instead of mixing waveforms.
+        SpinAPI::OpticalWaveformCache opticalWaveformCache;
         bool WriteHeader(const std::vector<std::string> &_labels,bool _timeEvolution);
     };
 }

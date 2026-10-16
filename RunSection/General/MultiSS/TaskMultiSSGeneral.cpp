@@ -74,8 +74,11 @@
 #include "Settings.h"
 #include "SpinSpace.h"
 #include "SpinSystem.h"
+#include "Transition.h"
+#include "OpticalProfile.h"
 
 #include <cmath>
+#include <exception>
 #include <iomanip>
 
 namespace RunSection::General::MultiSS
@@ -106,7 +109,7 @@ namespace RunSection::General::MultiSS
         if(!MultiSSOrientationSampler::Build(plan,orientations,this->Log(),error))
         {this->Log()<<"ERROR: "<<error<<"."<<std::endl;return false;}
         MultiSSNetwork probe;
-        if(!MultiSSNetworkBuilder::Build(systems,plan,orientations.front(),probe,error))
+        if(!MultiSSNetworkBuilder::Build(systems,plan,orientations.front(),probe,error,&opticalWaveformCache))
         {this->Log()<<"ERROR: "<<error<<"."<<std::endl;return false;}
 
         this->Log()<<"\n--- MultiSSGeneral resolved calculation ---"<<std::endl;
@@ -123,6 +126,33 @@ namespace RunSection::General::MultiSS
         this->Log()<<"Direct-sum Liouville dimension="<<probe.systems.globalDimension
             <<", continuous transfer channels="<<probe.continuousChannels.size()
             <<", instantaneous events="<<probe.events.size()<<"."<<std::endl;
+        for(const auto &channel:probe.continuousChannels)
+        {
+            const auto *optical=channel.physical.OpticalProfile();
+            if(optical==nullptr)continue;
+            const auto &waveform=optical->Waveform();
+            double action=0.0;
+            try{action=optical->Integral(waveform->Times().front(),waveform->Times().back());}
+            catch(const std::exception &e)
+            {this->Log()<<"ERROR: optical action integration failed: "<<e.what()<<std::endl;return false;}
+            this->Log()<<"Experimental optical Transition "
+                <<channel.physical.SourceSystem()->Name()<<"."
+                <<channel.physical.TransitionObject()->Name()<<": file="
+                <<waveform->Path()<<", column="<<waveform->Column()
+                <<", timeunit="<<waveform->TimeUnit()
+                <<", intensityunit="<<optical->IntensityUnitName()
+                <<", intensityscale="<<optical->IntensityScale()
+                <<", ratelaw="<<optical->RateLawName();
+            if(optical->WavelengthNm()>0.0)
+                this->Log()<<", wavelength_nm="<<optical->WavelengthNm()
+                    <<", irradiance_to_W_m2="<<optical->IrradianceToWm2()
+                    <<", crosssection_cm2="<<optical->AbsorptionCrossSectionCm2();
+            this->Log()<<", support_ns=["<<waveform->Times().front()<<","
+                <<waveform->Times().back()<<"], peakrate_ns^-1="<<optical->PeakRate()
+                <<", integratedrate="<<action
+                <<". Effective rate is profile derived; Transition.rate is an unused read-only placeholder."
+                <<std::endl;
+        }
         ::RunSection::General::Log::PrintSystemInventory(this->Log(),systems,"MultiSSGeneral physics objects");
         double weightSum=0.0; for(const auto &orientation:orientations) weightSum+=orientation.weight;
         ::RunSection::General::Log::PrintPowderSummary(this->Log(),ToString(plan.orientation),orientations.size(),weightSum);
@@ -156,7 +186,7 @@ namespace RunSection::General::MultiSS
         {
             ::RunSection::General::Log::PrintOrientationProgress(this->Log(),oi,orientations.size());
             MultiSSNetwork network;
-            if(!MultiSSNetworkBuilder::Build(systems,plan,orientations[oi],network,error))
+            if(!MultiSSNetworkBuilder::Build(systems,plan,orientations[oi],network,error,&opticalWaveformCache))
             {this->Log()<<"ERROR: orientation "<<oi<<": "<<error<<"."<<std::endl;return false;}
             MultiSSObservableCollector collector;
             if(!collector.Prepare(plan,network,orientations[oi],error))

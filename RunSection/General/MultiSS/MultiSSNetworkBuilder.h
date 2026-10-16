@@ -40,6 +40,10 @@ namespace RunSection::General::MultiSS
         std::vector<MultiSSNetworkChannel> events;
 
         arma::sp_cx_mat Generator(double _time) const;
+        // One-sided samples prevent a nonzero optical endpoint from adding
+        // pulse area to the neighboring zero-intensity interval in RK4.
+        arma::sp_cx_mat GeneratorFromLeft(double _time) const;
+        arma::sp_cx_mat GeneratorFromRight(double _time) const;
         bool ContinuousGeneratorIsTimeIndependent() const;
         bool IsTimeIndependent() const;
         bool HasEvents() const { return !events.empty(); }
@@ -52,7 +56,8 @@ namespace RunSection::General::MultiSS
         static bool Build(const std::vector<SpinAPI::system_ptr> &_systems,
             const MultiSSExecutionPlan &_plan,
             const MultiSSOrientation &_orientation,
-            MultiSSNetwork &_network, std::string &_error);
+            MultiSSNetwork &_network, std::string &_error,
+            SpinAPI::OpticalWaveformCache *_waveformCache=nullptr);
     };
 }
 #endif

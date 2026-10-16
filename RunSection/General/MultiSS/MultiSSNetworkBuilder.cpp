@@ -181,6 +181,22 @@ namespace RunSection::General::MultiSS
         return L;
     }
 
+    arma::sp_cx_mat MultiSSNetwork::GeneratorFromLeft(double time) const
+    {
+        arma::sp_cx_mat L=systems.internalGenerator;
+        for(const auto &channel:continuousChannels)
+            L+=channel.physical.RateLeft(time)*channel.unitGlobalGenerator;
+        return L;
+    }
+
+    arma::sp_cx_mat MultiSSNetwork::GeneratorFromRight(double time) const
+    {
+        arma::sp_cx_mat L=systems.internalGenerator;
+        for(const auto &channel:continuousChannels)
+            L+=channel.physical.RateRight(time)*channel.unitGlobalGenerator;
+        return L;
+    }
+
     bool MultiSSNetwork::ContinuousGeneratorIsTimeIndependent() const
     {
         for(const auto &c:continuousChannels) if(!c.physical.IsTimeIndependent())return false;
@@ -204,9 +220,12 @@ namespace RunSection::General::MultiSS
 
     bool MultiSSNetworkBuilder::Build(const std::vector<SpinAPI::system_ptr> &systems,
         const MultiSSExecutionPlan &plan,const MultiSSOrientation &orientation,
-        MultiSSNetwork &network,std::string &error)
+        MultiSSNetwork &network,std::string &error,
+        SpinAPI::OpticalWaveformCache *waveformCache)
     {
         network=MultiSSNetwork();error.clear();
+        SpinAPI::OpticalWaveformCache localWaveformCache;
+        if(waveformCache==nullptr)waveformCache=&localWaveformCache;
         if(!MultiSSSystemPreparation::Prepare(systems,plan,orientation,network.systems,error))return false;
 
         for(size_t sourceIndex=0;sourceIndex<network.systems.contexts.size();++sourceIndex)
@@ -215,7 +234,8 @@ namespace RunSection::General::MultiSS
             for(const auto &transition:source.local.system->Transitions())
             {
                 SpinAPI::TransferChannel physical;
-                if(!SpinAPI::TransferChannel::Compile(transition,physical,error))
+                if(!SpinAPI::TransferChannel::Compile(transition,physical,error,
+                    1.0e-10,waveformCache))
                 {error="failed to compile Transition \""+transition->Name()+"\": "+error;return false;}
 
                 MultiSSNetworkChannel compiled;

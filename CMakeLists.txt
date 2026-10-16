@@ -73,6 +73,7 @@ set(SOURCES_SPINAPI
         ${PATH_SOURCE_SPINAPI}/PulseSequence.cpp
         ${PATH_SOURCE_SPINAPI}/PowderGrid.cpp
         ${PATH_SOURCE_SPINAPI}/TimeProfile.cpp
+        ${PATH_SOURCE_SPINAPI}/OpticalProfile.cpp
         ${PATH_SOURCE_SPINAPI}/TransferChannel.cpp
         ${PATH_SOURCE_SPINAPI}/QuantumMap.cpp
         ${PATH_SOURCE_SPINAPI}/Relaxation.cpp

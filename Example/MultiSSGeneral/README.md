@@ -20,6 +20,70 @@ The updated template uses spherical (`ops=0`) Nakajima-Zwanzig rotational modula
 
 With the MultiSS Krylov update, `propagationmethod=krylov` applies the existing sparse Arnoldi/Krylov exponential action to each event-aware time interval. This avoids the conditional-stability restriction of fixed-step RK4; `timestep` still has to resolve a finite Gaussian rate profile.
 
+## Experimental optical-pulse example
+
+`experimental_optical_synthetic.msd` and `experimental_optical_synthetic.mst` are a runnable S0 → S1 ↔ CSS example based on the topology above. The asymmetric irradiance trace and the example molecular parameters are **synthetic**; they are not Tobias Groß measurements or a fitted calibration. From the repository root, after building MolSpin:
+
+```sh
+./build-release/molspin Example/MultiSSGeneral/experimental_optical_synthetic.msd
+```
+
+The example uses a 450 nm one-photon `S0.pump` with `extinctioncoefficient=10000` L mol⁻¹ cm⁻¹ and a synthetic irradiance trace in W/cm². The tabulated piecewise-linear fluence is 0.775 mJ/cm². For this isolated optical channel its integrated rate would be about 0.0671, but in the full network the S1 and CSS populations and fluorescence flux also depend on subsequent kinetics. Do not multiply the pump by a separate photochemical yield when S1 → CSS is already an explicit kinetic transition.
+
+The corresponding Transition input is:
+
+```text
+rateprofile=experimental;
+profilefile="experimental_optical_synthetic.mst";
+profilecolumn=intensity;
+profiletimeunit=ns;
+intensityunit=W/cm2;
+intensityscale=1;
+ratelaw=absorption;
+wavelength=450;
+extinctioncoefficient=10000;
+opticaldiagnostics=true;
+```
+
+Only a Transition with `rateprofile=experimental` loads `profilefile`. Each Transition names its own file; multiple Transitions can share the validated immutable samples while retaining different molecular parameters. The path is resolved relative to the containing `.msd` file. This is distinct from the historical `trajectory` property and from magnetic `Pulse` objects.
+The waveform is pinned for the task lifetime. If its file changes after validation or between calculation steps, MolSpin stops with an error; restart the run with the revised recording.
+
+The `.mst` file is a whitespace-delimited table with a header such as `time intensity`. The selected intensity column can have another name via `profilecolumn`; unrelated named columns are allowed. `profilecolumn` defaults to `intensity`, and `profiletimeunit` defaults to `ns`. Supported time units are `ps`, `ns`, `us`, `ms`, and `s`; MolSpin converts these to ns. Sample times must strictly increase, at least two rows are required, and every intensity must be finite and nonnegative. Negative baseline noise requires an explicit correction to the input recording before a run. No individual pulse is automatically normalized by its peak or area, and relative intensities greater than one are valid.
+
+Measured intensity is interpolated linearly **before** the rate law is applied. Its value is zero outside the first and last sample times. A nonzero endpoint is a step discontinuity against the zero exterior; the endpoint sample itself has its tabulated value. MolSpin partitions propagation at all optical knots and treats the two sides of support boundaries separately. The older `TrajectoryTimeProfile` still uses its historical endpoint-hold convention.
+
+### Rate laws and units
+
+The four built-in `ratelaw` values are:
+
+| Law | Input and required parameters | Rate `k(t)` in ns⁻¹ |
+| --- | --- | --- |
+| `absorption` | Physical `intensityunit`, `wavelength` in nm, and exactly one of `crosssection` in cm² or `extinctioncoefficient` in L mol⁻¹ cm⁻¹ | `10⁻⁹ σ_abs[m²] I[W/m²] λ[m] / (h c)` |
+| `linear` | `intensityunit=relative`, `ratescale` in ns⁻¹ | `ratescale × i` |
+| `powerlaw` | `intensityunit=relative`, `ratescale` in ns⁻¹, `order > 0` | `ratescale × i^order` |
+| `saturating` | `intensityunit=relative`, `ratescale` in ns⁻¹, `halfintensity > 0` | `ratescale × i/(i + halfintensity)` |
+
+Here `i = intensityscale × i_file` for the effective laws. `intensityscale` is dimensionless and defaults to one; it also scales a physical irradiance before the absorption conversion. The reported `.intensity` diagnostic remains the raw interpolated file intensity, so the scale changes the rate conversion without rewriting the input recording. For physical input, supported `intensityunit` spellings are `W/m2`, `W/cm2`, `mW/cm2`, `kW/cm2`, and `MW/cm2`; the capital `M` means mega, while lowercase `m` means milli. Quote the case-sensitive prefixed units in `.msd`, for example `intensityunit="mW/cm2";` or `intensityunit="MW/cm2";`, so the parser preserves the prefix case. Unquoted `mw/cm2` is ambiguous and rejected. A physical absorption calculation requires an irradiance calibration in one of those units. If the recording consists of detector counts or an arbitrary waveform, use `intensityunit=relative` with a calibrated effective `ratescale`, or first calibrate the counts to irradiance. Pulse recordings compared under one effective calibration must use a common intensity reference. A linear law preserves the pulse intensity ratio in the **rates**; final transferred populations generally do not have the same ratio because the source depletes.
+
+The exact constants are `h = 6.62607015×10⁻³⁴ J s`, `c = 299792458 m s⁻¹`, and `N_A = 6.02214076×10²³ mol⁻¹`. The extinction conversion is `σ_abs[cm²] = 1000 ln(10) ε / N_A`. For example, `ε=10000` gives `σ_abs=3.8235325024×10⁻¹⁷ cm²`; at 450 nm, 1 mJ/cm² gives an isolated integrated optical rate of `0.0866164874` and an isolated one-way transfer fraction of `1−exp(−0.0866164874)=0.0829712798`. The absorption cross-section depends on the molecule and wavelength; it is not a universal constant. The power-law and saturating laws are phenomenological intensity responses. In particular, the saturating law is not a replacement for ground-state depletion, which the population dynamics already represent.
+The absorption law assumes a monochromatic, incoherent, single-photon pulse in the linear optical-response regime. The input irradiance must describe the light at the modeled molecules; beam geometry, attenuation through the sample, scattering, and detector response are not calculated by this rate law.
+
+For a relative pulse, the compact alternative is:
+
+```text
+rateprofile=experimental; profilefile="laser_pulse.mst";
+intensityunit=relative; ratelaw=linear;
+ratescale=0.025; intensityscale=0.5;
+```
+
+### Diagnostics and numerical checks
+
+Set `opticaldiagnostics=true` on an experimental Transition to append `<Source>.<Transition>.intensity` (raw interpolated file intensity, in the declared intensity unit), `.rate` (ns⁻¹), `.integratedrate` (dimensionless `∫₀ᵗ k(t′)dt′`), and `.flux` (ns⁻¹). The actual channel flux is `k(t) Tr[G ρ_source(t)]`, where `G` is the channel's source effect; it can differ greatly from the bare rate after population depletion. Setting `transitionfluxes=true` on the task reports fluxes for all continuous Transitions; when both options are enabled the optical flux appears once. With optical diagnostics disabled, existing output columns and their order are unchanged. Internal transfer fluxes can be counted repeatedly in a reversible network and are not terminal product yields.
+
+Use `timestep` values such as `0.02`, `0.01`, then `0.005` ns and compare populations and fluxes for convergence, especially for sharp or nonlinear pulses. `propagationmethod=krylov` controls the matrix-exponential projection error but does not by itself control the time-dependence error of midpoint propagation. `rk4` also needs a resolved timestep. Time-integrated and steady-state solves require static rates and therefore do not accept a genuinely time-varying experimental pulse. The optical parameters are compiled as immutable inputs for a run; they are not writable Action targets. An incoherent optical rate does not model optical phase, Rabi cycling, or electronic coherence between S0 and S1.
+
+For developers, the built-in law portfolio is centralized in `SpinAPI/OpticalProfile.{h,cpp}`. Extend `OpticalRateLaw::Kind`, its parameter validation in `Parse`, and its evaluation in `Rate` together; then add a scalar analytic oracle and malformed-parameter cases in `Tests/tests_MultiSSGeneral.cpp`. The waveform reader and channel transfer maps do not need law-specific branches.
+
 ## `preservespins` is not a pulse-selection keyword
 
 `preservespins=N1` means that `N1` is **unaffected** by that kinetic transfer. Conceptually,

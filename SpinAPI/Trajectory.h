@@ -11,6 +11,8 @@
 #define MOD_SpinAPI_Trajectory
 
 #include <map>
+#include <istream>
+#include <string>
 #include <vector>
 
 namespace SpinAPI
@@ -42,6 +44,10 @@ namespace SpinAPI
 
 		// Public methods
 		bool Load(const std::string &); // Loads the given trajectory file
+		// Strict opt-in reader for experimental data. The historical Load()
+		// remains permissive for backward compatibility.
+		bool LoadStrict(const std::string &_filename, std::string &_error);
+		bool LoadStrict(std::istream &_input, std::string &_error);
 		bool Clear();					// Removes any loaded trajectory data
 
 		// TODO: Consider using size_t or vector::size_type instead of unsigned int

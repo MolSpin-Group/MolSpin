@@ -27,7 +27,7 @@ ARMADILLO_LIBS ?= $(shell $(PKG_CONFIG) --libs armadillo 2>/dev/null || echo -la
 # SpinAPI module
 PATH_SPINAPI = ./SpinAPI
 
-OBJS_SPINAPI = $(PATH_SPINAPI)/SpinSystem.o $(PATH_SPINAPI)/Spin.o $(PATH_SPINAPI)/Interaction.o $(PATH_SPINAPI)/Transition.o $(PATH_SPINAPI)/Operator.o $(PATH_SPINAPI)/Pulse.o $(PATH_SPINAPI)/State.o $(PATH_SPINAPI)/SpinSpace.o $(PATH_SPINAPI)/StandardOutput.o $(PATH_SPINAPI)/Tensor.o $(PATH_SPINAPI)/Trajectory.o $(PATH_SPINAPI)/SubSystem.o $(PATH_SPINAPI)/Function.o $(PATH_SPINAPI)/PulseSequence.o $(PATH_SPINAPI)/PowderGrid.o $(PATH_SPINAPI)/TimeProfile.o $(PATH_SPINAPI)/TransferChannel.o $(PATH_SPINAPI)/QuantumMap.o $(PATH_SPINAPI)/Relaxation.o $(PATH_SPINAPI)/Redfield.o $(PATH_SPINAPI)/NakajimaZwanzig.o
+OBJS_SPINAPI = $(PATH_SPINAPI)/SpinSystem.o $(PATH_SPINAPI)/Spin.o $(PATH_SPINAPI)/Interaction.o $(PATH_SPINAPI)/Transition.o $(PATH_SPINAPI)/Operator.o $(PATH_SPINAPI)/Pulse.o $(PATH_SPINAPI)/State.o $(PATH_SPINAPI)/SpinSpace.o $(PATH_SPINAPI)/StandardOutput.o $(PATH_SPINAPI)/Tensor.o $(PATH_SPINAPI)/Trajectory.o $(PATH_SPINAPI)/SubSystem.o $(PATH_SPINAPI)/Function.o $(PATH_SPINAPI)/PulseSequence.o $(PATH_SPINAPI)/PowderGrid.o $(PATH_SPINAPI)/TimeProfile.o $(PATH_SPINAPI)/OpticalProfile.o $(PATH_SPINAPI)/TransferChannel.o $(PATH_SPINAPI)/QuantumMap.o $(PATH_SPINAPI)/Relaxation.o $(PATH_SPINAPI)/Redfield.o $(PATH_SPINAPI)/NakajimaZwanzig.o
 DEP_SPINAPI = 
 
 # --------------------------------------------------------------------------

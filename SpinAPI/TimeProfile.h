@@ -41,7 +41,8 @@ namespace SpinAPI
         Constant,
         Gaussian,
         Rectangular,
-        Trajectory
+        Trajectory,
+        ExperimentalOptical
     };
 
     class TimeProfile
@@ -49,7 +50,10 @@ namespace SpinAPI
     public:
         virtual ~TimeProfile() = default;
         virtual double Value(double _time) const = 0;
+        virtual double ValueLeft(double _time) const { return Value(_time); }
+        virtual double ValueRight(double _time) const { return Value(_time); }
         virtual double Integral(double _start, double _end) const = 0;
+        virtual void AppendBreakpoints(std::vector<double> &) const {}
         virtual bool IsConstant() const { return false; }
         virtual TimeProfileKind Kind() const = 0;
         virtual std::string Description() const = 0;

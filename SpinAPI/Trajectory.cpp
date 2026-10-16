@@ -9,6 +9,10 @@
 #include <iostream>
 #include <fstream>
 #include <sstream>
+#include <cctype>
+#include <cmath>
+#include <set>
+#include <stdexcept>
 #include "Trajectory.h"
 
 namespace SpinAPI
@@ -188,6 +192,77 @@ namespace SpinAPI
 
 		std::cout << "ERROR: Failed to open trajectory file \"" << _filename << "\"! Trajectory was not loaded!" << std::endl;
 		return false;
+	}
+
+	bool Trajectory::LoadStrict(const std::string &_filename, std::string &_error)
+	{
+		std::ifstream input(_filename);
+		if (!input)
+		{
+			_error = "cannot open experimental trajectory \"" + _filename + "\"";
+			this->Clear();
+			return false;
+		}
+		return LoadStrict(input, _error);
+	}
+
+	bool Trajectory::LoadStrict(std::istream &_input, std::string &_error)
+	{
+		this->Clear();
+		_error.clear();
+		std::string line;
+		unsigned int lineNumber = 0;
+		bool haveHeader = false;
+		unsigned int columns = 0;
+		while (std::getline(_input, line))
+		{
+			++lineNumber;
+			std::istringstream row(line);
+			std::vector<std::string> fields;
+			std::string field;
+			while (row >> field) fields.push_back(field);
+			if (fields.empty()) continue;
+			if (!haveHeader)
+			{
+				std::set<std::string> seen;
+				for (const auto &header : fields)
+				{
+					if (header.empty() || !(std::isalpha(static_cast<unsigned char>(header[0])) || header[0] == '_'))
+					{ _error = "invalid experimental trajectory header on line " + std::to_string(lineNumber); this->Clear(); return false; }
+					for (unsigned char c : header)
+						if (!(std::isalnum(c) || c == '_'))
+						{ _error = "invalid experimental trajectory header on line " + std::to_string(lineNumber); this->Clear(); return false; }
+					if (!seen.insert(header).second)
+					{ _error = "duplicate experimental trajectory header \"" + header + "\""; this->Clear(); return false; }
+					this->SetHeader(columns++, header);
+				}
+				haveHeader = true;
+				continue;
+			}
+			if (fields.size() != columns)
+			{ _error = "experimental trajectory row " + std::to_string(lineNumber) + " has " + std::to_string(fields.size()) + " columns; expected " + std::to_string(columns); this->Clear(); return false; }
+			std::vector<double> values;
+			values.reserve(columns);
+			for (const auto &token : fields)
+			{
+				try
+				{
+					size_t used = 0;
+					const double value = std::stod(token, &used);
+					if (used != token.size() || !std::isfinite(value))
+						throw std::invalid_argument("invalid numeric token");
+					values.push_back(value);
+				}
+				catch (const std::exception &)
+				{ _error = "invalid or non-finite number \"" + token + "\" on experimental trajectory line " + std::to_string(lineNumber); this->Clear(); return false; }
+			}
+			this->data.push_back(std::move(values));
+		}
+		if (!_input.eof() && _input.fail())
+		{ _error = "failed while reading experimental trajectory"; this->Clear(); return false; }
+		if (!haveHeader || this->data.size() < 2)
+		{ _error = "experimental trajectory requires a header and at least two data rows"; this->Clear(); return false; }
+		return true;
 	}
 
 	// Removes all loaded trajectory data

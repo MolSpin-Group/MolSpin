@@ -64,6 +64,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <filesystem>
 #include <sstream>
 #include <stdexcept>
 
@@ -377,9 +378,12 @@ namespace SpinAPI
         }
 
         bool CompileProfile(const transition_ptr &transition, time_profile_ptr &profile,
-            bool &instantaneous, double &eventTime, double &eventFraction, std::string &error)
+            bool &instantaneous, double &eventTime, double &eventFraction,
+            bool &opticalDiagnostics, OpticalWaveformCache *waveformCache,
+            std::string &error)
         {
             instantaneous = false; eventTime = 0.0; eventFraction = 0.0;
+            opticalDiagnostics = false;
             const auto props = transition->Properties();
             std::string kind = "constant";
             if (props != nullptr)
@@ -388,6 +392,10 @@ namespace SpinAPI
                     props->Get("opticalprofile", kind))) kind = "constant";
             }
             kind = Lower(kind);
+
+            std::string unusedProfileFile;
+            if (kind != "experimental" && props && props->Get("profilefile", unusedProfileFile))
+            { error="profilefile requires rateprofile=experimental"; return false; }
 
             try
             {
@@ -430,6 +438,61 @@ namespace SpinAPI
                     { error = "rateprofile=trajectory requires profiletimes and profilerates lists"; return false; }
                     profile = std::make_shared<TrajectoryTimeProfile>(times, rates);
                 }
+                else if (kind == "experimental")
+                {
+                    if (!props)
+                    { error="experimental optical profile requires Transition properties"; return false; }
+                    std::string unused;
+                    if (props->Get("trajectory",unused))
+                    { error="experimental optical profile cannot be combined with legacy trajectory"; return false; }
+                    if (props->Get("rate",unused) || props->Get("lifetime",unused))
+                    { error="experimental optical profile derives its rate from intensity; rate/lifetime is not used"; return false; }
+                    for (const char *legacyKey : {"peakrate","peak_rate","transferfraction","transfer_fraction",
+                        "profiletimes","profilerates","pulsecenter","pulsefwhm","pulsestart","pulseend",
+                        "eventtime","pulsetime"})
+                    {
+                        if (props->Get(legacyKey,unused))
+                        { error=std::string("rateprofile=experimental does not use ")+legacyKey; return false; }
+                    }
+                    std::string file, column="intensity", timeUnit="ns", directory;
+                    if (!props->Get("profilefile",file))
+                    { error="rateprofile=experimental requires profilefile"; return false; }
+                    // ObjectParser retains the unquoted property string. Quoted
+                    // paths are accepted for convenience; mismatch is an error.
+                    const auto first=file.find_first_not_of(" \t\r\n");
+                    const auto last=file.find_last_not_of(" \t\r\n");
+                    if (first==std::string::npos)
+                    { error="profilefile cannot be empty"; return false; }
+                    file=file.substr(first,last-first+1);
+                    if (file.front()=='"' || file.front()=='\'')
+                    {
+                        if (file.size()<2 || file.back()!=file.front())
+                        { error="profilefile has unmatched quotes"; return false; }
+                        file=file.substr(1,file.size()-2);
+                    }
+                    if (file.empty())
+                    { error="profilefile cannot be empty"; return false; }
+                    props->Get("profilecolumn",column);
+                    props->Get("profiletimeunit",timeUnit);
+                    props->Get("FileReaderDirectory",directory);
+                    std::string diagnosticFlag;
+                    if (props->Get("opticaldiagnostics",diagnosticFlag))
+                    {
+                        const std::string flag=Lower(diagnosticFlag);
+                        if (flag=="true" || flag=="yes" || flag=="1") opticalDiagnostics=true;
+                        else if (flag=="false" || flag=="no" || flag=="0") opticalDiagnostics=false;
+                        else { error="opticaldiagnostics must be true or false"; return false; }
+                    }
+                    const std::filesystem::path supplied(file);
+                    const std::filesystem::path resolved=supplied.is_absolute() ? supplied : std::filesystem::path(directory)/supplied;
+                    OpticalRateLaw law;
+                    if (!OpticalRateLaw::Parse(*props,law,error)) return false;
+                    OpticalWaveformCache localCache;
+                    auto *cache=waveformCache ? waveformCache : &localCache;
+                    std::shared_ptr<const OpticalWaveform> waveform;
+                    if (!cache->Load(resolved.string(),column,timeUnit,waveform,error)) return false;
+                    profile=std::make_shared<ExperimentalOpticalTimeProfile>(std::move(waveform),std::move(law));
+                }
                 else if (kind == "instantaneous" || kind == "event" || kind == "delta")
                 {
                     if (!(props && (props->Get("eventtime", eventTime) || props->Get("pulsetime", eventTime))))
@@ -458,7 +521,8 @@ namespace SpinAPI
     }
 
     bool TransferChannel::Compile(const transition_ptr &_transition,
-        TransferChannel &_channel, std::string &_error, double _tolerance)
+        TransferChannel &_channel, std::string &_error, double _tolerance,
+        OpticalWaveformCache *_waveformCache)
     {
         _channel = TransferChannel();
         _error.clear();
@@ -480,7 +544,8 @@ namespace SpinAPI
         _channel.targetState = _transition->TargetState();
 
         if (!CompileProfile(_transition, _channel.profile, _channel.instantaneous,
-            _channel.eventTime, _channel.eventFraction, _error)) return false;
+            _channel.eventTime, _channel.eventFraction, _channel.opticalDiagnostics,
+            _waveformCache, _error)) return false;
         if (!ParsePreservedMap(_transition, _channel.preservedSpinMap, _error)) return false;
 
         arma::cx_mat sourceProjector;
