@@ -54,6 +54,7 @@
 #include "State.h"
 #include "Transition.h"
 #include <cmath>
+#include <exception>
 
 namespace RunSection::General::MultiSS
 {
@@ -71,7 +72,7 @@ namespace RunSection::General::MultiSS
     bool MultiSSObservableCollector::Prepare(const MultiSSExecutionPlan &input,
         const MultiSSNetwork &network,const MultiSSOrientation &orientation,std::string &error)
     {
-        plan=input;observables.clear();labels.clear();error.clear();
+        plan=input;observables.clear();opticalDiagnosticChannels.clear();labels.clear();error.clear();
         for(size_t ci=0;ci<network.systems.contexts.size();++ci)
         {
             const auto &context=network.systems.contexts[ci];
@@ -123,6 +124,21 @@ namespace RunSection::General::MultiSS
                         ".integrated_flux":".flux"));
             }
         }
+        for(size_t i=0;i<network.continuousChannels.size();++i)
+        {
+            const auto &c=network.continuousChannels[i];
+            if(!c.physical.OpticalDiagnosticsEnabled())continue;
+            if(c.physical.OpticalProfile()==nullptr)
+            {error="optical diagnostics require an experimental optical profile";return false;}
+            opticalDiagnosticChannels.push_back(i);
+            const std::string prefix=c.physical.SourceSystem()->Name()+"."+
+                c.physical.TransitionObject()->Name();
+            labels.push_back(prefix+".intensity");
+            labels.push_back(prefix+".rate");
+            labels.push_back(prefix+".integratedrate");
+            // The existing transitionfluxes output already contains this flux.
+            if(!plan.transitionFluxes)labels.push_back(prefix+".flux");
+        }
         return true;
     }
 
@@ -155,6 +171,30 @@ namespace RunSection::General::MultiSS
                     (plan.calculation==MultiSSCalculation::TimeIntegrated?
                         ".integrated_flux":".flux");
                 if(!RealValue(arma::trace(arma::cx_mat(c.orientedSourceEffect)*densities[c.sourceContext]),population,error,label))return false;
+                values(column++)=c.physical.Rate(time)*population;
+            }
+        }
+        for(const size_t index:opticalDiagnosticChannels)
+        {
+            const auto &c=network.continuousChannels[index];
+            const auto *profile=c.physical.OpticalProfile();
+            if(profile==nullptr)
+            {error="optical diagnostics lost their compiled profile";return false;}
+            try
+            {
+                values(column++)=profile->Intensity(time);
+                values(column++)=c.physical.Rate(time);
+                values(column++)=profile->Integral(0.0,time);
+            }
+            catch(const std::exception &e)
+            {error="optical diagnostics failed: "+std::string(e.what());return false;}
+            if(!plan.transitionFluxes)
+            {
+                double population=0.0;
+                const std::string label=c.physical.SourceSystem()->Name()+"."+
+                    c.physical.TransitionObject()->Name()+".flux";
+                if(!RealValue(arma::trace(arma::cx_mat(c.orientedSourceEffect)*
+                    densities[c.sourceContext]),population,error,label))return false;
                 values(column++)=c.physical.Rate(time)*population;
             }
         }

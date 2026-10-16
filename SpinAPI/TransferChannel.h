@@ -54,6 +54,7 @@
 
 #include "SpinAPIfwd.h"
 #include "TimeProfile.h"
+#include "OpticalProfile.h"
 
 namespace SpinAPI
 {
@@ -64,7 +65,8 @@ namespace SpinAPI
 
         static bool Compile(const transition_ptr &_transition,
             TransferChannel &_channel, std::string &_error,
-            double _tolerance = 1.0e-10);
+            double _tolerance = 1.0e-10,
+            OpticalWaveformCache *_waveformCache = nullptr);
 
         const transition_ptr &TransitionObject() const { return transition; }
         const system_ptr &SourceSystem() const { return sourceSystem; }
@@ -72,6 +74,9 @@ namespace SpinAPI
         const state_ptr &SourceState() const { return sourceState; }
         const state_ptr &TargetState() const { return targetState; }
         const time_profile_ptr &Profile() const { return profile; }
+        const ExperimentalOpticalTimeProfile *OpticalProfile() const
+        { return dynamic_cast<const ExperimentalOpticalTimeProfile *>(profile.get()); }
+        bool OpticalDiagnosticsEnabled() const { return opticalDiagnostics; }
         const std::vector<arma::sp_cx_mat> &KrausOperators() const { return kraus; }
         const arma::sp_cx_mat &SourceEffect() const { return sourceEffect; }
         const std::vector<std::pair<std::string, std::string>> &PreservedSpinMap() const { return preservedSpinMap; }
@@ -81,6 +86,8 @@ namespace SpinAPI
         double EventTime() const { return eventTime; }
         double EventFraction() const { return eventFraction; }
         double Rate(double _time) const { return profile ? profile->Value(_time) : 0.0; }
+        double RateLeft(double _time) const { return profile ? profile->ValueLeft(_time) : 0.0; }
+        double RateRight(double _time) const { return profile ? profile->ValueRight(_time) : 0.0; }
         bool IsTimeIndependent() const { return !instantaneous && profile && profile->IsConstant(); }
 
         // Unit-rate Liouville-space blocks.  Multiplication by k(t) is done by
@@ -101,6 +108,7 @@ namespace SpinAPI
         bool instantaneous = false;
         double eventTime = 0.0;
         double eventFraction = 0.0;
+        bool opticalDiagnostics = false;
     };
 }
 

@@ -76,25 +76,51 @@ namespace RunSection::General::MultiSS
             arma::cx_vec &state,std::string &error)
         { return events.ApplyAt(time,network,state,error,1.0e-11*std::max(1.0,std::abs(time))); }
 
-        // The controller intentionally owns application state but event times are
-        // immutable network metadata, so the propagator can find the next future
-        // boundary directly and ApplyAt decides whether it was already consumed.
-        double NextBoundary(const MultiSSNetwork &network,double time)
+        // All finite optical knots and instantaneous events are step boundaries.
+        // The event controller still decides whether an event was consumed.
+        std::vector<double> StepBoundaries(const MultiSSNetwork &network)
         {
-            double next=std::numeric_limits<double>::infinity();
-            const double eps=1.0e-12*std::max(1.0,std::abs(time));
+            std::vector<double> boundaries;
             for(const auto&e:network.events)
-                if(e.physical.EventTime()>time+eps) next=std::min(next,e.physical.EventTime());
-            return next;
+                boundaries.push_back(e.physical.EventTime());
+            for(const auto &channel:network.continuousChannels)
+                if(channel.physical.Profile())
+                    channel.physical.Profile()->AppendBreakpoints(boundaries);
+            std::sort(boundaries.begin(),boundaries.end());
+            boundaries.erase(std::unique(boundaries.begin(),boundaries.end()),boundaries.end());
+            return boundaries;
         }
 
         arma::cx_vec RK4Step(const MultiSSNetwork &network,const arma::cx_vec &x,double t,double h)
         {
-            const arma::cx_vec k1=network.Generator(t)*x;
+            const arma::cx_vec k1=network.GeneratorFromRight(t)*x;
             const arma::cx_vec k2=network.Generator(t+0.5*h)*(x+0.5*h*k1);
             const arma::cx_vec k3=network.Generator(t+0.5*h)*(x+0.5*h*k2);
-            const arma::cx_vec k4=network.Generator(t+h)*(x+h*k3);
+            const arma::cx_vec k4=network.GeneratorFromLeft(t+h)*(x+h*k3);
             return x+(h/6.0)*(k1+2.0*k2+2.0*k3+k4);
+        }
+
+        bool CheckExperimentalRK4Step(const MultiSSNetwork &network,double t,double h,
+            std::string &error)
+        {
+            double opticalRateBound=0.0;
+            bool hasOptical=false;
+            for(const auto &channel:network.continuousChannels)
+            {
+                if(channel.physical.OpticalProfile()==nullptr)continue;
+                hasOptical=true;
+                opticalRateBound+=std::max(channel.physical.RateRight(t),
+                    channel.physical.RateLeft(t+h));
+            }
+            // For y'=-k y the negative-real RK4 stability interval ends near
+            // h*k=2.785. This conservative gate applies only to new optical
+            // channels; smaller steps remain necessary for accuracy.
+            if(hasOptical && (!std::isfinite(opticalRateBound) || h*opticalRateBound>2.5))
+            {
+                error="experimental optical rate exceeds the RK4 step stability bound; reduce timestep or use propagationmethod=krylov";
+                return false;
+            }
+            return true;
         }
 
         // Exponential-midpoint propagation. Constant L gives exp(hL)x;
@@ -136,18 +162,26 @@ namespace RunSection::General::MultiSS
 
         arma::cx_vec state=network.systems.initialState;
         MultiSSEventController events(network);
+        const std::vector<double> boundaries=StepBoundaries(network);
         if(!ApplyEventsAt(0.0,network,events,state,error))return false;
         trajectory.times.push_back(0.0);trajectory.states.push_back(state);
         double t=0.0;
+        size_t steps=0;
         while(t<plan.totalTime-1.0e-14*std::max(1.0,plan.totalTime))
         {
+            if(++steps>10000000)
+            {error="MultiSS propagation exceeded ten million steps; increase timestep or shorten the calculation";return false;}
             double h=std::min(plan.timeStep,plan.totalTime-t);
-            const double boundary=NextBoundary(network,t);
-            if(std::isfinite(boundary) && boundary<t+h-1.0e-13*std::max(1.0,boundary)) h=boundary-t;
+            const auto next=std::upper_bound(boundaries.begin(),boundaries.end(),t);
+            const bool clipped=next!=boundaries.end() && *next<=t+h;
+            if(clipped) h=*next-t;
             if(!(h>0.0)){error="MultiSS propagation encountered a non-positive time step";return false;}
 
             if(plan.propagation==MultiSSPropagation::RK4)
+            {
+                if(!CheckExperimentalRK4Step(network,t,h,error))return false;
                 state=RK4Step(network,state,t,h);
+            }
             else if(plan.propagation==MultiSSPropagation::Exponential)
                 state=arma::expmat(arma::cx_mat(network.Generator(t))*h)*state;
             else
@@ -157,7 +191,10 @@ namespace RunSection::General::MultiSS
                 state=std::move(next);
             }
             if(!state.is_finite()){error="MultiSS propagation produced a non-finite state";return false;}
-            t+=h;
+            const double advanced=clipped?*next:t+h;
+            if(!(advanced>t))
+            {error="MultiSS propagation timestep is too small to advance the time grid";return false;}
+            t=advanced;
 
             // Avoid a roundoff-sized final propagation interval.  Repeated
             // addition of timestep can leave t microscopically below
@@ -167,9 +204,6 @@ namespace RunSection::General::MultiSS
             if(std::abs(t-plan.totalTime)<=finalTolerance)
                 t=plan.totalTime;
 
-            // Snap to a scheduled event when roundoff is the only difference.
-            for(const auto&e:network.events)
-                if(std::abs(t-e.physical.EventTime())<1.0e-11*std::max(1.0,std::abs(t)))t=e.physical.EventTime();
             if(!ApplyEventsAt(t,network,events,state,error))return false;
             trajectory.times.push_back(t);trajectory.states.push_back(state);
         }

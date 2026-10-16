@@ -39,6 +39,7 @@ namespace RunSection::General::MultiSS
     private:
         MultiSSExecutionPlan plan;
         std::vector<MultiSSObservable> observables;
+        std::vector<size_t> opticalDiagnosticChannels;
         std::vector<std::string> labels;
     };
 }

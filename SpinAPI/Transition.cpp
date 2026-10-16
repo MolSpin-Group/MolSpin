@@ -57,6 +57,7 @@ namespace SpinAPI
 					properties->Get("peak_rate", ignored);
 			}
 			if (kind == "trajectory" ||
+				kind == "experimental" ||
 				kind == "instantaneous" ||
 				kind == "event" ||
 				kind == "delta")
@@ -135,7 +136,16 @@ namespace SpinAPI
 			if (this->properties->Get("lifetime", this->rate))
 				this->rate = 1.0 / this->rate; // TODO: Consider the units used here - is this correct?
 			else if (!this->HasTrajectory() && !this->trjHasRate)
-				std::cout << "Warning: No rate or lifetime specified for transition object \"" << this->Name() << "\"!" << std::endl;
+			{
+				std::string profile;
+				if ((this->properties->Get("rateprofile", profile) ||
+					this->properties->Get("rate_profile", profile) ||
+					this->properties->Get("opticalprofile", profile)) &&
+					LowerProfileName(profile) == "experimental")
+					this->rate = 0.0; // placeholder; the optical profile owns k(t)
+				else
+					std::cout << "Warning: No rate or lifetime specified for transition object \"" << this->Name() << "\"!" << std::endl;
+			}
 		}
 
 		// The rate/lifetime can only be defined as a positive quantity
