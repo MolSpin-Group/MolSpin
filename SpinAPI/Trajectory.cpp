@@ -229,9 +229,16 @@ namespace SpinAPI
 				{
 					if (header.empty() || !(std::isalpha(static_cast<unsigned char>(header[0])) || header[0] == '_'))
 					{ _error = "invalid experimental trajectory header on line " + std::to_string(lineNumber); this->Clear(); return false; }
-					for (unsigned char c : header)
+					for (size_t i = 0; i < header.size(); ++i)
+					{
+						const unsigned char c = static_cast<unsigned char>(header[i]);
+						// A dotted name consists of identifier segments, as in field.x.
+						if (c == '.' && i > 0 && i + 1 < header.size() &&
+							(std::isalpha(static_cast<unsigned char>(header[i + 1])) || header[i + 1] == '_'))
+							continue;
 						if (!(std::isalnum(c) || c == '_'))
 						{ _error = "invalid experimental trajectory header on line " + std::to_string(lineNumber); this->Clear(); return false; }
+					}
 					if (!seen.insert(header).second)
 					{ _error = "duplicate experimental trajectory header \"" + header + "\""; this->Clear(); return false; }
 					this->SetHeader(columns++, header);

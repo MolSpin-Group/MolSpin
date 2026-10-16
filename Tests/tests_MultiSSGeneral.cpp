@@ -594,6 +594,45 @@ bool test_multiss_experimental_opt_in_and_named_columns()
         "trajectory="+file.Path().filename().string()+";",conflicting,error);
 }
 
+bool test_multiss_experimental_mixed_trajectory_columns()
+{
+    // Optical profiles may share a trajectory file with MolSpin's established
+    // dotted magnetic-field columns. Only intensity drives this transition.
+    OpticalTestFile file(
+        "time intensity field.x field.y field.z\n"
+        "0 0 100 -200 300\n"
+        "1 2 -400 500 -600\n"
+        "2 0 700 -800 900\n");
+    SpinAPI::TransferChannel channel;std::string error;
+    if(!CompileOptical(file,
+        "profilecolumn=intensity;intensityunit=relative;ratelaw=linear;ratescale=0.2;",
+        channel,error))
+    {std::cout<<error<<std::endl;return false;}
+    if(std::abs(channel.Rate(0.5)-0.2)>1.0e-13 ||
+       std::abs(channel.Rate(1.0)-0.4)>1.0e-13 ||
+       std::abs(channel.Rate(1.5)-0.2)>1.0e-13 ||
+       std::abs(channel.Profile()->Integral(0.0,2.0)-0.4)>1.0e-11 ||
+       std::abs(channel.Profile()->Integral(0.25,1.75)-0.375)>1.0e-11)
+        return false;
+
+    SpinAPI::Trajectory strict;
+    if(!strict.LoadStrict(file.Path().string(),error) ||
+       !strict.HasColumn("field.x") || !strict.HasColumn("field.y") ||
+       !strict.HasColumn("field.z") || strict.HasColumn("fieldx") ||
+       std::abs(strict.Get(1,"field.x")+400.0)>1.0e-13 ||
+       std::abs(strict.Get(2,"field.z")-900.0)>1.0e-13)
+    {std::cout<<error<<std::endl;return false;}
+
+    // The historical permissive parser already preserves dotted names.
+    SpinAPI::Trajectory legacy;
+    return legacy.Load(file.Path().string()) &&
+        legacy.HasColumn("intensity") && legacy.HasColumn("field.x") &&
+        legacy.HasColumn("field.y") && legacy.HasColumn("field.z") &&
+        !legacy.HasColumn("fieldx") &&
+        std::abs(legacy.Get(1,"intensity")-2.0)<1.0e-13 &&
+        std::abs(legacy.Get(1,"field.x")+400.0)<1.0e-13;
+}
+
 bool test_multiss_experimental_absorption_codata_and_units()
 {
     // Triangle area: 10^6 W ns cm^-2 = 10^-3 J cm^-2.
@@ -695,6 +734,12 @@ bool test_multiss_experimental_malformed_input_rejected()
         {"missing time header","clock intensity\n0 0\n1 1\n"},
         {"missing intensity header","time signal\n0 0\n1 1\n"},
         {"duplicate header","time intensity intensity\n0 0 0\n1 1 1\n"},
+        {"duplicate dotted header","time intensity field.x field.x\n0 0 1 2\n1 1 3 4\n"},
+        {"leading dot header","time intensity .field\n0 0 1\n1 1 2\n"},
+        {"trailing dot header","time intensity field.\n0 0 1\n1 1 2\n"},
+        {"consecutive dots in header","time intensity field..x\n0 0 1\n1 1 2\n"},
+        {"numeric-start dotted segment","time intensity field.1x\n0 0 1\n1 1 2\n"},
+        {"non-numeric dotted field","time intensity field.x\n0 0 1\n1 1 wrong\n"},
         {"malformed number","time intensity\n0 0\n1 wrong\n"},
         {"NaN","time intensity\n0 0\n1 NaN\n"},
         {"Inf","time intensity\n0 0\n1 Inf\n"},
@@ -1151,6 +1196,7 @@ void AddMultiSSGeneralTests(std::vector<test_case> &cases)
     cases.push_back(test_case("MultiSS direct sum equals enlarged block sector",test_multiss_direct_sum_equals_enlarged_hilbert_block_diagonal_sector));
     cases.push_back(test_case("MultiSS common orientation and frame fallbacks",test_multiss_system_level_state_frames_use_common_orientation));
     cases.push_back(test_case("MultiSS experimental opt-in and named columns",test_multiss_experimental_opt_in_and_named_columns));
+    cases.push_back(test_case("MultiSS experimental mixed trajectory columns",test_multiss_experimental_mixed_trajectory_columns));
     cases.push_back(test_case("MultiSS experimental absorption CODATA and units",test_multiss_experimental_absorption_codata_and_units));
     cases.push_back(test_case("MultiSS experimental FileReader irradiance prefix case",test_multiss_experimental_file_reader_preserves_irradiance_prefix_case));
     cases.push_back(test_case("MultiSS experimental nonlinear intensity interpolation",test_multiss_experimental_nonlinear_interpolate_intensity_first));

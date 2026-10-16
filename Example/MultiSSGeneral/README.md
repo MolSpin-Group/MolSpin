@@ -30,6 +30,12 @@ With the MultiSS Krylov update, `propagationmethod=krylov` applies the existing 
 
 The example uses a 450 nm one-photon `S0.pump` with `extinctioncoefficient=10000` L mol⁻¹ cm⁻¹ and a synthetic irradiance trace in W/cm². The tabulated piecewise-linear fluence is 0.775 mJ/cm². For this isolated optical channel its integrated rate would be about 0.0671, but in the full network the S1 and CSS populations and fluorescence flux also depend on subsequent kinetics. Do not multiply the pump by a separate photochemical yield when S1 → CSS is already an explicit kinetic transition.
 
+The `.msd` reader lowercases unquoted object names, so this example's output labels are lowercase even though its declarations use `S0`, `S1`, and `CSS`. The executable produces this header (system and state populations, transition fluxes, then optical diagnostics):
+
+```text
+Step EvolutionTime s0.population s0.g.population s1.population s1.e.population css.population css.singlet.population css.t0.population css.tp.population css.tm.population s0.pump.flux s1.cs.flux s1.fluorescence.flux css.back.flux css.ks.flux css.kt0.flux css.ktp.flux css.ktm.flux s0.pump.intensity s0.pump.rate s0.pump.integratedrate
+```
+
 The corresponding Transition input is:
 
 ```text
