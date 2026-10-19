@@ -12,6 +12,9 @@
 #ifndef MOD_RunSection_TaskStaticSSSpectraNakajimaZwanzig
 #define MOD_RunSection_TaskStaticSSSpectraNakajimaZwanzig
 
+#include <array>
+#include <string>
+#include <vector>
 #include "BasicTask.h"
 #include "SpinAPIDefines.h"
 #include "SpinSpace.h"
@@ -36,6 +39,13 @@ namespace RunSection
 			std::vector<arma::cx_mat> transition_proj;
 			std::vector<double> transition_rates;
 		};
+
+		// NZ_SW_SWEEP_V8: task-owned caches, cleared on new task instance.
+		// Samples independent of magnetic-field steps; sweep is immutable per run.
+		std::string sw_v8_sample_path;
+		std::vector<std::array<double, 6>> sw_v8_samples;
+		std::string sw_v8_sweep_path;
+		std::vector<double> sw_v8_sweep_values;
 
 		double timestep;
 		double totaltime;

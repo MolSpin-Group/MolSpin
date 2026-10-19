@@ -84,6 +84,82 @@ namespace RunSection
 			this->WriteHeader(this->Data());
 		}
 
+		// NZ_SW_SWEEP_V8: optional strict magnetic-field schedule in tesla.
+		// One RunSection step per input row, with three Zeeman interactions
+		// updated before ANY Hamiltonian or NZ construction at that step.
+		std::string sw_sweep_file;
+		if (this->Properties()->Get("swsweepfieldfile", sw_sweep_file) && !sw_sweep_file.empty())
+		{
+			std::string sw_required_bath;
+			if (!this->Properties()->Get("swfieldfile", sw_required_bath) || sw_required_bath.empty())
+			{
+				this->Log() << "ERROR: swsweepfieldfile requires swfieldfile." << std::endl;
+				return false;
+			}
+			if (sw_sweep_file != this->sw_v8_sweep_path)
+			{
+				std::ifstream stream(sw_sweep_file);
+				if (!stream) { this->Log() << "ERROR: cannot open swsweepfieldfile " << sw_sweep_file << std::endl; return false; }
+				std::vector<double> values;
+				std::string line;
+				while (std::getline(stream, line))
+				{
+					const auto first = line.find_first_not_of(" \t\r\n");
+					if (first == std::string::npos || line[first] == '#') continue;
+					std::istringstream row(line);
+					double b = 0.0;
+					if (!(row >> b) || !std::isfinite(b) || b <= 0.0)
+					{ this->Log() << "ERROR: invalid sweep field: " << line << std::endl; return false; }
+					row >> std::ws;
+					if (!row.eof())
+					{ this->Log() << "ERROR: sweep file expects exactly one Tesla value per row: " << line << std::endl; return false; }
+					values.push_back(b);
+				}
+				if (values.size() != this->RunSettings()->Steps())
+				{ this->Log() << "ERROR: sweep field count " << values.size()
+				              << " differs from Settings steps=" << this->RunSettings()->Steps() << std::endl; return false; }
+				this->sw_v8_sweep_values = std::move(values);
+				this->sw_v8_sweep_path = sw_sweep_file;
+			}
+			const unsigned step = this->RunSettings()->CurrentStep();
+			if (step < 1 || step > this->sw_v8_sweep_values.size())
+			{ this->Log() << "ERROR: sweep step outside field grid." << std::endl; return false; }
+			const double B = this->sw_v8_sweep_values[step - 1];
+			const char *keys[3] = {"swsweepzeeman1", "swsweepzeeman2", "swsweepzeemannuc"};
+			const char *defaults[3] = {"Zeeman1a", "Zeeman1b", "Zeeman2"};
+			std::string interaction_names[3];
+			for (unsigned j = 0; j < 3; ++j)
+			{
+				interaction_names[j] = defaults[j];
+				(void)this->Properties()->Get(keys[j], interaction_names[j]);
+			}
+			if (interaction_names[0] == interaction_names[1] || interaction_names[0] == interaction_names[2]
+			    || interaction_names[1] == interaction_names[2])
+			{ this->Log() << "ERROR: sweep Zeeman names must be distinct." << std::endl; return false; }
+			for (const auto &system : this->SpinSystems())
+			{
+				for (const auto &name : interaction_names)
+				{
+					bool found = false;
+					for (const auto &interaction : system->Interactions())
+					{
+						if (interaction->Name() != name) continue;
+						found = true;
+						if (interaction->Type() != SpinAPI::InteractionType::SingleSpin)
+						{ this->Log() << "ERROR: sweep target not SingleSpin: " << name << std::endl; return false; }
+						const arma::vec field = {0.0, 0.0, B};
+						if (!interaction->SetField(field))
+						{ this->Log() << "ERROR: cannot update sweep interaction " << name << std::endl; return false; }
+						break;
+					}
+					if (!found)
+					{ this->Log() << "ERROR: missing sweep interaction " << name << std::endl; return false; }
+				}
+			}
+			this->Log() << "NZ-SW-SWEEP-V8: step=" << step << "/" << this->sw_v8_sweep_values.size()
+			            << " field_T=" << std::setprecision(17) << B << std::endl;
+		}
+
 		// NZ_SW_BATH_V1: frozen semiclassical Overhauser fields, in tesla.
 		// Each row of swfieldfile: electron1 bx by bz, electron2 bx by bz.
 		// One row = one nuclear bath realization. The caller is responsible for
@@ -107,6 +183,8 @@ namespace RunSection
 				this->Log() << "ERROR: swspin1 and swspin2 must differ." << std::endl;
 				return false;
 			}
+			if (this->sw_v8_sample_path != sw_field_file)
+			{
 			std::ifstream sw_input(sw_field_file);
 			if (!sw_input)
 			{
@@ -141,6 +219,13 @@ namespace RunSection
 			{
 				this->Log() << "ERROR: swfieldfile is empty." << std::endl;
 				return false;
+			}
+				this->sw_v8_samples = sw_samples;
+				this->sw_v8_sample_path = sw_field_file;
+			}
+			else
+			{
+				sw_samples = this->sw_v8_samples;
 			}
 			this->Log() << "NZ-SW: " << sw_samples.size() << " frozen-field realizations from " << sw_field_file << std::endl;
 		}
@@ -314,6 +399,11 @@ namespace RunSection
 					}
 				}
 			}
+			// NZ_SW_SWEEP_V8: construct the field-dependent, sample-independent
+			// Hamiltonian once per step; only Overhauser terms differ per sample.
+			arma::cx_mat sw_v8_base_H;
+			if (sw_enabled && !space.Hamiltonian(sw_v8_base_H))
+			{ this->Log() << "ERROR: cannot construct NZ-SW base Hamiltonian." << std::endl; return false; }
 			const arma::cx_mat sw_initial_density_lab = rho0;
 			std::vector<double> sw_column_sums;
 			std::size_t sw_completed = 0;
@@ -331,7 +421,9 @@ namespace RunSection
 			arma::vec eigen_val; // To hold eigenvalues
 			arma::cx_mat eig_val_mat;
 
-			if (!space.Hamiltonian(H))
+			if (sw_enabled)
+				H = sw_v8_base_H;
+			else if (!space.Hamiltonian(H))
 			{
 				this->Log() << "Failed to obtain Hamiltonian in superspace." << std::endl;
 				continue;
