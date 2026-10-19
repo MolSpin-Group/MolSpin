@@ -10,6 +10,11 @@
 #include <omp.h>
 #include <memory>
 #include <sstream>
+#include <array>
+#include <fstream>
+#include <vector>
+#include <limits>
+#include <algorithm>
 #include <cmath>
 #include "TaskStaticSSSpectraNakajimaZwanzig.h"
 #include "Transition.h"
@@ -77,6 +82,71 @@ namespace RunSection
 		if (this->RunSettings()->CurrentStep() == 1)
 		{
 			this->WriteHeader(this->Data());
+		}
+
+		// NZ_SW_BATH_V1: frozen semiclassical Overhauser fields, in tesla.
+		// Each row of swfieldfile: electron1 bx by bz, electron2 bx by bz.
+		// One row = one nuclear bath realization. The caller is responsible for
+		// sampling/excluding any explicitly represented quantum nuclei.
+		std::string sw_field_file;
+		const bool sw_enabled = this->Properties()->Get("swfieldfile", sw_field_file) && !sw_field_file.empty();
+		std::vector<std::array<double, 6>> sw_samples;
+		std::string sw_spin_names[2] = {"electron1", "electron2"};
+		(void)this->Properties()->Get("swspin1", sw_spin_names[0]);
+		(void)this->Properties()->Get("swspin2", sw_spin_names[1]);
+		if (sw_enabled)
+		{
+			std::string sw_method;
+			if (!this->Properties()->Get("method", sw_method) || sw_method != "timeinf")
+			{
+				this->Log() << "ERROR: swfieldfile supports only method=timeinf." << std::endl;
+				return false;
+			}
+			if (sw_spin_names[0] == sw_spin_names[1])
+			{
+				this->Log() << "ERROR: swspin1 and swspin2 must differ." << std::endl;
+				return false;
+			}
+			std::ifstream sw_input(sw_field_file);
+			if (!sw_input)
+			{
+				this->Log() << "ERROR: cannot open swfieldfile: " << sw_field_file << std::endl;
+				return false;
+			}
+			std::string sw_line;
+			while (std::getline(sw_input, sw_line))
+			{
+				const auto first = sw_line.find_first_not_of(" \t\r\n");
+				if (first == std::string::npos || sw_line[first] == '#')
+					continue;
+				std::istringstream row(sw_line);
+				std::array<double, 6> fields{};
+				for (double &value : fields)
+				{
+					if (!(row >> value) || !std::isfinite(value))
+					{
+						this->Log() << "ERROR: nonfinite/incomplete swfieldfile row: " << sw_line << std::endl;
+						return false;
+					}
+				}
+				row >> std::ws;
+				if (!row.eof())
+				{
+					this->Log() << "ERROR: extra data in swfieldfile row: " << sw_line << std::endl;
+					return false;
+				}
+				sw_samples.push_back(fields);
+			}
+			if (sw_samples.empty())
+			{
+				this->Log() << "ERROR: swfieldfile is empty." << std::endl;
+				return false;
+			}
+			this->Log() << "NZ-SW: " << sw_samples.size() << " frozen-field realizations from " << sw_field_file << std::endl;
+		}
+		else
+		{
+			sw_samples.push_back(std::array<double, 6>{}); // Original, exactly one realization.
 		}
 
 		// Obtain spin systems
@@ -207,6 +277,52 @@ namespace RunSection
 			}
 			rho0 /= arma::trace(rho0); // The density operator should have a trace of 1
 
+			// Operators representing hyperfine-equivalent fields on the two electron
+			// spins. Match SpinSpace::InteractionOperator for Zeeman interactions:
+			// H = (mu_B/hbar) sum_a S_a sum_b g_ab B_b, with B in tesla and H in rad/ns.
+			std::array<arma::cx_mat, 6> sw_hamiltonian_ops;
+			if (sw_enabled)
+			{
+				for (std::size_t radical = 0; radical != 2; ++radical)
+				{
+					bool found = false;
+					for (auto spin = (*i)->spins_cbegin(); spin != (*i)->spins_cend(); ++spin)
+					{
+						if ((*spin)->Name() != sw_spin_names[radical])
+							continue;
+						found = true;
+						arma::cx_mat sx, sy, sz;
+						if (!space.CreateOperator(arma::conv_to<arma::cx_mat>::from((*spin)->Sx()), *spin, sx) ||
+							!space.CreateOperator(arma::conv_to<arma::cx_mat>::from((*spin)->Sy()), *spin, sy) ||
+							!space.CreateOperator(arma::conv_to<arma::cx_mat>::from((*spin)->Sz()), *spin, sz))
+						{
+							this->Log() << "ERROR: cannot construct SW electron operators" << std::endl;
+							return false;
+						}
+						const arma::mat g = arma::conv_to<arma::mat>::from((*spin)->GetTensor().LabFrame());
+						for (std::size_t component = 0; component != 3; ++component)
+						{
+							sw_hamiltonian_ops[3 * radical + component] = 8.79410005e+1 *
+								(g(0, component) * sx + g(1, component) * sy + g(2, component) * sz);
+						}
+						break;
+					}
+					if (!found)
+					{
+						this->Log() << "ERROR: missing SW electron spin '" << sw_spin_names[radical] << "'" << std::endl;
+						return false;
+					}
+				}
+			}
+			const arma::cx_mat sw_initial_density_lab = rho0;
+			std::vector<double> sw_column_sums;
+			std::size_t sw_completed = 0;
+			for (std::size_t sw_index = 0; sw_index != sw_samples.size(); ++sw_index)
+			{
+				// Reconstruct the same unrotated initial density for every bath sample.
+				rho0 = sw_initial_density_lab;
+				space.UseSuperoperatorSpace(false);
+
 			// ----------------------------------------------------------------
 			// Get the Hamiltonian
 			// ----------------------------------------------------------------
@@ -219,6 +335,13 @@ namespace RunSection
 			{
 				this->Log() << "Failed to obtain Hamiltonian in superspace." << std::endl;
 				continue;
+			}
+			if (sw_enabled)
+			{
+				// Frozen hyperfine fields shift H0 and therefore all NZ eigenfrequencies,
+				// eigenvectors, reaction projections and relaxation operators.
+				for (std::size_t component = 0; component != 6; ++component)
+					H += sw_samples[sw_index][component] * sw_hamiltonian_ops[component];
 			}
 
 			// ----------------------------------------------------------------
@@ -2615,8 +2738,47 @@ namespace RunSection
 
 				if (Timewindow.compare("pulse") != 0)
 				{
-					if (!this->ProjectAndPrintOutputLineInf(i, space, projection_cache, rhovec, Printedtime, this->timestep, CIDSP, this->Data(), this->Log()))
-						this->Log() << "Could not project the state vector and print the result into a file" << std::endl;
+					// SW: collect exactly the same transition-resolved output columns,
+					// but average their RAW values across bath realizations.
+					std::ostringstream sw_output;
+					std::ostream &destination = sw_enabled ? static_cast<std::ostream &>(sw_output) : this->Data();
+					if (!this->ProjectAndPrintOutputLineInf(i, space, projection_cache, rhovec, Printedtime, this->timestep, CIDSP, destination, this->Log()))
+					{
+						this->Log() << "ERROR: SW projection failed" << std::endl;
+						if (sw_enabled) return false;
+					}
+					if (sw_enabled)
+					{
+						std::istringstream values(sw_output.str());
+						std::string step, time;
+						if (!(values >> step >> time) || time != "inf")
+						{
+							this->Log() << "ERROR: unexpected SW steady-state output" << std::endl;
+							return false;
+						}
+						std::vector<double> row_values;
+						double value;
+						while (values >> value)
+						{
+							if (!std::isfinite(value)) return false;
+							row_values.push_back(value);
+						}
+						if (!values.eof() || row_values.empty() ||
+							(sw_completed && row_values.size() != sw_column_sums.size()))
+						{
+							this->Log() << "ERROR: malformed or inconsistent SW output columns" << std::endl;
+							return false;
+						}
+						if (!sw_completed) sw_column_sums.assign(row_values.size(), 0.0);
+						for (std::size_t col = 0; col != row_values.size(); ++col)
+							sw_column_sums[col] += row_values[col];
+						++sw_completed;
+					}
+				}
+				else if (sw_enabled)
+				{
+					this->Log() << "ERROR: swfieldfile cannot be combined with printtimeframe=pulse" << std::endl;
+					return false;
 				}
 
 				this->Log() << "Done with calculation." << std::endl;
@@ -2767,6 +2929,22 @@ namespace RunSection
 				this->Log() << "Undefined spectroscopy method. Please choose between timeinf or timeevo methods." << std::endl;
 			}
 
+			} // End of SW sample loop (or single original sample).
+			if (sw_enabled)
+			{
+				if (sw_completed != sw_samples.size() || sw_column_sums.empty())
+				{
+					this->Log() << "ERROR: incomplete SW ensemble: " << sw_completed
+						<< "/" << sw_samples.size() << " samples." << std::endl;
+					return false;
+				}
+				// Restore original field-strength and transition column ordering.
+				// Caller normalizes only AFTER this raw arithmetic ensemble mean.
+				this->Data() << this->RunSettings()->CurrentStep() << " inf ";
+				this->Data() << std::setprecision(17);
+				for (double sum : sw_column_sums)
+					this->Data() << (sum / static_cast<double>(sw_samples.size())) << " ";
+			}
 			this->Log() << "\nDone with SpinSystem \"" << (*i)->Name() << "\"" << std::endl;
 		}
 
