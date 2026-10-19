@@ -82,6 +82,7 @@ namespace RunSection
 		if (this->RunSettings()->CurrentStep() == 1)
 		{
 			this->WriteHeader(this->Data());
+			this->Log() << "NZ-SW-KERNEL-V9: accelerated diagonal NZ kernel active" << std::endl;
 		}
 
 		// NZ_SW_SWEEP_V8: optional strict magnetic-field schedule in tesla.
@@ -1498,6 +1499,8 @@ namespace RunSection
 											// CONSTRUCTING SPECTRAL DENSITY MATRIX
 											// ----------------------------------------------------------------
 											ampl_combined = ampl_list[k] * ampl_list[k];
+											if (ampl_combined == arma::cx_double(0.0, 0.0))
+												continue;
 
 											SpecDens *= 0.0;
 
@@ -1585,6 +1588,8 @@ namespace RunSection
 												// ----------------------------------------------------------------
 
 												ampl_combined = ampl_list[k] * ampl_list[s];
+												if (ampl_combined == arma::cx_double(0.0, 0.0))
+													continue;
 
 												SpecDens *= 0.0;
 												if (!ConstructSpecDensSpecificSpectra(ampl_combined, static_cast<std::complex<double>>(tau_c_list[0]), lambda, SpecDens))
@@ -1873,6 +1878,8 @@ namespace RunSection
 												// CONSTRUCTING SPECTRAL DENSITY MATRIX
 												// ----------------------------------------------------------------
 												ampl_combined = ampl_list[k] * ampl_list[k];
+												if (ampl_combined == arma::cx_double(0.0, 0.0))
+													continue;
 
 												SpecDens *= 0.0;
 
@@ -1961,6 +1968,8 @@ namespace RunSection
 													// ----------------------------------------------------------------
 
 													ampl_combined = ampl_list[k] * ampl_list[s];
+													if (ampl_combined == arma::cx_double(0.0, 0.0))
+														continue;
 
 													SpecDens *= 0.0;
 
@@ -3182,20 +3191,36 @@ namespace RunSection
 	// --------------------------------------------------------------------------------------------------------------------------------------
 	bool TaskStaticSSSpectraNakajimaZwanzig::NakajimaZwanzigtensorSpectra(const arma::cx_mat &_op1, const arma::cx_mat &_op2, const arma::cx_mat &_specdens, arma::cx_mat &_NakajimaZwanzigtensor)
 	{
-		_NakajimaZwanzigtensor *= 0.0;
+		// NZ_SW_KERNEL_V9: exact matrix algebra, not a secular approximation.
+		// The NZ spectral density for the implemented exponential correlation
+		// functions is diagonal in the H0 eigenoperator basis.  Multiplying the
+		// left superoperator by S.t() can therefore be done by column scaling.
+		// The conjugation is essential: Armadillo .t() is conjugate transpose.
+		// Retain the original dense operation for ANY non-diagonal input.
+		_NakajimaZwanzigtensor.zeros(_specdens.n_rows, _specdens.n_cols);
+		const arma::cx_mat one = arma::eye<arma::cx_mat>(arma::size(_op1));
+		arma::cx_mat left = arma::kron(_op1.t(), one) - arma::kron(one, _op1.t().st());
+		const arma::cx_mat right = arma::kron(_op2, one) - arma::kron(one, _op2.st());
 
-		// -1 *_op1.t() * _eigenvec * _specdens * _eigenvec.t() * _op2
-		// J. Chem. Phys. 154, 084121 (2021) https://doi.org/10.1063/5.0040519
-
-		arma::cx_mat _op1_SS = _specdens;
-		arma::cx_mat _op2_SS = _specdens;
-		arma::cx_mat one = arma::eye<arma::cx_mat>(arma::size(_op1));
-
-		_op1_SS = arma::kron((_op1).t(), one) - arma::kron(one, (_op1.t()).st());
-		_op2_SS = arma::kron((_op2), one) - arma::kron(one, (_op2).st());
-
-		_NakajimaZwanzigtensor = arma::cx_double(-1.00, 0.00) * _op1_SS * _specdens.t() * _op2_SS;
-
+		bool strictly_diagonal = (_specdens.n_rows == _specdens.n_cols);
+		if (strictly_diagonal)
+		{
+			for (arma::uword col = 0; col < _specdens.n_cols && strictly_diagonal; ++col)
+				for (arma::uword row = 0; row < _specdens.n_rows; ++row)
+					if (row != col && _specdens(row, col) != arma::cx_double(0.0, 0.0))
+					{ strictly_diagonal = false; break; }
+		}
+		if (strictly_diagonal)
+		{
+			// left * diag(conj(spectral_density_diagonal)) * right.
+			const arma::cx_rowvec conjugated_weights = arma::conj(_specdens.diag()).st();
+			left.each_row() %= conjugated_weights;
+			_NakajimaZwanzigtensor = -left * right;
+		}
+		else
+		{
+			_NakajimaZwanzigtensor = -left * _specdens.t() * right;
+		}
 		return true;
 	}
 
