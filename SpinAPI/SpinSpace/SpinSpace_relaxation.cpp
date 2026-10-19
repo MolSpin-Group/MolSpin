@@ -1208,6 +1208,7 @@ namespace SpinAPI
 		return std::mt19937(sequence);
 	}
 
+
 	bool ApplyStochasticRelaxationHilbert(const HilbertStochasticRelaxationCache &cache,
 		double dt, arma::cx_mat &factors, std::mt19937 &generator, std::string &error)
 	{
@@ -1237,26 +1238,49 @@ namespace SpinAPI
 		if(!isSingleInvolutory && !std::isfinite(mean))
 		{ error = "total stochastic relaxation event count overflows; reduce timestep"; return false; }
 
+#if USE_ANTITHETIC_VARIATES
+		if (!isSingleInvolutory && factors.n_cols % 2 != 0)
+		{ error = "stochastic relaxation with antithetic variates requires an even number of Hilbert trajectories"; return false; }
+#endif
 		const uint32_t salt = generator();
 
 		std::bernoulli_distribution flip(probability);
 		std::poisson_distribution<unsigned long long> count(mean);
 		std::discrete_distribution<size_t> channel(rates.begin(), rates.end());
 
+#if USE_ANTITHETIC_VARIATES
+		const arma::uword numTraj = isSingleInvolutory ? (factors.n_cols / 2) : factors.n_cols;
+#else
+		const arma::uword numTraj = factors.n_cols;
+#endif
+
 		#pragma omp parallel for schedule(dynamic,4)
-		for (arma::uword column = 0; column < factors.n_cols; ++column)
+		for (arma::uword column = 0; column < numTraj; ++column)
 		{
 			uint64_t trajectorySeed = SpinSpace::FastInlineBitMixer(salt, column);
 			std::mt19937 trajectoryGenerator(static_cast<unsigned int>(trajectorySeed));
 			if(isSingleInvolutory)
 			{
+#if USE_ANTITHETIC_VARIATES
+				std::uniform_real_distribution<double> uniform(0.0, 1.0);
+				const double u = uniform(trajectoryGenerator);
+				const bool Uflip = (u < probability);
+				const bool UflipAntithetic = ((1-u) < probability);
+				if(Uflip)
+				{
+					factors.col(column) = cache.terms.front().U * factors.col(column);
+				}
+				arma::uword antitheticColumn = column + (factors.n_cols / 2);
+				if(UflipAntithetic)
+				{
+					factors.col(antitheticColumn) = cache.terms.front().U * factors.col(antitheticColumn);
+				}
+#else
 				if(flip(trajectoryGenerator))
 				{
-					//#pragma omp critical
-					{
-						factors.col(column) = cache.terms.front().U * factors.col(column);
-					}
+					factors.col(column) = cache.terms.front().U * factors.col(column);
 				}
+#endif
 			}
 			else
 			{

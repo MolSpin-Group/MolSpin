@@ -23,6 +23,10 @@
 #ifndef MOD_SpinAPI_SpinSpace
 #define MOD_SpinAPI_SpinSpace
 
+#ifndef USE_ANTITHETIC_VARIATES
+#define USE_ANTITHETIC_VARIATES 0
+#endif
+
 #include <vector>
 #include <memory>
 #include <functional>
