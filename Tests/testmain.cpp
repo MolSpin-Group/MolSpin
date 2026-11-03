@@ -30,6 +30,7 @@ using test_case = std::pair<std::string, test_ptr>; // Function pointer and name
 #include "tests_StochasticRelaxation.cpp"
 #include "tests_msdparser.cpp"
 #include "tests_actions.cpp"
+#include "tests_ActionSpectrumHistogram.cpp"
 #include "tests_TaskStaticHSSymmetricDecay.cpp"
 #include "tests_TaskStaticSS.cpp"
 #include "tests_TaskMultiStaticSS.cpp"
@@ -158,6 +159,7 @@ int main(int argc, char **argv)
 #endif
 #if ACTION_TEST == 1 
 	AddActionsTests(cases);
+	AddActionSpectrumHistogramTests(cases);
 #endif
 #if STATICHSSDECAY_TEST == 1 
 	AddTaskStaticHSSymmetricDecayTests(cases);

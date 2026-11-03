@@ -12,6 +12,7 @@
 #define MOD_RunSection_TaskActionSpectrumHistogramRPOnlyDec
 
 #include "SpinSpace.h"
+#include <array>
 #include "BasicTask.h"
 
 namespace RunSection
@@ -24,7 +25,8 @@ namespace RunSection
 		// Private methods
 		long long GetNumDifferencesRPOnlyDec(long long dimension);
 		arma::vec GetDifferencesRPOnlyDec(arma::vec values);
-		arma::cx_vec GetPopulationVector(const int &Z1, const int &Z2, const arma::cx_mat &V1, const arma::cx_mat &V2);
+		arma::cx_vec GetPopulationVector(const arma::cx_mat &V1, const arma::cx_mat &V2,
+			const std::array<arma::cx_mat, 3> &S1, const std::array<arma::cx_mat, 3> &S2);
 		arma::vec GetPerpendicular3DVectorRPOnlyDec(arma::vec vector, bool normalise);
 		arma::vec GetResonanceEffectsRPOnlyDec(arma::cx_vec initialstatepopulation, arma::sp_cx_mat transitionhamiltonian);
 		double GetHistogramPrefactorRPOnlyDec(bool useMHzunits);

@@ -7,6 +7,8 @@
 // See LICENSE.txt for license information.
 /////////////////////////////////////////////////////////////////////////
 #include <iostream>
+#include <cmath>
+#include "ActionSpectrumHistogramUtils.h"
 #include "TaskActionSpectrumHistogram.h"
 #include "Transition.h"
 #include "Settings.h"
@@ -87,7 +89,11 @@ namespace RunSection
             perp(0) = -1 * vector(1);
         }
         if (normalise)
+        {
+            if (arma::norm(perp) <= 0.0)
+                throw std::invalid_argument("Cannot normalize an RF vector perpendicular to zero field.");
             perp /= arma::norm(perp);
+        }
         return perp;
     }
 
@@ -126,18 +132,9 @@ namespace RunSection
 
     arma::vec GetNormalisedHistogramHeights(arma::vec energy_gaps, arma::vec resonance_effects, double bin_width, int num_bins, bool use_MHz_units)
     {
-        double prefactor = GetHistogramPrefactor(use_MHz_units);
-        int num_resonances = energy_gaps.size();
-        arma::vec heights(num_bins);
-        heights.zeros();
-        for (int s = 0; s < num_resonances; s++)
-        {
-            auto gap = std::abs(energy_gaps(s)) * prefactor;
-            auto effect = std::abs(resonance_effects(s));
-            auto bin_number = floor(gap / bin_width); // only works for uniform bin_width
-            heights(bin_number) += effect;
-        }
-        return heights / arma::sum(heights);
+        return ActionSpectrumHistogramUtils::NormalizedHeights(energy_gaps, resonance_effects,
+                                                               bin_width, num_bins,
+                                                               GetHistogramPrefactor(use_MHz_units));
     }
 
     bool TaskActionSpectrumHistogram::RunLocal()
@@ -145,7 +142,7 @@ namespace RunSection
         this->Log() << "Running method ActionSpectrumHistogram." << std::endl;
 
         // If this is the first step, write first part of header to the data file
-        auto bin_centers = this->GetHistogramBinCenters();
+        const auto bin_centers = this->GetHistogramBinCenters();
         if (this->RunSettings()->CurrentStep() == 1)
         {
             this->WriteHeader(this->Data());
@@ -172,21 +169,42 @@ namespace RunSection
             arma::cx_mat rho0;
             space.UseSuperoperatorSpace(false);
 
-            // Get the initial state
+            // Respect explicitly specified initial-state mixture weights.
+            const auto weights = (*system)->Weights();
+            if (!weights.empty() && weights.size() != initial_states.size())
+            {
+                this->Log() << "Skipping spin system: inconsistent initial-state weights." << std::endl;
+                continue;
+            }
+            std::size_t state_index = 0;
             for (auto j = initial_states.cbegin(); j != initial_states.cend(); j++)
             {
-                arma::cx_mat tmp_rho0;
-                if (!space.GetState(*j, tmp_rho0))
+                const double weight = weights.empty() ? 1.0 : weights[state_index];
+                ++state_index;
+                if (!std::isfinite(weight) || weight < 0.0)
                 {
-                    this->Log() << "Failed to obtain projection matrix onto state \"" << (*j)->Name() << "\", initial state of SpinSystem \"" << (*system)->Name() << "\"." << std::endl;
+                    this->Log() << "Skipping invalid initial-state weight." << std::endl;
                     continue;
                 }
-                if (j == initial_states.cbegin())
-                    rho0 = tmp_rho0;
+                arma::cx_mat projector;
+                if (!(*j) || !space.GetState(*j, projector))
+                {
+                    this->Log() << "Skipping initial state that cannot be represented by a projector." << std::endl;
+                    continue;
+                }
+                if (rho0.is_empty())
+                    rho0 = weight * projector;
                 else
-                    rho0 += tmp_rho0;
+                    rho0 += weight * projector;
             }
-            rho0 /= arma::trace(rho0); // The density operator should have a trace of 1
+            if (rho0.is_empty() || !std::isfinite(std::real(arma::trace(rho0))) ||
+                std::real(arma::trace(rho0)) <= 0.0)
+            {
+                this->Log() << "Skipping spin system: no valid initial-state density matrix." << std::endl;
+                continue;
+            }
+
+                rho0 /= arma::trace(rho0); // Normalize to unit trace
 
             // ----------------------------------------------------------------
             // Get the Hamiltonian
@@ -206,7 +224,11 @@ namespace RunSection
             arma::vec eigenvalues;     // To hold eigenvalues
 
             this->Log() << "Starting diagonalization..." << std::endl;
-            arma::eig_sym(eigenvalues, eigenvectors, H);
+            if (!arma::eig_sym(eigenvalues, eigenvectors, H))
+            {
+                this->Log() << "Failed to diagonalize action-histogram Hamiltonian." << std::endl;
+                continue;
+            }
             this->Log() << "Diagonalization done! Eigenvalues: " << eigenvalues.n_elem << ", eigenvectors: " << eigenvectors.n_cols << std::endl;
             // ----------------------------------------------------------------
             // GET ARRAY OF ENERGY GAPS, SIMILAR TO THE "domega" matrix
@@ -218,7 +240,8 @@ namespace RunSection
             // Make transition hamiltonian with copy and pasted code.
             arma::cx_mat transition_hamiltonian = arma::zeros<arma::cx_mat>(arma::size(H));
             transition_hamiltonian.zeros();
-            bool zeeman_parameters_already_found = false;
+            bool perpendicular_ready = false;
+            arma::vec perpendicular_rf_field;
             for (auto interaction = (*system)->interactions_cbegin(); interaction != (*system)->interactions_cend(); interaction++)
             {
                 bool is_Zeeman_interaction = (*interaction)->Type() == SpinAPI::InteractionType::SingleSpin;
@@ -230,6 +253,7 @@ namespace RunSection
                     auto ATensor = (*interaction)->CouplingTensor();
                     bool ignore_tensors = (*interaction)->IgnoreTensors();
                     auto spinlist = (*interaction)->Group1();
+                    arma::cx_mat contribution(H.n_rows, H.n_cols, arma::fill::zeros);
 
                     // Get RF Field
                     std::string rf_field_user_input;
@@ -239,14 +263,24 @@ namespace RunSection
                     bool use_perpendicular_field = rf_field_user_input == "perpendicular";
 
                     if (use_perpendicular_field)
-                        rf_field = GetPerpendicular3DVector(static_field, true);
-                    else
-                        this->Properties()->Get("rf_field", rf_field);
-
-                    // Check if a set of Zeeman interaction parameters have been found and parsed previously
-                    if (use_perpendicular_field and zeeman_parameters_already_found)
-                        throw std::logic_error("RF field vector must be supplied by user if multiple static field Zeeman interactions are provided.");
-                    zeeman_parameters_already_found = true;
+                    {
+                        if (!perpendicular_ready)
+                        {
+                            if (arma::norm(static_field) <= 0.0)
+                            {
+                                this->Log() << "Cannot define a perpendicular RF field for zero static field." << std::endl;
+                                return false;
+                            }
+                            perpendicular_rf_field = GetPerpendicular3DVector(static_field, true);
+                            perpendicular_ready = true;
+                        }
+                        rf_field = perpendicular_rf_field;
+                    }
+                    else if (!this->Properties()->Get("rf_field", rf_field) || rf_field.n_elem != 3)
+                    {
+                        this->Log() << "Action histogram requires rf_field as a 3-vector or 'perpendicular'." << std::endl;
+                        return false;
+                    }
 
                     // Obtain the list of spins interacting with the field, and define matrices to hold the magnetic moment operators
                     arma::cx_mat Sx;
@@ -273,24 +307,25 @@ namespace RunSection
                         {
                             // Use the tensor to calculate the product S * A * B
                             auto A = ATensor->LabFrame();
-                            transition_hamiltonian += Sx * rf_field(0) * A(0, 0) + Sx * rf_field(1) * A(0, 1) + Sx * rf_field(2) * A(0, 2);
-                            transition_hamiltonian += Sy * rf_field(0) * A(1, 0) + Sy * rf_field(1) * A(1, 1) + Sy * rf_field(2) * A(1, 2);
-                            transition_hamiltonian += Sz * rf_field(0) * A(2, 0) + Sz * rf_field(1) * A(2, 1) + Sz * rf_field(2) * A(2, 2);
+                            contribution += Sx * rf_field(0) * A(0, 0) + Sx * rf_field(1) * A(0, 1) + Sx * rf_field(2) * A(0, 2);
+                            contribution += Sy * rf_field(0) * A(1, 0) + Sy * rf_field(1) * A(1, 1) + Sy * rf_field(2) * A(1, 2);
+                            contribution += Sz * rf_field(0) * A(2, 0) + Sz * rf_field(1) * A(2, 1) + Sz * rf_field(2) * A(2, 2);
                         }
                         else
                         {
-                            transition_hamiltonian += Sx * rf_field(0) + Sy * rf_field(1) + Sz * rf_field(2);
+                            contribution += Sx * rf_field(0) + Sy * rf_field(1) + Sz * rf_field(2);
                         }
                     }
                     // Multiply by the isotropic value, if the tensor was isotropic
                     if (ATensor != nullptr && IsIsotropic(*ATensor))
-                        transition_hamiltonian *= ATensor->Isotropic();
+                        contribution *= ATensor->Isotropic();
 
                     // Multiply with the given prefactor (or 1.0 if none was specified)
-                    transition_hamiltonian *= (*interaction)->Prefactor();
+                    contribution *= (*interaction)->Prefactor();
                     // Multiply by common prefactor (bohr magneton / hbar)
                     if ((*interaction)->AddCommonPrefactor())
-                        transition_hamiltonian *= 8.79410005e+1;
+                        contribution *= 8.79410005e+1;
+                    transition_hamiltonian += contribution;
                 }
             }
             arma::vec resonance_effects = GetResonanceEffects(eigenvectors, rho0, transition_hamiltonian);
@@ -301,10 +336,10 @@ namespace RunSection
             this->Properties()->Get("upper_limit", upper_limit);
             double bin_width;
             this->Properties()->Get("bin_width", bin_width);
-            bool use_MHz;
+            bool use_MHz = true; // MHz is the standard action-spectrum convention
             this->Properties()->Get("units_in_MHz", use_MHz);
 
-            int num_bins = arma::regspace(bin_width / 2, bin_width, upper_limit).size();
+            const int num_bins = static_cast<int>(bin_centers.n_elem);
             auto normalised_heights = GetNormalisedHistogramHeights(energy_gaps, resonance_effects, bin_width, num_bins, use_MHz);
             this->Data() << this->RunSettings()->CurrentStep() << " ";
             this->Data() << normalised_heights.st(); // already contains endl
@@ -326,8 +361,15 @@ namespace RunSection
     // Validation
     bool TaskActionSpectrumHistogram::Validate()
     {
-
-        return true;
+        double upper_limit = 0.0;
+        double bin_width = 0.0;
+        const bool valid = this->Properties()->Get("upper_limit", upper_limit) &&
+                           this->Properties()->Get("bin_width", bin_width) &&
+                           std::isfinite(upper_limit) && std::isfinite(bin_width) &&
+                           bin_width > 0.0 && upper_limit >= bin_width / 2.0;
+        if (!valid)
+            this->Log() << "Action histogram requires upper_limit >= bin_width/2 and bin_width > 0." << std::endl;
+        return valid;
     }
 
     arma::vec TaskActionSpectrumHistogram::GetHistogramBinCenters()
@@ -336,8 +378,7 @@ namespace RunSection
         this->Properties()->Get("upper_limit", upper_limit);
         double bin_width;
         this->Properties()->Get("bin_width", bin_width);
-        auto bin_centers = arma::regspace(bin_width / 2, bin_width, upper_limit);
-        return bin_centers;
+        return ActionSpectrumHistogramUtils::BinCenters(upper_limit, bin_width);
     }
 
 }
