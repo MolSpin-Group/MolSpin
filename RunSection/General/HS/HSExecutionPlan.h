@@ -68,6 +68,7 @@ namespace RunSection::General::HS
 
 		arma::uword monteCarloSamples = 1;
 		std::string samplingMethod = "suz";
+		bool stochasticStandardDeviation = false;
 		bool autoSeed = true;
 		double seed = 1.0;
 

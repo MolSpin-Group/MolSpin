@@ -56,6 +56,40 @@ namespace RunSection::General::HS
 {
 	namespace
 	{
+		arma::rowvec SampleVariances(const arma::mat &samples)
+		{
+			arma::rowvec variances(samples.n_cols, arma::fill::zeros);
+			if (samples.n_rows < 2)
+				return variances;
+
+			for (arma::uword column = 0; column < samples.n_cols; ++column)
+			{
+				const double mean = arma::mean(samples.col(column));
+				variances(column) = arma::accu(arma::square(samples.col(column) - mean)) /
+					static_cast<double>(samples.n_rows - 1);
+			}
+			return variances;
+		}
+
+		void WriteStochasticStatistics(std::ostream &log, const char *segment,
+			const std::vector<double> &times, const arma::mat &sampleVariances,
+			const arma::mat &meanVariances, const HSObservableCollector &collector)
+		{
+			const auto &observables = collector.Observables();
+			for (arma::uword row = 0; row < sampleVariances.n_rows; ++row)
+			{
+				for (arma::uword column = 0; column < sampleVariances.n_cols; ++column)
+				{
+					log << "Stochastic statistics: segment=" << segment
+						<< ", time(ns)=" << std::setprecision(12) << times[row]
+						<< ", observable=" << observables[column].name
+						<< ", sample_sd=" << std::sqrt(std::max(0.0, sampleVariances(row, column)))
+						<< ", standard_error=" << std::sqrt(std::max(0.0, meanVariances(row, column)))
+						<< std::endl;
+				}
+			}
+		}
+
 		bool BuildFreeEvolutionTimes(double totalTime, double timeStep,
 			std::vector<double> &times, std::string &error)
 		{
@@ -219,6 +253,13 @@ namespace RunSection::General::HS
 				this->Log() << "ERROR: " << error << "." << std::endl;
 				return false;
 			}
+			if (plan.stochasticStandardDeviation &&
+				reaction.PropagationMode() == HSRelaxationPropagationMode::DensityMatrix)
+			{
+				this->Log() << "ERROR: stochasticstandarddeviation=true requires Hilbert-trajectory propagation."
+					<< std::endl;
+				return false;
+			}
 			if (reaction.PropagationMode() == HSRelaxationPropagationMode::DensityMatrix && plan.propagation != PropagationMethod::RK4)
 			{
 				this->Log() << "Relaxation operators detected: HSGeneral will use density-matrix "
@@ -338,11 +379,22 @@ namespace RunSection::General::HS
 			arma::mat averagedFree;
 			if (plan.calculation == Calculation::TimeEvolution)
 				averagedFree.zeros(numSteps, collector.Size());
+			arma::mat stochasticFreeVariances;
+			arma::mat stochasticFreeMeanVariances;
+			if (plan.stochasticStandardDeviation && plan.calculation == Calculation::TimeEvolution)
+			{
+				stochasticFreeVariances.zeros(numSteps, collector.Size());
+				stochasticFreeMeanVariances.zeros(numSteps, collector.Size());
+			}
 			arma::mat averagedPulse;
+			arma::mat stochasticPulseVariances;
+			arma::mat stochasticPulseMeanVariances;
 			std::vector<double> pulseTimes;
 			double pulseElapsedReference = 0.0;
 			bool havePulseTimeline = false;
 			arma::rowvec averagedYield(collector.Size(), arma::fill::zeros);
+			arma::rowvec stochasticYieldVariances(collector.Size(), arma::fill::zeros);
+			arma::rowvec stochasticYieldMeanVariances(collector.Size(), arma::fill::zeros);
 
 			for (size_t orientationIndex = 0; orientationIndex < orientations.size(); ++orientationIndex)
 			{
@@ -387,6 +439,7 @@ namespace RunSection::General::HS
 
 				std::vector<double> orientationPulseTimes;
 				std::vector<arma::rowvec> orientationPulseRows;
+				std::vector<arma::rowvec> orientationPulseVariances;
 				double pulseElapsed = 0.0;
 				HSPulseTimelineObserver pulseObserver;
 				if (plan.calculation == Calculation::TimeEvolution && plan.hasPulseSequence)
@@ -399,6 +452,12 @@ namespace RunSection::General::HS
 							collector.EvaluateDensity(operators, state, values);
 						else
 							collector.Evaluate(operators, state, values);
+						if (plan.stochasticStandardDeviation)
+						{
+							arma::mat sampleValues;
+							collector.EvaluateSamples(operators, state, sampleValues);
+							orientationPulseVariances.push_back(SampleVariances(sampleValues));
+						}
 						orientationPulseTimes.push_back(time);
 						orientationPulseRows.push_back(std::move(values));
 						return true;
@@ -426,6 +485,11 @@ namespace RunSection::General::HS
 						pulseTimes = orientationPulseTimes;
 						pulseElapsedReference = pulseElapsed;
 						averagedPulse.zeros(pulseMatrix.n_rows, pulseMatrix.n_cols);
+						if (plan.stochasticStandardDeviation)
+						{
+							stochasticPulseVariances.zeros(pulseMatrix.n_rows, pulseMatrix.n_cols);
+							stochasticPulseMeanVariances.zeros(pulseMatrix.n_rows, pulseMatrix.n_cols);
+						}
 						havePulseTimeline = true;
 					}
 					else
@@ -448,6 +512,17 @@ namespace RunSection::General::HS
 						}
 					}
 					averagedPulse += orientation.weight * pulseMatrix;
+					if (plan.stochasticStandardDeviation)
+					{
+						for (size_t row = 0; row < orientationPulseVariances.size(); ++row)
+						{
+							stochasticPulseVariances.row(row) +=
+								orientation.weight * orientation.weight * orientationPulseVariances[row];
+							stochasticPulseMeanVariances.row(row) +=
+								orientation.weight * orientation.weight /
+								static_cast<double>(plan.monteCarloSamples) * orientationPulseVariances[row];
+						}
+					}
 				}
 
 				if (plan.UsesTimeInfinityYields())
@@ -468,6 +543,16 @@ namespace RunSection::General::HS
 				}
 
 				arma::mat orientationValues(numSteps, collector.Size(), arma::fill::zeros);
+				arma::mat orientationFreeVariances;
+				arma::mat integratedSamples;
+				arma::mat previousSampleValues;
+				if (plan.stochasticStandardDeviation)
+				{
+					if (plan.calculation == Calculation::TimeEvolution)
+						orientationFreeVariances.zeros(numSteps, collector.Size());
+					else
+						integratedSamples.zeros(plan.monteCarloSamples, collector.Size());
+				}
 				for (size_t step = 0; step < numSteps; ++step)
 				{
 					const double currentTime = freeTimes[step];
@@ -480,6 +565,23 @@ namespace RunSection::General::HS
 					else
 						collector.Evaluate(operators, factors, values);
 					orientationValues.row(step) = values;
+					if (plan.stochasticStandardDeviation)
+					{
+						arma::mat sampleValues;
+						collector.EvaluateSamples(operators, factors, sampleValues);
+						if (plan.calculation == Calculation::TimeEvolution)
+							orientationFreeVariances.row(step) = SampleVariances(sampleValues);
+						else
+						{
+							if (step > 0)
+							{
+								const double interval = currentTime - freeTimes[step - 1];
+								integratedSamples += 0.5 * interval *
+									(previousSampleValues + sampleValues);
+							}
+							previousSampleValues = std::move(sampleValues);
+						}
+					}
 					if (step + 1 >= numSteps)
 						continue;
 
@@ -562,6 +664,13 @@ namespace RunSection::General::HS
 				if (plan.calculation == Calculation::TimeEvolution)
 				{
 					averagedFree += orientation.weight * orientationValues;
+					if (plan.stochasticStandardDeviation)
+					{
+						stochasticFreeVariances +=
+							orientation.weight * orientation.weight * orientationFreeVariances;
+						stochasticFreeMeanVariances += orientation.weight * orientation.weight /
+							static_cast<double>(plan.monteCarloSamples) * orientationFreeVariances;
+					}
 				}
 				else
 				{
@@ -573,15 +682,30 @@ namespace RunSection::General::HS
 						return false;
 					}
 					averagedYield += orientation.weight * integratedValues;
+					if (plan.stochasticStandardDeviation)
+					{
+						const arma::rowvec sampleVariances = SampleVariances(integratedSamples);
+						stochasticYieldVariances +=
+							orientation.weight * orientation.weight * sampleVariances;
+						stochasticYieldMeanVariances += orientation.weight * orientation.weight /
+							static_cast<double>(plan.monteCarloSamples) * sampleVariances;
+					}
 				}
 			}
 
+			double yieldCorrectionScale = 1.0;
 			if (plan.calculation == Calculation::Yields &&
 				!collector.ApplyFiniteTimeYieldCorrection(plan, system, space,
-					averagedYield, this->Log(), error))
+					averagedYield, this->Log(), error, &yieldCorrectionScale))
 			{
 				this->Log() << "ERROR: " << error << "." << std::endl;
 				return false;
+			}
+			if (plan.calculation == Calculation::Yields && plan.stochasticStandardDeviation)
+			{
+				const double varianceScale = yieldCorrectionScale * yieldCorrectionScale;
+				stochasticYieldVariances *= varianceScale;
+				stochasticYieldMeanVariances *= varianceScale;
 			}
 
 			if (plan.calculation == Calculation::TimeEvolution)
@@ -633,6 +757,17 @@ namespace RunSection::General::HS
 					this->Log() << "Segment-aware integration enabled for "
 						<< ToString(plan.integrationWindow) << " timeline output." << std::endl;
 				}
+				if (plan.stochasticStandardDeviation)
+				{
+					this->Log() << "Stochastic statistics report weighted trajectory sample SD and "
+						<< "standard error of the weighted mean; they are written only to the log."
+						<< std::endl;
+					if (havePulseTimeline)
+						WriteStochasticStatistics(this->Log(), "pulse", pulseTimes,
+							stochasticPulseVariances, stochasticPulseMeanVariances, collector);
+					WriteStochasticStatistics(this->Log(), "free", freeTimes,
+						stochasticFreeVariances, stochasticFreeMeanVariances, collector);
+				}
 			}
 			else
 			{
@@ -644,6 +779,22 @@ namespace RunSection::General::HS
 				for (arma::uword col = 0; col < averagedYield.n_elem; ++col)
 					this->Data() << " " << std::setprecision(12) << averagedYield(col);
 				this->Data() << std::endl;
+				if (plan.stochasticStandardDeviation)
+				{
+					this->Log() << "Stochastic statistics report weighted trajectory sample SD and "
+						<< "standard error of the weighted mean; they are written only to the log."
+						<< std::endl;
+					for (arma::uword column = 0; column < stochasticYieldVariances.n_elem; ++column)
+					{
+						this->Log() << "Stochastic statistics: segment=yield, observable="
+							<< collector.Observables()[column].name
+							<< ", sample_sd=" << std::setprecision(12)
+							<< std::sqrt(std::max(0.0, stochasticYieldVariances(column)))
+							<< ", standard_error="
+							<< std::sqrt(std::max(0.0, stochasticYieldMeanVariances(column)))
+							<< std::endl;
+					}
+				}
 			}
 
 			this->Log() << "Done with SpinSystem \"" << system->Name() << "\"." << std::endl;

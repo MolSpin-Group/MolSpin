@@ -430,6 +430,20 @@ namespace RunSection::General::HS
 			error = "samplingmethod must be suz or coherent";
 			return false;
 		}
+		properties.Get("stochasticstandarddeviation", plan.stochasticStandardDeviation);
+		if (plan.stochasticStandardDeviation)
+		{
+			if (!plan.IsStochastic())
+			{
+				error = "stochasticstandarddeviation=true requires sampling=stochastic";
+				return false;
+			}
+			if (plan.monteCarloSamples < 2)
+			{
+				error = "stochasticstandarddeviation=true requires montecarlosamples of at least two";
+				return false;
+			}
+		}
 		properties.Get("autoseed", plan.autoSeed);
 		properties.Get("seed", plan.seed);
 
@@ -604,6 +618,11 @@ namespace RunSection::General::HS
 				error = "calculation=timeevolution requires method=timeevo when method is specified";
 				return false;
 			}
+		}
+		if (plan.stochasticStandardDeviation && plan.UsesTimeInfinityYields())
+		{
+			error = "stochasticstandarddeviation=true is not supported with time-infinity yields";
+			return false;
 		}
 		if (plan.IsDynamic() && plan.UsesTimeInfinityYields())
 		{

@@ -1136,6 +1136,7 @@ bool test_hsgeneral_stochastic_uses_state_aware_sampling()
 		"general",
 		"type=HSGeneral;dynamics=static;calculation=timeevolution;sampling=stochastic;"
 		"montecarlosamples=64;samplingmethod=suz;autoseed=false;seed=9;"
+		"stochasticstandarddeviation=true;"
 		"totaltime=0.1;timestep=0.1;propagationmethod=normal;");
 	if (!runSection.Add(MSDParser::ObjectType::Task, parser))
 		return false;
@@ -1148,8 +1149,15 @@ bool test_hsgeneral_stochastic_uses_state_aware_sampling()
 	if (!task->Run())
 		return false;
 
+	std::string header;
+	std::vector<std::vector<double>> rows;
 	return log.str().find("samples only omitted spins (subspace dimension 2)") != std::string::npos &&
-		data.str().find("System.N0") != std::string::npos;
+		log.str().find("sample_sd=") != std::string::npos &&
+		log.str().find("standard_error=") != std::string::npos &&
+		data.str().find("System.N0") != std::string::npos &&
+		ParseNumericData(data.str(), header, rows) && rows.size() == 2 &&
+		header.find("sample_sd") == std::string::npos &&
+		header.find("standard_error") == std::string::npos;
 }
 
 bool test_hsgeneral_stochastic_preparation_remains_factorized()
@@ -1808,6 +1816,27 @@ bool test_hsgeneral_rejects_unsupported_physics()
 			"calculation=yields;powdergammapoints=4;", "requires a generated theta/phi powder grid");
 }
 
+bool test_hsgeneral_stochastic_statistics_requires_stochastic_sampling()
+{
+	return HSGeneralRejects(
+			"sampling=direct;stochasticstandarddeviation=true;",
+			"requires sampling=stochastic");
+}
+
+bool test_hsgeneral_stochastic_statistics_requires_multiple_samples()
+{
+	return HSGeneralRejects(
+			"sampling=stochastic;montecarlosamples=1;stochasticstandarddeviation=true;",
+			"requires montecarlosamples of at least two");
+}
+
+bool test_hsgeneral_stochastic_statistics_rejects_time_infinity()
+{
+	return HSGeneralRejects(
+			"calculation=yields;sampling=stochastic;montecarlosamples=2;method=timeinf;"
+			"stochasticstandarddeviation=true;",
+			"not supported with time-infinity yields");
+}
 //bool test_SSE_convegance_with_singlet_triplet_dephasing()
 //{
 //	// 1. Construct radical pair system featuring two electrons coupled to four nuclear spins
@@ -1958,6 +1987,9 @@ void AddHSGeneralTests(std::vector<test_case> &_cases)
 	_cases.push_back(test_case("HSGeneral time grid includes exact endpoint", test_hsgeneral_time_grid_includes_exact_endpoint));
 	_cases.push_back(test_case("HSGeneral parser uses canonical sampling keywords and warns on krylovtol", test_hsgeneral_parser_uses_canonical_sampling_keywords_and_warns_krylovtol));
 	_cases.push_back(test_case("HSGeneral rejects unsupported physics", test_hsgeneral_rejects_unsupported_physics));
+	_cases.push_back(test_case("HSGeneral stochastic statistics requires stochastic sampling", test_hsgeneral_stochastic_statistics_requires_stochastic_sampling));
+	_cases.push_back(test_case("HSGeneral stochastic statistics requires multiple samples", test_hsgeneral_stochastic_statistics_requires_multiple_samples));
+	_cases.push_back(test_case("HSGeneral stochastic statistics rejects time-infinity yields", test_hsgeneral_stochastic_statistics_rejects_time_infinity));
 	//_cases.push_back(test_case("SSE converges with singlet-triplet dephasing", test_SSE_convegance_with_singlet_triplet_dephasing));
 
 }

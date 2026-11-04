@@ -51,6 +51,8 @@ namespace RunSection::General::HS
 			std::vector<arma::sp_cx_mat> &_operators, std::string &_error) const;
 		void Evaluate(const std::vector<arma::sp_cx_mat> &_operators, const arma::cx_mat &_factors,
 			arma::rowvec &_values) const;
+		void EvaluateSamples(const std::vector<arma::sp_cx_mat> &_operators,
+			const arma::cx_mat &_factors, arma::mat &_values) const;
 		void EvaluateDensity(const std::vector<arma::sp_cx_mat> &_operators, const arma::cx_mat &_density,
 			arma::rowvec &_values) const;
 		bool IntegrateFiniteTime(const arma::mat &_values, const std::vector<double> &_times,
@@ -59,7 +61,8 @@ namespace RunSection::General::HS
 			bool _enabled, arma::mat &_output, std::string &_error) const;
 		bool ApplyFiniteTimeYieldCorrection(const HSExecutionPlan &_plan,
 			const SpinAPI::system_ptr &_system, SpinAPI::SpinSpace &_space,
-			arma::rowvec &_integrated, std::ostream &_log, std::string &_error) const;
+			arma::rowvec &_integrated, std::ostream &_log, std::string &_error,
+			double *_appliedScale = nullptr) const;
 		void WriteHeader(const SpinAPI::system_ptr &_system, std::ostream &_stream) const;
 		size_t Size() const { return observables.size(); }
 		const std::vector<HSObservable> &Observables() const { return observables; }

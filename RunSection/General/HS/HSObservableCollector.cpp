@@ -287,6 +287,28 @@ namespace RunSection::General::HS
 		}
 	}
 
+	void HSObservableCollector::EvaluateSamples(const std::vector<arma::sp_cx_mat> &operators,
+		const arma::cx_mat &factors, arma::mat &values) const
+	{
+		const arma::uword sampleCount = factors.n_cols;
+		values.zeros(sampleCount, operators.size());
+		if (sampleCount == 0)
+			return;
+
+		const double sampleScale = std::sqrt(static_cast<double>(sampleCount));
+		for (arma::uword sample = 0; sample < sampleCount; ++sample)
+		{
+			const arma::cx_vec state = sampleScale * factors.col(sample);
+			for (size_t observable = 0; observable < operators.size(); ++observable)
+			{
+				double value = std::real(arma::cdot(state, operators[observable] * state));
+				if (observable < observables.size() && observables[observable].transition != nullptr)
+					value *= observables[observable].transition->Rate();
+				values(sample, observable) = value;
+			}
+		}
+	}
+
 	void HSObservableCollector::EvaluateDensity(const std::vector<arma::sp_cx_mat> &operators,
 		const arma::cx_mat &density, arma::rowvec &values) const
 	{
@@ -360,9 +382,12 @@ namespace RunSection::General::HS
 
 	bool HSObservableCollector::ApplyFiniteTimeYieldCorrection(const HSExecutionPlan &plan,
 		const SpinAPI::system_ptr &system, SpinAPI::SpinSpace &space,
-		arma::rowvec &integrated, std::ostream &log, std::string &error) const
+		arma::rowvec &integrated, std::ostream &log, std::string &error,
+		double *appliedScale) const
 	{
 		error.clear();
+		if (appliedScale != nullptr)
+			*appliedScale = 1.0;
 		if (!plan.yieldCorrections || plan.UsesTimeInfinityYields())
 			return true;
 		if (space.HasTimedependentTransitions())
@@ -387,6 +412,8 @@ namespace RunSection::General::HS
 			return false;
 		}
 		integrated /= denominator;
+		if (appliedScale != nullptr)
+			*appliedScale = 1.0 / denominator;
 		log << "Applied the legacy finite-time yield correction 1/(1-exp(-totaltime*kmax))." << std::endl;
 		return true;
 	}

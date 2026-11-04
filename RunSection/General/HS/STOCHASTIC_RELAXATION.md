@@ -26,11 +26,19 @@ Stochastic propagation is selected through the existing task options:
 type = HSGeneral;
 sampling = stochastic;
 montecarlosamples = 8192;
+stochasticstandarddeviation = true;
 autoseed = false;
 seed = 431;
 propagationmethod = autoexpm;
 precision = double;
 ```
+
+`stochasticstandarddeviation` is optional and defaults to `false`. When enabled,
+HSGeneral writes each observable's trajectory sample standard deviation and the
+standard error of its weighted Monte Carlo mean to the task log; it does not add
+columns to the result file. It applies to stochastic finite-time time evolution
+and yields and requires at least two samples. It is not available for direct
+sampling, density-matrix propagation, or time-infinity yields.
 
 There is no task-level dephasing switch. Change only `sampling=direct` to use the
 Hilbert density representation. Other relaxation types currently have no
