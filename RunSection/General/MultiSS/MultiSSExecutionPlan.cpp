@@ -46,6 +46,7 @@
 
 #include "MultiSSExecutionPlan.h"
 #include "ObjectParser.h"
+#include "../TaskSpec.h"
 
 #include <algorithm>
 #include <cctype>
@@ -63,10 +64,10 @@ namespace RunSection::General::MultiSS
             return value;
         }
         bool ReadString(const MSDParser::ObjectParser &p,
-            std::initializer_list<const char*> keys, std::string &value)
+            const std::string &propertyName, std::string &value)
         {
-            for (const char *key : keys)
-                if (p.Get(key, value)) { value = Lower(value); return true; }
+            if (GetTaskProperty(p, "MultiSSGeneral", propertyName, value))
+            { value = Lower(value); return true; }
             return false;
         }
         bool ParseOrientation(const std::string &text, double &a, double &b,
@@ -87,7 +88,7 @@ namespace RunSection::General::MultiSS
     {
         plan = MultiSSExecutionPlan(); error.clear();
         std::string value = "timeevolution";
-        ReadString(p, {"calculation","calculationmode","calculation_mode"}, value);
+        ReadString(p, "calculation", value);
         if (value=="timeevolution" || value=="timeevo" || value=="time-evolution")
             plan.calculation = MultiSSCalculation::TimeEvolution;
         else if (value=="timeintegrated" || value=="time-integrated" || value=="timeinf" || value=="integrated")
@@ -96,12 +97,12 @@ namespace RunSection::General::MultiSS
             plan.calculation = MultiSSCalculation::SteadyState;
         else { error="calculation must be timeevolution, timeintegrated/timeinf, or steadystate"; return false; }
 
-        p.Get("totaltime", plan.totalTime); p.Get("timestep", plan.timeStep);
-        p.Get("solverresidualtolerance", plan.solverResidualTolerance);
-        p.Get("krylovdimension", plan.krylovDimension);
-        p.Get("krylovtolerance", plan.krylovTolerance);
-        p.Get("diagnostics", plan.diagnostics);
-        p.Get("transitionfluxes", plan.transitionFluxes);
+        GetTaskProperty(p, "MultiSSGeneral", "totaltime", plan.totalTime); GetTaskProperty(p, "MultiSSGeneral", "timestep", plan.timeStep);
+        GetTaskProperty(p, "MultiSSGeneral", "solverresidualtolerance", plan.solverResidualTolerance);
+        GetTaskProperty(p, "MultiSSGeneral", "krylovdimension", plan.krylovDimension);
+        GetTaskProperty(p, "MultiSSGeneral", "krylovtolerance", plan.krylovTolerance);
+        GetTaskProperty(p, "MultiSSGeneral", "diagnostics", plan.diagnostics);
+        GetTaskProperty(p, "MultiSSGeneral", "transitionfluxes", plan.transitionFluxes);
         if (!std::isfinite(plan.totalTime) || plan.totalTime < 0.0)
         { error="totaltime must be finite and non-negative"; return false; }
         if (!std::isfinite(plan.timeStep) || !(plan.timeStep > 0.0))
@@ -114,21 +115,21 @@ namespace RunSection::General::MultiSS
         { error="krylovtolerance must be finite and positive"; return false; }
 
         value = "rk4";
-        ReadString(p,{"propagationmethod","propagator"},value);
+        ReadString(p,"propagationmethod",value);
         if (value=="rk4" || value=="explicit") plan.propagation=MultiSSPropagation::RK4;
         else if (value=="exponential" || value=="exp" || value=="normal") plan.propagation=MultiSSPropagation::Exponential;
         else if (value=="krylov" || value=="arnoldi" || value=="expmv") plan.propagation=MultiSSPropagation::Krylov;
         else { error="propagationmethod must be rk4, exponential, or krylov"; return false; }
 
         value = "both";
-        ReadString(p,{"observables","observablemode"},value);
+        ReadString(p,"observables",value);
         if (value=="populations" || value=="population" || value=="manifolds") plan.observables=MultiSSObservableMode::Populations;
         else if (value=="states" || value=="statepopulations") plan.observables=MultiSSObservableMode::States;
         else if (value=="both" || value=="all") plan.observables=MultiSSObservableMode::Both;
         else { error="observables must be populations, states, or both"; return false; }
 
         value = "full";
-        ReadString(p,{"hamiltonianmode","hamiltonian_mode"},value);
+        ReadString(p,"hamiltonianmode",value);
         if (value=="full" || value=="fixed" || value=="legacy")
             plan.hamiltonianMode=::RunSection::General::SS::SSHamiltonianMode::FixedFull;
         else if (value=="rotated_zyz" || value=="rotatedzyz" || value=="exact" || value=="nonsecular")
@@ -138,7 +139,7 @@ namespace RunSection::General::MultiSS
         else { error="hamiltonianmode must be full, rotated_zyz, or rotated_sa"; return false; }
 
         value = "operators";
-        ReadString(p,{"relaxationmodel","relaxation_model"},value);
+        ReadString(p,"relaxationmodel",value);
         if (value=="operators" || value=="operator" || value=="local")
             plan.relaxationModel=::RunSection::General::SS::SSRelaxationModel::Operators;
         else if (value=="nakajima_zwanzig" || value=="nakajima-zwanzig" || value=="nakajimazwanzig" || value=="nz")
@@ -149,7 +150,7 @@ namespace RunSection::General::MultiSS
 
         std::string explicitOrientation;
         const bool explicitSpecified =
-            p.Get("powderorientation", explicitOrientation) || p.Get("orientation", explicitOrientation);
+            GetTaskProperty(p, "MultiSSGeneral", "powderorientation", explicitOrientation);
         if (explicitSpecified)
         {
             if (!ParseOrientation(explicitOrientation, plan.explicitAlpha, plan.explicitBeta,
@@ -161,17 +162,17 @@ namespace RunSection::General::MultiSS
         }
 
         std::string grid;
-        const bool gridSpecified = ReadString(p,{"powdergrid","powder_grid"},grid);
-        const bool pointsSpecified = p.Get("powdersamplingpoints",plan.powderPoints);
-        const bool gridSizeSpecified = p.Get("powdergridsize",plan.powderGridSize);
-        const bool symmetrySpecified = p.Get("powdersymmetry",plan.powderSymmetry);
-        const bool gammaPointsSpecified = p.Get("powdergammapoints",plan.powderGammaPoints);
-        const bool gammaOffsetSpecified = p.Get("powdergamma",plan.powderGammaOffset);
+        const bool gridSpecified = ReadString(p,"powdergrid",grid);
+        const bool pointsSpecified = GetTaskProperty(p,"MultiSSGeneral","powdersamplingpoints",plan.powderPoints);
+        const bool gridSizeSpecified = GetTaskProperty(p,"MultiSSGeneral","powdergridsize",plan.powderGridSize);
+        const bool symmetrySpecified = GetTaskProperty(p,"MultiSSGeneral","powdersymmetry",plan.powderSymmetry);
+        const bool gammaPointsSpecified = GetTaskProperty(p,"MultiSSGeneral","powdergammapoints",plan.powderGammaPoints);
+        const bool gammaOffsetSpecified = GetTaskProperty(p,"MultiSSGeneral","powdergamma",plan.powderGammaOffset);
         if (plan.powderGammaPoints < 1)
         { error="powdergammapoints must be at least one"; return false; }
 
         std::string domain;
-        const bool domainSpecified = ReadString(p,{"powderdomain"},domain);
+        const bool domainSpecified = ReadString(p,"powderdomain",domain);
         if (explicitSpecified && (gridSpecified || pointsSpecified || gridSizeSpecified ||
             symmetrySpecified || domainSpecified || gammaOffsetSpecified || plan.powderGammaPoints > 1))
         { error="explicit powderorientation cannot be combined with generated powder-grid settings"; return false; }

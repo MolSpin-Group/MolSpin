@@ -102,6 +102,7 @@ set(SOURCES_RUNSECTION
         ${PATH_SOURCE_RUNSECTION}/Utility.cpp
         ${PATH_SOURCE_RUNSECTION}/CubicSpline.cpp
         ${PATH_SOURCE_RUNSECTION}/General/GeneralOrientationSampler.cpp
+        ${PATH_SOURCE_RUNSECTION}/General/TaskSpec.cpp
         ${PATH_SOURCE_RUNSECTION}/General/Resonance/ResonanceLineshape.cpp
         ${PATH_SOURCE_RUNSECTION}/General/Resonance/ResonanceFieldJacobian.cpp
         ${PATH_SOURCE_RUNSECTION}/General/Resonance/ResonanceTransitionDetector.cpp

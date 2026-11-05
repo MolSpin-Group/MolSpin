@@ -32,6 +32,7 @@
 
 #include "HSExecutionPlan.h"
 #include "ObjectParser.h"
+#include "../TaskSpec.h"
 
 #include <algorithm>
 #include <cctype>
@@ -50,15 +51,12 @@ namespace RunSection::General::HS
 		}
 
 		bool ReadString(const MSDParser::ObjectParser &properties,
-			const std::initializer_list<const char *> &keys, std::string &value)
+			const std::string &propertyName, std::string &value)
 		{
-			for (const char *key : keys)
+			if (GetTaskProperty(properties, "HSGeneral", propertyName, value))
 			{
-				if (properties.Get(key, value))
-				{
-					value = Lower(value);
-					return true;
-				}
+				value = Lower(value);
+				return true;
 			}
 			return false;
 		}
@@ -93,7 +91,7 @@ namespace RunSection::General::HS
 		error.clear();
 
 		std::string value = "static";
-		ReadString(properties, {"dynamics", "timedependence", "time_dependence"}, value);
+		ReadString(properties, "dynamics", value);
 		if (OneOf(value, {"timeindependent", "time-independent"})) value = "static";
 		if (OneOf(value, {"timedependent", "time-dependent"})) value = "dynamic";
 		if (value == "static") plan.dynamics = Dynamics::Static;
@@ -101,7 +99,7 @@ namespace RunSection::General::HS
 		else { error = "dynamics must be static or dynamic"; return false; }
 
 		value = "timeevolution";
-		ReadString(properties, {"calculation", "calculationmode", "calculation_mode"}, value);
+		ReadString(properties, "calculation", value);
 		if (OneOf(value, {"timeevo", "time-evolution", "time_evolution"})) value = "timeevolution";
 		if (OneOf(value, {"yield", "quantumyield", "quantumyields"})) value = "yields";
 		if (OneOf(value, {"spectra", "spectrum", "resonance"}))
@@ -114,17 +112,16 @@ namespace RunSection::General::HS
 		else { error = "calculation must be timeevolution or yields"; return false; }
 
 		value = "direct";
-		ReadString(properties, {"sampling", "tracesampling", "trace_sampling"}, value);
+		ReadString(properties, "sampling", value);
 		if (OneOf(value, {"trace", "montecarlo", "monte-carlo", "mc"})) value = "stochastic";
 		if (value == "direct") plan.sampling = Sampling::Direct;
 		else if (value == "stochastic") plan.sampling = Sampling::Stochastic;
 		else { error = "sampling must be direct or stochastic"; return false; }
 
 		std::string approximation = "full";
-		ReadString(properties,
-			{"approximation", "hamiltonianapproximation", "hamiltonian_approximation"}, approximation);
+		ReadString(properties, "approximation", approximation);
 		bool secular = false;
-		if (properties.Get("secularization", secular) || properties.Get("secular", secular))
+		if (GetTaskProperty(properties, "HSGeneral", "secularization", secular))
 		{
 			approximation = secular ? "secular" : "full";
 		}
@@ -144,8 +141,7 @@ namespace RunSection::General::HS
 		// compatibility alias for existing resonance inputs. `uniform` is the
 		// established golden-angle/Fibonacci constructor in SpinAPI.
 		std::string powderGridName;
-		const bool powderGridSpecified = ReadString(properties,
-			{"powdergrid", "powder_grid", "powdergridtype"}, powderGridName);
+		const bool powderGridSpecified = ReadString(properties, "powdergrid", powderGridName);
 		if (powderGridSpecified)
 		{
 			if (OneOf(powderGridName, {"uniform", "golden", "fibonacci"}))
@@ -161,13 +157,12 @@ namespace RunSection::General::HS
 			}
 		}
 
-		const bool powderPointsSpecified = properties.Get("powdersamplingpoints", plan.powderPoints);
-		const bool powderGridSizeSpecified = properties.Get("powdergridsize", plan.powderGridSize);
-		const bool powderSymmetrySpecified = ReadString(properties,
-			{"powdersymmetry", "powdergridsymmetry"}, plan.powderSymmetry);
+		const bool powderPointsSpecified = GetTaskProperty(properties, "HSGeneral", "powdersamplingpoints", plan.powderPoints);
+		const bool powderGridSizeSpecified = GetTaskProperty(properties, "HSGeneral", "powdergridsize", plan.powderGridSize);
+		const bool powderSymmetrySpecified = ReadString(properties, "powdersymmetry", plan.powderSymmetry);
 
 		std::string powderDomainName;
-		const bool powderDomainSpecified = ReadString(properties, {"powderdomain"}, powderDomainName);
+		const bool powderDomainSpecified = ReadString(properties, "powderdomain", powderDomainName);
 		if (powderDomainSpecified)
 		{
 			if (OneOf(powderDomainName, {"upper", "hemisphere", "upperhemisphere"}))
@@ -183,8 +178,7 @@ namespace RunSection::General::HS
 
 		bool powderFullSphere = false;
 		const bool powderFullSphereSpecified =
-			properties.Get("powderfullsphere", powderFullSphere) ||
-			properties.Get("powder_full_sphere", powderFullSphere);
+			GetTaskProperty(properties, "HSGeneral", "powderfullsphere", powderFullSphere);
 		if (powderFullSphereSpecified)
 		{
 			const SpinAPI::PowderGridDomain legacyDomain = powderFullSphere
@@ -198,10 +192,9 @@ namespace RunSection::General::HS
 			plan.powderDomain = legacyDomain;
 		}
 
-		properties.Get("powdergammapoints", plan.powderGammaPoints);
+		GetTaskProperty(properties, "HSGeneral", "powdergammapoints", plan.powderGammaPoints);
 		const bool powderGammaSpecified =
-			properties.Get("powdergamma", plan.powderGammaOffset) ||
-			properties.Get("powder_gamma", plan.powderGammaOffset);
+			GetTaskProperty(properties, "HSGeneral", "powdergamma", plan.powderGammaOffset);
 		if (plan.powderGammaPoints < 1)
 		{
 			error = "powdergammapoints must be at least one";
@@ -210,8 +203,7 @@ namespace RunSection::General::HS
 
 		std::string explicitOrientation;
 		bool explicitOrientationSpecified = false;
-		if (properties.Get("powderorientation", explicitOrientation) ||
-			properties.Get("powder_orientation", explicitOrientation))
+		if (GetTaskProperty(properties, "HSGeneral", "powderorientation", explicitOrientation))
 		{
 			if (powderGammaSpecified)
 			{
@@ -239,12 +231,9 @@ namespace RunSection::General::HS
 			double theta = 0.0;
 			double phi = 0.0;
 			double weight = 1.0;
-			const bool thetaSpecified = properties.Get("powdertheta", theta) ||
-				properties.Get("powder_theta", theta);
-			const bool phiSpecified = properties.Get("powderphi", phi) ||
-				properties.Get("powder_phi", phi);
-			const bool weightSpecified = properties.Get("powderweight", weight) ||
-				properties.Get("powder_weight", weight);
+			const bool thetaSpecified = GetTaskProperty(properties, "HSGeneral", "powdertheta", theta);
+			const bool phiSpecified = GetTaskProperty(properties, "HSGeneral", "powderphi", phi);
+			const bool weightSpecified = GetTaskProperty(properties, "HSGeneral", "powderweight", weight);
 			if (thetaSpecified || phiSpecified || weightSpecified)
 			{
 				if (!(thetaSpecified && phiSpecified) || !std::isfinite(theta) ||
@@ -381,8 +370,7 @@ namespace RunSection::General::HS
 		}
 
 		bool powderFlag = false;
-		const bool powderSpecified = properties.Get("powderaveraging", powderFlag) ||
-			properties.Get("powder", powderFlag);
+		const bool powderSpecified = GetTaskProperty(properties, "HSGeneral", "powderaveraging", powderFlag);
 		if (powderSpecified && powderFlag && plan.orientation == OrientationMode::Identity)
 		{
 			error = "powderaveraging=true requires a generated powder grid or an explicit powderorientation";
@@ -394,22 +382,22 @@ namespace RunSection::General::HS
 			return false;
 		}
 
-		properties.Get("totaltime", plan.totalTime);
-		properties.Get("timestep", plan.timeStep);
+		GetTaskProperty(properties, "HSGeneral", "totaltime", plan.totalTime);
+		GetTaskProperty(properties, "HSGeneral", "timestep", plan.timeStep);
 		if (!std::isfinite(plan.totalTime) || plan.totalTime < 0.0) { error = "totaltime must be finite and non-negative"; return false; }
 		if (!std::isfinite(plan.timeStep) || plan.timeStep <= 0.0) { error = "timestep must be finite and positive"; return false; }
 
 		value = "normal";
-		ReadString(properties, {"propagationmethod", "propagator"}, value);
+		ReadString(properties, "propagationmethod", value);
 		if (OneOf(value, {"normal", "exp", "exponential", "matrixexponential", "matrix-exponential"}))
 			plan.propagation = PropagationMethod::Exponential;
 		else if (value == "autoexpm") plan.propagation = PropagationMethod::AutoExpm;
 		else if (value == "krylov") plan.propagation = PropagationMethod::Krylov;
 		else if (OneOf(value, {"rk4", "explicit"})) plan.propagation = PropagationMethod::RK4;
 		else { error = "propagationmethod must be normal/exp, autoexpm, krylov, or rk4"; return false; }
-		properties.Get("precision", plan.precision);
-		properties.Get("krylovsize", plan.krylovSize);
-		plan.krylovToleranceSpecified = properties.Get("krylovtol", plan.requestedKrylovTolerance);
+		GetTaskProperty(properties, "HSGeneral", "precision", plan.precision);
+		GetTaskProperty(properties, "HSGeneral", "krylovsize", plan.krylovSize);
+		plan.krylovToleranceSpecified = GetTaskProperty(properties, "HSGeneral", "krylovtol", plan.requestedKrylovTolerance);
 		if (plan.krylovSize < 1)
 			plan.krylovSize = 16;
 		if (plan.krylovToleranceSpecified &&
@@ -420,17 +408,17 @@ namespace RunSection::General::HS
 		}
 
 		int mcSamples = static_cast<int>(plan.monteCarloSamples);
-		properties.Get("montecarlosamples", mcSamples);
+		GetTaskProperty(properties, "HSGeneral", "montecarlosamples", mcSamples);
 		if (mcSamples < 1) { error = "montecarlosamples must be at least one"; return false; }
 		plan.monteCarloSamples = static_cast<arma::uword>(mcSamples);
-		if (!ReadString(properties, {"samplingmethod"}, plan.samplingMethod))
+		if (!ReadString(properties, "samplingmethod", plan.samplingMethod))
 			plan.samplingMethod = "suz";
 		if (!OneOf(plan.samplingMethod, {"suz", "coherent"}))
 		{
 			error = "samplingmethod must be suz or coherent";
 			return false;
 		}
-		properties.Get("stochasticstandarddeviation", plan.stochasticStandardDeviation);
+		GetTaskProperty(properties, "HSGeneral", "stochasticstandarddeviation", plan.stochasticStandardDeviation);
 		if (plan.stochasticStandardDeviation)
 		{
 			if (!plan.IsStochastic())
@@ -444,25 +432,24 @@ namespace RunSection::General::HS
 				return false;
 			}
 		}
-		properties.Get("autoseed", plan.autoSeed);
-		properties.Get("seed", plan.seed);
+		GetTaskProperty(properties, "HSGeneral", "autoseed", plan.autoSeed);
+		GetTaskProperty(properties, "HSGeneral", "seed", plan.seed);
 
-		plan.hasH0List = properties.GetList("hamiltonianh0list", plan.h0List, ',') && !plan.h0List.empty();
-		plan.hasH1List = properties.GetList("hamiltonianh1list", plan.h1List, ',') && !plan.h1List.empty();
+		plan.hasH0List = GetTaskPropertyList(properties, "HSGeneral", "hamiltonianh0list", plan.h0List, ',') && !plan.h0List.empty();
+		plan.hasH1List = GetTaskPropertyList(properties, "HSGeneral", "hamiltonianh1list", plan.h1List, ',') && !plan.h1List.empty();
 		plan.hasInitialStateHamiltonian =
-			properties.GetList("initialstatehamiltonian", plan.initialStateHamiltonian, ',') &&
+			GetTaskPropertyList(properties, "HSGeneral", "initialstatehamiltonian", plan.initialStateHamiltonian, ',') &&
 			!plan.initialStateHamiltonian.empty();
-		const bool transitionYieldsSpecified = properties.Get("transitionyields", plan.transitionYields);
-		properties.Get("yieldcorrections", plan.yieldCorrections);
-		properties.GetList("spinlist", plan.spinList, ',');
-		const bool cidspSpecified = properties.Get("cidsp", plan.cidsp);
+		const bool transitionYieldsSpecified = GetTaskProperty(properties, "HSGeneral", "transitionyields", plan.transitionYields);
+		GetTaskProperty(properties, "HSGeneral", "yieldcorrections", plan.yieldCorrections);
+		GetTaskPropertyList(properties, "HSGeneral", "spinlist", plan.spinList, ',');
+		const bool cidspSpecified = GetTaskProperty(properties, "HSGeneral", "cidsp", plan.cidsp);
 		bool cidnpAlias = false;
-		const bool cidnpSpecified = properties.Get("cidnp", cidnpAlias);
+		const bool cidnpSpecified = GetTaskProperty(properties, "HSGeneral", "cidnp", cidnpAlias);
 		if (cidnpSpecified && cidnpAlias) plan.cidsp = true;
 
 		std::string observableMode;
-		const bool observableModeSpecified = ReadString(properties,
-			{"observables", "observablemode", "observable_mode"}, observableMode);
+		const bool observableModeSpecified = ReadString(properties, "observables", observableMode);
 		if (observableModeSpecified)
 		{
 			if (OneOf(observableMode, {"states", "state", "populations", "statepopulations", "state-populations"}))
@@ -528,12 +515,12 @@ namespace RunSection::General::HS
 			plan.transitionYields = false;
 			plan.cidsp = true;
 		}
-		plan.hasPulseSequence = properties.GetPulseSequence("pulsesequence", plan.pulseSequence);
+		plan.hasPulseSequence = GetTaskPulseSequence(properties, "HSGeneral", "pulsesequence", plan.pulseSequence);
 
 		auto readTimelineWindow = [&](const std::string &key, TimelineWindow &window) -> bool
 		{
 			std::string value;
-			if (!properties.Get(key, value)) return true;
+			if (!GetTaskProperty(properties, "HSGeneral", key, value)) return true;
 			value = Lower(value);
 			if (OneOf(value, {"pulse", "pulses", "preparation"})) window = TimelineWindow::Pulse;
 			else if (OneOf(value, {"freeevo", "free-evolution", "free_evolution", "free"})) window = TimelineWindow::FreeEvolution;
@@ -543,7 +530,7 @@ namespace RunSection::General::HS
 		};
 		if (!readTimelineWindow("printtimeframe", plan.printWindow) ||
 			!readTimelineWindow("integrationtimeframe", plan.integrationWindow)) return false;
-		properties.Get("integration", plan.integrateTimeEvolution);
+		GetTaskProperty(properties, "HSGeneral", "integration", plan.integrateTimeEvolution);
 		if (!plan.hasPulseSequence && plan.printWindow == TimelineWindow::Pulse)
 		{
 			error = "printtimeframe=pulse requires a task-level pulsesequence";
@@ -556,7 +543,7 @@ namespace RunSection::General::HS
 		}
 
 		std::string reactionOperators = "haberkorn";
-		ReadString(properties, {"reactionoperators", "reactionoperator", "reaction_operator"}, reactionOperators);
+		ReadString(properties, "reactionoperators", reactionOperators);
 		if (reactionOperators == "haberkorn")
 		{
 			// Haberkorn is the only Hilbert-space reaction model represented by
@@ -570,7 +557,7 @@ namespace RunSection::General::HS
 		else { error = "reactionoperators must be haberkorn in HSGeneral"; return false; }
 
 		std::string relaxationModel;
-		if (ReadString(properties, {"relaxationmodel", "relaxation_model"}, relaxationModel) &&
+		if (ReadString(properties, "relaxationmodel", relaxationModel) &&
 			OneOf(relaxationModel, {"nakajimazwanzig", "nakajima-zwanzig", "nz"}))
 		{
 			error = "Nakajima-Zwanzig relaxation is not available in HSGeneral; use the superspace NZ framework";
@@ -603,7 +590,7 @@ namespace RunSection::General::HS
 		}
 
 		std::string method;
-		if (ReadString(properties, {"method", "yieldmethod", "yield_method"}, method))
+		if (ReadString(properties, "method", method))
 		{
 			if (plan.calculation == Calculation::Yields)
 			{

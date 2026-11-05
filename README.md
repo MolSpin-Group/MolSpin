@@ -33,6 +33,20 @@ Use a fresh build directory after changing compiler or Armadillo installation.
 For reproducible binaries intended for other machines, configure with
 `-DENABLE_NATIVE_ARCH=OFF`.
 
+## Machine-readable task specification
+
+Starting with MolSpin 2.3, the executable can export the input specification
+for `HSGeneral`, `SSGeneral`, and `MultiSSGeneral` as JSON without an input file
+or calculation:
+
+```bash
+molspin --dump-task-spec
+molspin --dump-task-spec=HSGeneral
+```
+
+The output uses schema version 1 and reflects the task property declarations
+compiled into that executable.
+
 ## Task consolidation
 
 New single-SpinSystem Hilbert-space propagation and yield development belongs
@@ -100,5 +114,4 @@ PLEASE CITE THE FOLLOWING PAPER WHEN USING MOLSPIN.
 		</td>
 	</tr>
 </table>
-
 

@@ -60,6 +60,7 @@
 #include "General/Resonance/TaskResonanceGeneral.h"
 #include "General/SS/TaskSSGeneral.h"
 #include "General/MultiSS/TaskMultiSSGeneral.h"
+#include "General/TaskSpec.h"
 // #include "TaskDynamicHSDirectSpectra.h"
 
 #include "TaskActionSpectrumHistogram.h"
@@ -79,20 +80,14 @@ namespace RunSection
 
 		// HSGeneral is the production Hilbert-space propagation/yield task.
 		// Spectroscopy remains a standalone task and is never used as an HSGeneral backend.
-		if (_tasktype.compare("hsgeneral") == 0 ||
-			_tasktype.compare("HSGeneral") == 0 ||
-			_tasktype.compare("hs-general") == 0 ||
-			_tasktype.compare("HS-General") == 0)
+		if (General::IsTaskSpecAlias("HSGeneral", _tasktype))
 		{
 			return std::make_shared<General::HS::TaskHSGeneral>(_obj, *this);
 		}
 
 		// SSGeneral is the production one-SpinSystem Liouville/superspace task.
 		// Historical StaticSS/StaticSSTimeEvo tasks remain independent references.
-		if (_tasktype.compare("ssgeneral") == 0 ||
-			_tasktype.compare("SSGeneral") == 0 ||
-			_tasktype.compare("ss-general") == 0 ||
-			_tasktype.compare("SS-General") == 0)
+		if (General::IsTaskSpecAlias("SSGeneral", _tasktype))
 		{
 			return std::make_shared<General::SS::TaskSSGeneral>(_obj, *this);
 		}
@@ -101,10 +96,7 @@ namespace RunSection
 		// It is deliberately registered alongside, not instead of, historical
 		// MultiStaticSS / MultiStaticSSTimeEvo / NZ / Redfield tasks so their
 		// behavior remains available as a numerical reference during migration.
-		if (_tasktype.compare("multissgeneral") == 0 ||
-			_tasktype.compare("MultiSSGeneral") == 0 ||
-			_tasktype.compare("multiss-general") == 0 ||
-			_tasktype.compare("MultiSS-General") == 0)
+		if (General::IsTaskSpecAlias("MultiSSGeneral", _tasktype))
 		{
 			return std::make_shared<General::MultiSS::TaskMultiSSGeneral>(_obj, *this);
 		}

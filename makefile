@@ -40,7 +40,7 @@ DEP_MSDPARSER = $(PATH_MSDPARSER)/MSDParser.h
 PATH_RUNSECTION = ./RunSection
 OBJS_RUNSECTION = $(PATH_RUNSECTION)/RunSection.o $(PATH_RUNSECTION)/BasicTask.o $(PATH_RUNSECTION)/Action.o $(PATH_RUNSECTION)/Settings.o $(PATH_RUNSECTION)/OutputHandler.o $(PATH_RUNSECTION)/Utility.o $(PATH_RUNSECTION)/CubicSpline.o
 PATH_RUNSECTION_GENERAL = ./RunSection/General
-OBJS_RUNSECTION_GENERAL = $(PATH_RUNSECTION_GENERAL)/GeneralOrientationSampler.o
+OBJS_RUNSECTION_GENERAL = $(PATH_RUNSECTION_GENERAL)/GeneralOrientationSampler.o $(PATH_RUNSECTION_GENERAL)/TaskSpec.o
 PATH_RUNSECTION_GENERAL_RESONANCE = ./RunSection/General/Resonance
 OBJS_RUNSECTION_GENERAL_RESONANCE = $(PATH_RUNSECTION_GENERAL_RESONANCE)/ResonanceLineshape.o $(PATH_RUNSECTION_GENERAL_RESONANCE)/ResonanceFieldJacobian.o $(PATH_RUNSECTION_GENERAL_RESONANCE)/ResonanceTransitionDetector.o $(PATH_RUNSECTION_GENERAL_RESONANCE)/ResonanceTransitionMoments.o $(PATH_RUNSECTION_GENERAL_RESONANCE)/GeneralResonanceHamiltonian.o $(PATH_RUNSECTION_GENERAL_RESONANCE)/ResonanceSpectrumEvaluator.o $(PATH_RUNSECTION_GENERAL_RESONANCE)/ResonanceDiagnostics.o $(PATH_RUNSECTION_GENERAL_RESONANCE)/ResonanceExecutionPlan.o $(PATH_RUNSECTION_GENERAL_RESONANCE)/ResonanceSpectrumProcessing.o $(PATH_RUNSECTION_GENERAL_RESONANCE)/ResonanceDiagonalization.o $(PATH_RUNSECTION_GENERAL_RESONANCE)/ResonanceSystemPreparation.o $(PATH_RUNSECTION_GENERAL_RESONANCE)/ResonanceOrientationSampler.o $(PATH_RUNSECTION_GENERAL_RESONANCE)/ResonanceFieldSweep.o $(PATH_RUNSECTION_GENERAL_RESONANCE)/ResonanceExactCalculation.o $(PATH_RUNSECTION_GENERAL_RESONANCE)/ResonanceExactSweep.o $(PATH_RUNSECTION_GENERAL_RESONANCE)/ResonanceHybridCalculation.o $(PATH_RUNSECTION_GENERAL_RESONANCE)/ResonanceMeshCalculation.o $(PATH_RUNSECTION_GENERAL_RESONANCE)/TaskResonanceGeneral.o
 DEP_RUNSECTION = $(PATH_RUNSECTION)/RunSection.h
@@ -171,9 +171,10 @@ TESTMAIN_DEPS = $(PATH_TESTS)/testmain.cpp $(PATH_TESTS)/assertfunctions.cpp $(P
 
 .PHONY: test test_debug
 # The normal target always runs the complete suite.
-test: $(OBJS_TESTS)
+test: $(OBJS_TESTS) molspin
 	$(CC) $(LFLAGS) $(OBJS_TESTS) $(LDLIBS) -o $(PATH_TESTS)/molspintest
 	$(PATH_TESTS)/molspintest
+	python3 $(PATH_TESTS)/check_task_spec.py ./molspin
 
 $(PATH_TESTS)/testmain.o: $(TESTMAIN_DEPS)
 	$(CC) $(CFLAGS) $(SEARCHDIR_TESTS) $(PATH_TESTS)/testmain.cpp -o $(PATH_TESTS)/testmain.o

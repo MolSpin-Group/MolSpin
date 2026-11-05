@@ -29,6 +29,7 @@
 
 #include "SSExecutionPlan.h"
 #include "ObjectParser.h"
+#include "../TaskSpec.h"
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -45,9 +46,10 @@ namespace RunSection::General::SS
             return value;
         }
         bool ReadString(const MSDParser::ObjectParser &p,
-            std::initializer_list<const char*> keys, std::string &value)
+            const std::string &propertyName, std::string &value)
         {
-            for(const char *key:keys) if(p.Get(key,value)){value=Lower(value);return true;}
+            if(GetTaskProperty(p, "SSGeneral", propertyName, value))
+            {value=Lower(value);return true;}
             return false;
         }
         bool ParseOrientation(const std::string &text,double &a,double &b,double &g,double &w)
@@ -67,44 +69,44 @@ namespace RunSection::General::SS
     bool ResolveSSExecutionPlan(const MSDParser::ObjectParser &p,SSExecutionPlan &plan,std::string &error)
     {
         plan=SSExecutionPlan(); error.clear(); std::string value="timeintegrated";
-        ReadString(p,{"calculation","calculationmode","calculation_mode","method"},value);
+        ReadString(p,"calculation",value);
         if(value=="timeevolution"||value=="timeevo"||value=="time-evolution") plan.calculation=SSCalculation::TimeEvolution;
         else if(value=="timeintegrated"||value=="time-integrated"||value=="timeinf"||value=="integrated"||value=="static") plan.calculation=SSCalculation::TimeIntegrated;
         else if(value=="steadystate"||value=="steady-state"||value=="stationary") plan.calculation=SSCalculation::SteadyState;
         else {error="calculation must be timeevolution, timeintegrated/timeinf, or steadystate";return false;}
 
-        p.Get("totaltime",plan.totalTime); p.Get("timestep",plan.timeStep);
-        p.Get("solverresidualtolerance",plan.solverResidualTolerance); p.Get("diagnostics",plan.diagnostics);
+        GetTaskProperty(p,"SSGeneral","totaltime",plan.totalTime); GetTaskProperty(p,"SSGeneral","timestep",plan.timeStep);
+        GetTaskProperty(p,"SSGeneral","solverresidualtolerance",plan.solverResidualTolerance); GetTaskProperty(p,"SSGeneral","diagnostics",plan.diagnostics);
         if(!std::isfinite(plan.totalTime)||plan.totalTime<0.0){error="totaltime must be finite and non-negative";return false;}
         if(!std::isfinite(plan.timeStep)||!(plan.timeStep>0.0)){error="timestep must be finite and positive";return false;}
         if(!std::isfinite(plan.solverResidualTolerance)||!(plan.solverResidualTolerance>0.0)){error="solverresidualtolerance must be finite and positive";return false;}
 
-        value="exponential"; ReadString(p,{"propagationmethod","propagator"},value);
+        value="exponential"; ReadString(p,"propagationmethod",value);
         if(value=="exponential"||value=="exp"||value=="normal"||value=="auto") plan.propagation=SSPropagation::Exponential;
         else if(value=="rk4"||value=="explicit") plan.propagation=SSPropagation::RK4;
         else {error="propagationmethod must be exponential or rk4";return false;}
 
         value=plan.calculation==SSCalculation::TimeIntegrated?"states":"states";
-        ReadString(p,{"observables","observablemode"},value);
+        ReadString(p,"observables",value);
         if(value=="states"||value=="statepopulations"||value=="populations") plan.observables=SSObservableMode::States;
         else if(value=="transitions"||value=="transitionyields"||value=="products"||value=="yields") plan.observables=SSObservableMode::TransitionYields;
         else if(value=="both"||value=="all") plan.observables=SSObservableMode::Both;
         else {error="observables must be states, transitionyields, or both";return false;}
 
         value="full";
-        ReadString(p,{"hamiltonianmode","hamiltonian_mode","approximation"},value);
+        ReadString(p,"hamiltonianmode",value);
         if(value=="full"||value=="fixed"||value=="exact"||value=="nonsecular") plan.hamiltonianMode=SSHamiltonianMode::FixedFull;
         else if(value=="rotated_zyz"||value=="rotatedzyz") plan.hamiltonianMode=SSHamiltonianMode::RotatedFull;
         else if(value=="secular"||value=="highfield"||value=="high-field"||value=="rotated_sa"||value=="rotatedsa") plan.hamiltonianMode=SSHamiltonianMode::RotatedSecular;
         else {error="hamiltonian mode/approximation must be full, rotated_zyz, or secular/highfield";return false;}
 
-        value="operators"; ReadString(p,{"relaxationmodel","relaxation_model"},value);
+        value="operators"; ReadString(p,"relaxationmodel",value);
         if(value=="operators"||value=="operator"||value=="local") plan.relaxationModel=SSRelaxationModel::Operators;
         else if(value=="nakajima_zwanzig"||value=="nakajima-zwanzig"||value=="nakajimazwanzig"||value=="nz") plan.relaxationModel=SSRelaxationModel::NakajimaZwanzig;
         else if(value=="redfield") plan.relaxationModel=SSRelaxationModel::Redfield;
         else {error="relaxationmodel must be operators, nakajima_zwanzig, or redfield";return false;}
 
-        value="haberkorn"; ReadString(p,{"reactionoperators","reactionoperator","reaction_operator"},value);
+        value="haberkorn"; ReadString(p,"reactionoperators",value);
         if(value=="haberkorn"||value=="hab") plan.reactionOperator=SpinAPI::ReactionOperatorType::Haberkorn;
         else if(value=="lindblad"||value=="gksl")
         {error="SSGeneral Lindblad reaction-operator parity is not yet qualified; use reactionoperators=haberkorn or a dedicated task";return false;}
@@ -112,7 +114,7 @@ namespace RunSection::General::SS
 
         std::string explicitOrientation;
         const bool explicitSpecified =
-            p.Get("powderorientation",explicitOrientation)||p.Get("orientation",explicitOrientation);
+            GetTaskProperty(p,"SSGeneral","powderorientation",explicitOrientation);
         if(explicitSpecified)
         {
             if(!ParseOrientation(explicitOrientation,plan.explicitAlpha,plan.explicitBeta,plan.explicitGamma,plan.explicitWeight))
@@ -122,16 +124,16 @@ namespace RunSection::General::SS
             plan.orientation=SSOrientationMode::Explicit;
         }
 
-        std::string grid; const bool gridSpecified=ReadString(p,{"powdergrid","powder_grid"},grid);
-        const bool pointsSpecified=p.Get("powdersamplingpoints",plan.powderPoints);
-        const bool gridSizeSpecified=p.Get("powdergridsize",plan.powderGridSize);
-        const bool symmetrySpecified=p.Get("powdersymmetry",plan.powderSymmetry);
-        const bool gammaPointsSpecified=p.Get("powdergammapoints",plan.powderGammaPoints);
-        const bool gammaOffsetSpecified=p.Get("powdergamma",plan.powderGammaOffset);
+        std::string grid; const bool gridSpecified=ReadString(p,"powdergrid",grid);
+        const bool pointsSpecified=GetTaskProperty(p,"SSGeneral","powdersamplingpoints",plan.powderPoints);
+        const bool gridSizeSpecified=GetTaskProperty(p,"SSGeneral","powdergridsize",plan.powderGridSize);
+        const bool symmetrySpecified=GetTaskProperty(p,"SSGeneral","powdersymmetry",plan.powderSymmetry);
+        const bool gammaPointsSpecified=GetTaskProperty(p,"SSGeneral","powdergammapoints",plan.powderGammaPoints);
+        const bool gammaOffsetSpecified=GetTaskProperty(p,"SSGeneral","powdergamma",plan.powderGammaOffset);
         if(plan.powderGammaPoints<1){error="powdergammapoints must be at least one";return false;}
 
         std::string domain;
-        const bool domainSpecified=ReadString(p,{"powderdomain"},domain);
+        const bool domainSpecified=ReadString(p,"powderdomain",domain);
         if(explicitSpecified&&(gridSpecified||pointsSpecified||gridSizeSpecified||symmetrySpecified||
             domainSpecified||gammaOffsetSpecified||plan.powderGammaPoints>1))
         {error="explicit powderorientation cannot be combined with generated powder-grid settings";return false;}

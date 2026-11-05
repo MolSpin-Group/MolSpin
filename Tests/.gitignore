@@ -1,3 +1,4 @@
 
 # Keep the General resonance architecture qualification versionable.
 !check_general_resonance_architecture.py
+!check_task_spec.py

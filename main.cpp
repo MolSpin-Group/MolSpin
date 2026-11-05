@@ -14,6 +14,7 @@
 #include "MSDParser.h"
 #include "RunSection.h"
 #include "FileReader.h"
+#include "General/TaskSpec.h"
 // #include "Action.h"
 #include <fstream>
 #include <cstdlib>
@@ -88,8 +89,36 @@ namespace
 
 int main(int argc, char **argv)
 {
-	const std::string MolSpin_version = "v2.3";
+	const std::string MolSpin_version = std::string("v") + RunSection::General::TaskSpecVersion();
 	const std::string hline = "# ---------------------------------------------------------------------------------";
+
+	if (argc >= 2)
+	{
+		const std::string option = argv[1];
+		const std::string taskSpecOption = "--dump-task-spec";
+		if (option == taskSpecOption || option.compare(0, taskSpecOption.size() + 1, taskSpecOption + "=") == 0)
+		{
+			if (argc != 2)
+			{
+				std::cerr << "The --dump-task-spec option does not accept additional arguments." << std::endl;
+				return 2;
+			}
+
+			const std::string taskName = option == taskSpecOption
+				? std::string() : option.substr(taskSpecOption.size() + 1);
+			if (option != taskSpecOption && taskName.empty())
+			{
+				std::cerr << "A task name must follow --dump-task-spec=." << std::endl;
+				return 2;
+			}
+			if (!RunSection::General::WriteTaskSpec(std::cout, taskName))
+			{
+				std::cerr << "Unknown task name for --dump-task-spec: " << taskName << std::endl;
+				return 2;
+			}
+			return 0;
+		}
+	}
 
 	char* _badallocemergmem = new char[EMERGENCY_MEMORY_ALLOCATION_SIZE];
 
@@ -123,6 +152,8 @@ int main(int argc, char **argv)
 		std::cout << "    -h\n    --help" << std::endl;
 		std::cout << "             Shows this message if no input file is specified." << std::endl;
 		std::cout << "             Example: molspin -h" << std::endl;
+		std::cout << "    --dump-task-spec[=<TaskName>]" << std::endl;
+		std::cout << "             Prints the general-task input specification as JSON." << std::endl;
 		std::cout << "    -n\n    --steps" << std::endl;
 		std::cout << "             Specify how many steps should be calculated before you are notified." << std::endl;
 		std::cout << "             Example: molspin -n 5 myfile.msd" << std::endl;
