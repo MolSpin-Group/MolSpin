@@ -47,6 +47,7 @@ namespace RunSection
 		std::string sw_v8_sweep_path;
 		std::vector<double> sw_v8_sweep_values;
 
+		bool matrixFreeNZV2_ = false;
 		double timestep;
 		double totaltime;
 		SpinAPI::ReactionOperatorType reactionOperators;

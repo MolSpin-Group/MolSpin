@@ -17,6 +17,10 @@
 #include <algorithm>
 #include <cmath>
 #include "TaskStaticSSSpectraNakajimaZwanzig.h"
+#include "NZKrylovStationary.h"
+#include "NZKrylovMatrixFreeV2.h"
+#include <iterator>
+#include <chrono>
 #include "Transition.h"
 #include "Settings.h"
 #include "State.h"
@@ -410,6 +414,23 @@ namespace RunSection
 			std::size_t sw_completed = 0;
 			for (std::size_t sw_index = 0; sw_index != sw_samples.size(); ++sw_index)
 			{
+				const auto nz_krylov_build_start = std::chrono::steady_clock::now();
+                std::string requested_stationary_solver = "direct";
+                (void)this->Properties()->Get("stationarysolver", requested_stationary_solver);
+                const bool nz_v2 = (requested_stationary_solver == "nz-krylov-v2");
+                this->matrixFreeNZV2_ = nz_v2;
+                if (nz_v2)
+                {
+                    std::string requested_method;
+                    (void)this->Properties()->Get("method", requested_method);
+                    std::vector<std::tuple<std::string, double>> requested_pulses;
+                    (void)this->Properties()->GetPulseSequence("pulsesequence", requested_pulses);
+                    if (requested_method != "timeinf" || !requested_pulses.empty())
+                    {
+                        this->Log() << "ERROR NZ-KRYLOV-V2: supported for timeinf without pulse sequences only; use direct for other methods." << std::endl;
+                        return false;
+                    }
+                }
 				// Reconstruct the same unrotated initial density for every bath sample.
 				rho0 = sw_initial_density_lab;
 				space.UseSuperoperatorSpace(false);
@@ -468,7 +489,15 @@ namespace RunSection
 			one.eye();
 
 			arma::cx_mat lambda;
-			lambda = (arma::kron(eig_val_mat, one) - arma::kron(one, eig_val_mat.st()));
+			if (nz_v2)
+            {
+                lambda.set_size(eigen_val.n_elem, eigen_val.n_elem);
+                for (arma::uword row=0; row<eigen_val.n_elem; ++row)
+                    for (arma::uword col=0; col<eigen_val.n_elem; ++col)
+                        lambda(row,col) = eigen_val(row)-eigen_val(col);
+            }
+            else
+                lambda = (arma::kron(eig_val_mat, one) - arma::kron(one, eig_val_mat.st()));
 
 			// ---------------------------------------------------------------
 			// SETUP RELAXATION OPERATOR
@@ -476,13 +505,13 @@ namespace RunSection
 
 			// NakajimaZwanzig tensor
 			arma::cx_mat R;
-			R.set_size(size(kron(H, H)));
-			R.zeros();
+            if (!nz_v2)
+                R.zeros(size(kron(H,H)));
 
 			// Temporary NakajimaZwanzig tensor
 			arma::cx_mat tmp_R;
-			tmp_R.set_size(size(kron(H, H)));
-			tmp_R.zeros();
+            if (!nz_v2)
+                tmp_R.zeros(size(kron(H,H)));
 
 			// R Tensor array pointer for parallelization
 			arma::cx_mat **ptr_R = NULL;
@@ -504,8 +533,27 @@ namespace RunSection
 				*ptr_R[l] *= 0.0;
 			}
 
-			// Spectral density matrix
-			arma::cx_mat SpecDens;
+            // V2 intercepts EVERY established V9 NZ term-generation route.
+            // OpenMP threads append to independent shards, avoiding races.
+            std::vector<std::vector<NZKrylovMatrixFreeV2::Term>> nz_v2_shards(threads);
+            auto nz_append_or_build = [&](const arma::cx_mat &op1,
+                                          const arma::cx_mat &op2,
+                                          const arma::cx_mat &spectral,
+                                          arma::cx_mat &dense_output) -> bool
+            {
+                if (!nz_v2)
+                    return this->NakajimaZwanzigtensorSpectra(op1,op2,spectral,dense_output);
+                const arma::uword d = op1.n_rows;
+                if (!d || op1.n_cols!=d || op2.n_rows!=d || op2.n_cols!=d ||
+                    spectral.n_rows!=d || spectral.n_cols!=d || !spectral.is_finite())
+                    return false;
+                if (!spectral.is_zero(0))
+                    nz_v2_shards[omp_get_thread_num()].emplace_back(op1,op2,spectral);
+                return true;
+            };
+
+            // Spectral density matrix
+            arma::cx_mat SpecDens;
 			SpecDens.set_size(arma::size(H));
 			SpecDens.zeros();
 
@@ -853,13 +901,13 @@ namespace RunSection
 
 													tmp_R *= 0.0;
 
-													if (!NakajimaZwanzigtensorSpectra((*ptr_Tensors[k]), (*ptr_Tensors[s]), *ptr_SpecDens[m], tmp_R))
+													if (!nz_append_or_build((*ptr_Tensors[k]), (*ptr_Tensors[s]), *ptr_SpecDens[m], tmp_R))
 													{
 														this->Log() << "There are problems with the construction of the NakajimaZwanzig tensor - Please check your input." << std::endl;
 														continue;
 													}
 
-													R += tmp_R;
+													if (!nz_v2) R += tmp_R;
 												}
 
 												m = m + 1;
@@ -910,13 +958,13 @@ namespace RunSection
 
 												tmp_R *= 0.0;
 
-												if (!NakajimaZwanzigtensorSpectra((*ptr_Tensors[k]), (*ptr_Tensors[k]), *ptr_SpecDens[m], tmp_R))
+												if (!nz_append_or_build((*ptr_Tensors[k]), (*ptr_Tensors[k]), *ptr_SpecDens[m], tmp_R))
 												{
 													this->Log() << "There are problems with the construction of the NakajimaZwanzig tensor - Please check your input." << std::endl;
 													continue;
 												}
 
-												R += tmp_R;
+												if (!nz_v2) R += tmp_R;
 											}
 
 											m = m + 1;
@@ -1182,13 +1230,13 @@ namespace RunSection
 
 														tmp_R *= 0.0;
 
-														if (!NakajimaZwanzigtensorSpectra((*ptr_Tensors[k]), (*ptr_Tensors[s]), *ptr_SpecDens[m], tmp_R))
+														if (!nz_append_or_build((*ptr_Tensors[k]), (*ptr_Tensors[s]), *ptr_SpecDens[m], tmp_R))
 														{
 															this->Log() << "There are problems with the construction of the NakajimaZwanzig tensor - Please check your input." << std::endl;
 															continue;
 														}
 
-														R += tmp_R;
+														if (!nz_v2) R += tmp_R;
 													}
 
 													m = m + 1;
@@ -1239,13 +1287,13 @@ namespace RunSection
 
 													tmp_R *= 0.0;
 
-													if (!NakajimaZwanzigtensorSpectra((*ptr_Tensors[k]), (*ptr_Tensors[k]), *ptr_SpecDens[m], tmp_R))
+													if (!nz_append_or_build((*ptr_Tensors[k]), (*ptr_Tensors[k]), *ptr_SpecDens[m], tmp_R))
 													{
 														this->Log() << "There are problems with the construction of the NakajimaZwanzig tensor - Please check your input." << std::endl;
 														continue;
 													}
 
-													R += tmp_R;
+													if (!nz_v2) R += tmp_R;
 												}
 
 												m = m + 1;
@@ -1516,13 +1564,13 @@ namespace RunSection
 
 											tmp_R *= 0.0;
 
-											if (!NakajimaZwanzigtensorSpectra((*ptr_Tensors[k]), (*ptr_Tensors[k]), SpecDens, tmp_R))
+											if (!nz_append_or_build((*ptr_Tensors[k]), (*ptr_Tensors[k]), SpecDens, tmp_R))
 											{
 												this->Log() << "There are problems with the construction of the NakajimaZwanzig tensor - Please check your input." << std::endl;
 												continue;
 											}
 
-											*ptr_R[omp_get_thread_num()] += tmp_R;
+											if (!nz_v2) *ptr_R[omp_get_thread_num()] += tmp_R;
 										}
 									}
 									else
@@ -1555,13 +1603,13 @@ namespace RunSection
 
 											tmp_R *= 0.0;
 
-											if (!NakajimaZwanzigtensorSpectra((*ptr_Tensors[k]), (*ptr_Tensors[k]), SpecDens, tmp_R))
+											if (!nz_append_or_build((*ptr_Tensors[k]), (*ptr_Tensors[k]), SpecDens, tmp_R))
 											{
 												this->Log() << "There are problems with the construction of the NakajimaZwanzig tensor - Please check your input." << std::endl;
 												continue;
 											}
 
-											*ptr_R[omp_get_thread_num()] += tmp_R;
+											if (!nz_v2) *ptr_R[omp_get_thread_num()] += tmp_R;
 										}
 									}
 								}
@@ -1604,13 +1652,13 @@ namespace RunSection
 
 												tmp_R *= 0.0;
 
-												if (!NakajimaZwanzigtensorSpectra((*ptr_Tensors[k]), (*ptr_Tensors[s]), SpecDens, tmp_R))
+												if (!nz_append_or_build((*ptr_Tensors[k]), (*ptr_Tensors[s]), SpecDens, tmp_R))
 												{
 													this->Log() << "There are problems with the construction of the NakajimaZwanzig tensor - Please check your input." << std::endl;
 													continue;
 												}
 
-												*ptr_R[omp_get_thread_num()] += tmp_R;
+												if (!nz_v2) *ptr_R[omp_get_thread_num()] += tmp_R;
 											}
 										}
 									}
@@ -1647,13 +1695,13 @@ namespace RunSection
 
 												tmp_R *= 0.0;
 
-												if (!NakajimaZwanzigtensorSpectra((*ptr_Tensors[k]), (*ptr_Tensors[s]), SpecDens, tmp_R))
+												if (!nz_append_or_build((*ptr_Tensors[k]), (*ptr_Tensors[s]), SpecDens, tmp_R))
 												{
 													this->Log() << "There are problems with the construction of the NakajimaZwanzig tensor - Please check your input." << std::endl;
 													continue;
 												}
 
-												*ptr_R[omp_get_thread_num()] += tmp_R;
+												if (!nz_v2) *ptr_R[omp_get_thread_num()] += tmp_R;
 											}
 										}
 									}
@@ -1661,7 +1709,7 @@ namespace RunSection
 
 								for (l = 0; l < threads; l++)
 								{
-									R += *ptr_R[l];
+									if (!nz_v2) R += *ptr_R[l];
 								}
 
 								this->Log() << "Added relaxation matrix term for interaction " << (*interaction)->Name() << " of spin " << (*s1)->Name() << "." << std::endl;
@@ -1895,13 +1943,13 @@ namespace RunSection
 
 												tmp_R *= 0.0;
 
-												if (!NakajimaZwanzigtensorSpectra((*ptr_Tensors[k]), (*ptr_Tensors[k]), SpecDens, tmp_R))
+												if (!nz_append_or_build((*ptr_Tensors[k]), (*ptr_Tensors[k]), SpecDens, tmp_R))
 												{
 													this->Log() << "There are problems with the construction of the NakajimaZwanzig tensor - Please check your input." << std::endl;
 													continue;
 												}
 
-												*ptr_R[omp_get_thread_num()] += tmp_R;
+												if (!nz_v2) *ptr_R[omp_get_thread_num()] += tmp_R;
 											}
 										}
 										else
@@ -1935,13 +1983,13 @@ namespace RunSection
 
 												tmp_R *= 0.0;
 
-												if (!NakajimaZwanzigtensorSpectra((*ptr_Tensors[k]), (*ptr_Tensors[k]), SpecDens, tmp_R))
+												if (!nz_append_or_build((*ptr_Tensors[k]), (*ptr_Tensors[k]), SpecDens, tmp_R))
 												{
 													this->Log() << "There are problems with the construction of the NakajimaZwanzig tensor - Please check your input." << std::endl;
 													continue;
 												}
 
-												*ptr_R[omp_get_thread_num()] += tmp_R;
+												if (!nz_v2) *ptr_R[omp_get_thread_num()] += tmp_R;
 											}
 										}
 									}
@@ -1985,13 +2033,13 @@ namespace RunSection
 
 													tmp_R *= 0.0;
 
-													if (!NakajimaZwanzigtensorSpectra((*ptr_Tensors[k]), (*ptr_Tensors[s]), SpecDens, tmp_R))
+													if (!nz_append_or_build((*ptr_Tensors[k]), (*ptr_Tensors[s]), SpecDens, tmp_R))
 													{
 														this->Log() << "There are problems with the construction of the NakajimaZwanzig tensor - Please check your input." << std::endl;
 														continue;
 													}
 
-													*ptr_R[omp_get_thread_num()] += tmp_R;
+													if (!nz_v2) *ptr_R[omp_get_thread_num()] += tmp_R;
 												}
 											}
 										}
@@ -2029,13 +2077,13 @@ namespace RunSection
 
 													tmp_R *= 0.0;
 
-													if (!NakajimaZwanzigtensorSpectra((*ptr_Tensors[k]), (*ptr_Tensors[s]), SpecDens, tmp_R))
+													if (!nz_append_or_build((*ptr_Tensors[k]), (*ptr_Tensors[s]), SpecDens, tmp_R))
 													{
 														this->Log() << "There are problems with the construction of the NakajimaZwanzig tensor - Please check your input." << std::endl;
 														continue;
 													}
 
-													*ptr_R[omp_get_thread_num()] += tmp_R;
+													if (!nz_v2) *ptr_R[omp_get_thread_num()] += tmp_R;
 												}
 											}
 										}
@@ -2043,7 +2091,7 @@ namespace RunSection
 
 									for (l = 0; l < threads; l++)
 									{
-										R += *ptr_R[l];
+										if (!nz_v2) R += *ptr_R[l];
 									}
 
 									this->Log() << "Added relaxation matrix term for interaction " << (*interaction)->Name() << " of spin " << (*s1)->Name() << " and " << (*s2)->Name() << "." << std::endl;
@@ -2086,13 +2134,14 @@ namespace RunSection
 			arma::cx_mat H_SS;
 
 			// Transforming into superspace
-			space.SuperoperatorFromLeftOperator(eig_val_mat, lhs);
-			space.SuperoperatorFromRightOperator(eig_val_mat, rhs);
-
-			H_SS = lhs - rhs;
-
-			// Get a matrix to collect all the terms (the total Liouvillian)
-			arma::cx_mat A = arma::cx_double(0.0, -1.0) * H_SS;
+            arma::cx_mat A;
+            if (!nz_v2)
+            {
+                space.SuperoperatorFromLeftOperator(eig_val_mat, lhs);
+                space.SuperoperatorFromRightOperator(eig_val_mat, rhs);
+                H_SS = lhs-rhs;
+                A = arma::cx_double(0.0,-1.0)*H_SS;
+            }
 
 			// Transform ReactionOperator into superspace
 			arma::cx_mat K;
@@ -2107,15 +2156,17 @@ namespace RunSection
 
 			K = (eigen_vec.t() * K * eigen_vec);
 
-			space.SuperoperatorFromLeftOperator(K, Klhs);
-			space.SuperoperatorFromRightOperator(K, Krhs);
-
-			K_SS = Klhs + Krhs;
-
-			A -= K_SS;
+            if (!nz_v2)
+            {
+                space.SuperoperatorFromLeftOperator(K, Klhs);
+                space.SuperoperatorFromRightOperator(K, Krhs);
+                K_SS=Klhs+Krhs;
+                A-=K_SS;
+            }
 
 			// Get the relaxation terms of other relaxation operators, assuming that they can just be added
 			arma::cx_mat O_SS;
+            arma::cx_mat nz_v2_other;
 
 			for (auto t = (*i)->operators_cbegin(); t != (*i)->operators_cend(); t++)
 			{
@@ -2124,7 +2175,15 @@ namespace RunSection
 				if (space.RelaxationOperatorFrameChange((*t), eigen_vec, O_SS))
 				{
 
-					A += O_SS;
+                    if (nz_v2)
+                    {
+                        if (nz_v2_other.n_elem == 0)
+                            nz_v2_other = O_SS;
+                        else
+                            nz_v2_other += O_SS;
+                    }
+                    else
+                        A += O_SS;
 
 					space.UseSuperoperatorSpace(false);
 					this->Log() << "Added other relaxation operator \"" << (*t)->Name() << "\" to the Liouvillian.\n";
@@ -2136,7 +2195,7 @@ namespace RunSection
 				}
 			}
 			// Adding R tensor to whole hamiltonian
-			A += R;
+            if (!nz_v2) A += R;
 
 			// Read in input parameters 
 
@@ -2833,9 +2892,152 @@ namespace RunSection
 					"The integration of the pulse sequence timewindow could be added if integration = true and integrationtimeframe = pulse / full." << std::endl;
 				}
 
-				arma::cx_vec result = -solve(arma::conv_to<arma::cx_mat>::from(A), rhovec);
+                // NZ-KRYLOV-V1: optional, full-Liouvillian stationary solver.
+                // Direct solve remains the default and the numerical reference.
+                std::string stationary_solver = "direct";
+                (void)this->Properties()->Get("stationarysolver", stationary_solver);
+                arma::cx_vec result;
+                if (stationary_solver == "direct")
+                {
+                    result = -solve(arma::conv_to<arma::cx_mat>::from(A), rhovec);
+                }
+                else if (stationary_solver == "nz-krylov")
+                {
+                    int requested_restart = 32;
+                    int requested_max_iterations = 320;
+                    double requested_tolerance = 1.0e-10;
+                    bool allow_direct_fallback = true;
+                    bool parity_check = false;
+                    (void)this->Properties()->Get("krylovrestart", requested_restart);
+                    (void)this->Properties()->Get("krylovmaxiter", requested_max_iterations);
+                    (void)this->Properties()->Get("krylovtol", requested_tolerance);
+                    (void)this->Properties()->Get("krylovfallback", allow_direct_fallback);
+                    (void)this->Properties()->Get("krylovverify", parity_check);
+                    if (requested_restart < 2 || requested_restart > 256 ||
+                        requested_max_iterations < 1 || requested_max_iterations > 10000 ||
+                        !std::isfinite(requested_tolerance) ||
+                        requested_tolerance < 1.0e-14 || requested_tolerance > 1.0e-3)
+                    {
+                        this->Log() << "ERROR NZ-KRYLOV-V1: invalid solver options." << std::endl;
+                        return false;
+                    }
+                    NZKrylovStationary::Options options;
+                    options.restart = static_cast<unsigned>(requested_restart);
+                    options.max_iterations = static_cast<unsigned>(requested_max_iterations);
+                    options.relative_tolerance = requested_tolerance;
+                    NZKrylovStationary::Report report;
+                    // Must match the coherent and Haberkorn reaction portion of
+                    // the existing *assembled* A. Here K was already rotated
+                    // into the eigenbasis of H0 by the original V9 task.
+                    const arma::cx_mat Q = arma::cx_double(0.0, -1.0) * eig_val_mat - K;
+                    const auto solver_start = std::chrono::steady_clock::now();
+                    const bool converged = NZKrylovStationary::Solve(
+                        A, -rhovec, Q, result, report, options);
+                    const auto solver_stop = std::chrono::steady_clock::now();
+                    const double build_seconds = std::chrono::duration<double>(
+                        solver_start - nz_krylov_build_start).count();
+                    const double solve_seconds = std::chrono::duration<double>(
+                        solver_stop - solver_start).count();
+                    this->Log() << "NZ-KRYLOV-V1: full NZ operator, build_seconds="
+                                << build_seconds << " solve_seconds=" << solve_seconds
+                                << " iterations=" << report.iterations
+                                << " restarts=" << report.restarts
+                                << " relative_residual=" << report.relative_residual
+                                << " converged=" << converged << std::endl;
+                    if (!converged)
+                    {
+                        if (!allow_direct_fallback)
+                        {
+                            this->Log() << "ERROR NZ-KRYLOV-V1: did not converge; "
+                                        << "direct fallback disabled." << std::endl;
+                            return false;
+                        }
+                        this->Log() << "NZ-KRYLOV-V1: FALLBACK_DENSE "
+                                    << "(non-convergence or Sylvester failure)." << std::endl;
+                        result = -solve(arma::conv_to<arma::cx_mat>::from(A), rhovec);
+                    }
+                    else if (parity_check)
+                    {
+                        // Explicit direct-vs-Krylov parity gate for HPC pilot runs.
+                        const arma::cx_vec reference =
+                            -solve(arma::conv_to<arma::cx_mat>::from(A), rhovec);
+                        const double absolute_error = arma::norm(result - reference, 2);
+                        const double reference_norm = arma::norm(reference, 2);
+                        const double relative_error = absolute_error /
+                            std::max(reference_norm, 1.0e-15);
+                        this->Log() << "NZ-KRYLOV-V1: PARITY relative_solution_error="
+                                    << relative_error << std::endl;
+                        if (!std::isfinite(relative_error) ||
+                            relative_error > std::max(100.0 * requested_tolerance, 1.0e-8))
+                        {
+                            this->Log() << "ERROR NZ-KRYLOV-V1: direct solver parity failed."
+                                        << std::endl;
+                            return false;
+                        }
+                    }
+                }
+                else if (stationary_solver == "nz-krylov-v2")
+                {
+                    int requested_restart = 32;
+                    int requested_max_iterations = 320;
+                    double requested_tolerance = 1.0e-10;
+                    bool allow_direct_fallback = false;
+                    bool parity_check = false;
+                    (void)this->Properties()->Get("krylovrestart", requested_restart);
+                    (void)this->Properties()->Get("krylovmaxiter", requested_max_iterations);
+                    (void)this->Properties()->Get("krylovtol", requested_tolerance);
+                    (void)this->Properties()->Get("krylovfallback", allow_direct_fallback);
+                    (void)this->Properties()->Get("krylovverify", parity_check);
+                    if (allow_direct_fallback || parity_check)
+                    {
+                        this->Log() << "ERROR NZ-KRYLOV-V2: dense fallback and internal parity disabled in matrix-free mode; compare separate direct runs." << std::endl;
+                        return false;
+                    }
+                    NZKrylovStationary::Options options;
+                    options.restart=static_cast<unsigned>(requested_restart);
+                    options.max_iterations=static_cast<unsigned>(requested_max_iterations);
+                    options.relative_tolerance=requested_tolerance;
+                    std::vector<NZKrylovMatrixFreeV2::Term> nz_v2_terms;
+                    std::size_t term_count=0;
+                    for (const auto &shard:nz_v2_shards) term_count += shard.size();
+                    nz_v2_terms.reserve(term_count);
+                    for (auto &shard:nz_v2_shards)
+                        nz_v2_terms.insert(nz_v2_terms.end(),
+                                           std::make_move_iterator(shard.begin()),
+                                           std::make_move_iterator(shard.end()));
+                    const arma::cx_mat Q = arma::cx_double(0.0,-1.0)*eig_val_mat-K;
+                    const NZKrylovMatrixFreeV2::Operator operator_v2(
+                        eig_val_mat,K,nz_v2_terms,nz_v2_other);
+                    NZKrylovStationary::Report report;
+                    const auto start = std::chrono::steady_clock::now();
+                    const bool converged = NZKrylovMatrixFreeV2::Solve(
+                        operator_v2,-rhovec,Q,result,report,options);
+                    const auto stop = std::chrono::steady_clock::now();
+                    const double build_seconds = std::chrono::duration<double>(
+                        start-nz_krylov_build_start).count();
+                    const double solve_seconds = std::chrono::duration<double>(
+                        stop-start).count();
+                    this->Log() << "NZ-KRYLOV-V2: matrix-free full NZ build_seconds="
+                                << build_seconds << " solve_seconds=" << solve_seconds
+                                << " nz_terms=" << term_count
+                                << " iterations=" << report.iterations
+                                << " restarts=" << report.restarts
+                                << " relative_residual=" << report.relative_residual
+                                << " converged=" << converged << std::endl;
+                    if (!converged)
+                    {
+                        this->Log() << "ERROR NZ-KRYLOV-V2: matrix-free solver did not converge; no silent fallback." << std::endl;
+                        return false;
+                    }
+                }
+                else
+                {
+                    this->Log() << "ERROR: unknown stationarysolver='" << stationary_solver
+                                << "'; expected direct, nz-krylov or nz-krylov-v2." << std::endl;
+                    return false;
+                }
 
-				rhovec = result;
+                rhovec = result;
 
 				if (Timewindow.compare("pulse") != 0)
 				{
@@ -3226,8 +3428,19 @@ namespace RunSection
 
 	bool TaskStaticSSSpectraNakajimaZwanzig::ConstructSpecDensGeneralSpectra(const std::vector<double> &_ampl_list, const std::vector<double> &_tau_c_list, const arma::cx_mat &_omega, arma::cx_mat &_specdens)
 	{
-		// Solution of spectral density: S = Ampl/(1/tau_c - i * omega)
-		arma::cx_vec spectral_entries = _omega.diag();
+        if (this->matrixFreeNZV2_)
+        {
+            _specdens.zeros(arma::size(_omega));
+            for (arma::uword row=0;row<_omega.n_rows;++row)
+                for (arma::uword col=0;col<_omega.n_cols;++col)
+                    for (arma::uword j=0;j<_tau_c_list.size();++j)
+                        _specdens(row,col) += static_cast<std::complex<double>>(_ampl_list.at(j)) /
+                            ((1.0/static_cast<std::complex<double>>(_tau_c_list[j])) +
+                             arma::cx_double(0,-1)*_omega(row,col));
+            return true;
+        }
+        // Solution of spectral density: S = Ampl/(1/tau_c - i * omega)
+        arma::cx_vec spectral_entries = _omega.diag();
 		spectral_entries.zeros();
 
 		for (auto ii = 0; ii < (int)_omega.n_cols; ii++)
@@ -3255,9 +3468,17 @@ namespace RunSection
 			_tau_c.imag() != 0.0 || !(_tau_c.real() > 0.0))
 			return false;
 
-		arma::cx_vec spectral_entries = _omega.diag();
+        if (this->matrixFreeNZV2_)
+        {
+            for (arma::uword row=0;row<_omega.n_rows;++row)
+                for (arma::uword col=0;col<_omega.n_cols;++col)
+                    _specdens(row,col) = _ampl / ((1.0/_tau_c) +
+                                           arma::cx_double(0,-1)*_omega(row,col));
+            return _specdens.is_finite();
+        }
+        arma::cx_vec spectral_entries = _omega.diag();
 
-		for (auto ii = 0; ii < (int)_omega.n_cols; ii++)
+        for (auto ii = 0; ii < (int)_omega.n_cols; ii++)
 		{
 			spectral_entries(ii) = _ampl / ((1.00 / _tau_c) + arma::cx_double(0.0, -1.00) * _omega(ii, ii));
 		}
